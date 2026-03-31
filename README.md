@@ -1,4 +1,4 @@
-# Plan Maestro — LinkedIn Career Planner
+# IT Professional Planner — Master Plan
 
 A full-stack local planner for tracking a LinkedIn career positioning plan (April–June 2026). The UI is in Spanish; code comments and this README are in English.
 
