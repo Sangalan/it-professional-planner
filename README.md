@@ -16,7 +16,7 @@ A full-stack local planner for tracking a LinkedIn career positioning plan (Apri
 | Audio | Web Audio API | No external files needed |
 | Dev runner | concurrently | One command starts everything |
 
-No Docker, no cloud services — everything runs locally.
+No Docker, no cloud services, everything runs locally.
 
 ---
 
