@@ -1,0 +1,468 @@
+import React, { useEffect, useState } from 'react';
+import { api } from '../api.js';
+
+const PRESET_COLORS = [
+  '#2563eb','#7c3aed','#059669','#ea580c','#dc2626',
+  '#0f766e','#6b7280','#b91c1c','#0369a1','#d97706',
+  '#db2777','#16a34a','#7c3aed','#475569','#1d4ed8',
+];
+
+const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
+const rowBorder = { padding: '10px 0', borderBottom: '1px solid var(--border)' };
+const fieldW = { marginBottom: 14 };
+
+// ── SHARED ────────────────────────────────────────────────────────────────────
+
+function Dialog({ title, onClose, children }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 300, padding: 20,
+    }}>
+      <div style={{
+        background: 'var(--surface)', borderRadius: 12, padding: 28,
+        maxWidth: 520, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+        boxShadow: 'var(--shadow-md)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700 }}>{title}</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-3)', lineHeight: 1 }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({ title, count, children, onNew }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card" style={{ maxWidth: 760, marginBottom: 20 }}>
+      <div className="card-header" style={{ cursor: 'pointer', userSelect: 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }} onClick={() => setOpen(o => !o)}>
+          <span className="card-title">{title} ({count})</span>
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{open ? '▲' : '▼'}</span>
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={onNew}>+ Nuevo</button>
+      </div>
+      {open && <div className="card-body">{children}</div>}
+    </div>
+  );
+}
+
+function ColorPicker({ value, onChange }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+      {PRESET_COLORS.map(c => (
+        <div key={c} onClick={() => onChange(c)} style={{
+          width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer',
+          border: value === c ? '3px solid var(--text)' : '2px solid transparent', transition: 'border .1s',
+        }} title={c} />
+      ))}
+      <input type="color" value={value} onChange={e => onChange(e.target.value)}
+        style={{ width: 28, height: 28, border: 'none', padding: 0, cursor: 'pointer', borderRadius: 4 }}
+        title="Color personalizado" />
+    </div>
+  );
+}
+
+// ── CATEGORIES ────────────────────────────────────────────────────────────────
+
+function CategoryDialog({ cat, onClose, onSaved, onDeleted }) {
+  const isNew = !cat;
+  const [id, setId] = useState(cat?.id || '');
+  const [name, setName] = useState(cat?.name || '');
+  const [color, setColor] = useState(cat?.color || '#2563eb');
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
+  function autoId(n) {
+    return n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  async function save() {
+    if (!name.trim()) { setError('El nombre es obligatorio'); return; }
+    if (isNew && !id.trim()) { setError('El ID es obligatorio'); return; }
+    if (isNew && !/^[a-z0-9-]+$/.test(id)) { setError('El ID solo puede contener letras minúsculas, números y guiones'); return; }
+    setSaving(true); setError('');
+    try {
+      if (isNew) await api.createCategory({ id: id.trim(), name: name.trim(), color });
+      else await api.updateCategory(cat.id, { name: name.trim(), color });
+      onSaved(); onClose();
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+
+  async function del() {
+    if (!window.confirm(`¿Eliminar categoría "${cat.name}"?`)) return;
+    setDeleting(true);
+    const r = await api.deleteCategory(cat.id);
+    setDeleting(false);
+    if (r.error) { alert(r.error); return; }
+    onDeleted(); onClose();
+  }
+
+  return (
+    <Dialog title={isNew ? 'Nueva categoría' : `Editar categoría — ${cat.name}`} onClose={onClose}>
+      {isNew && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={labelSt}>Nombre *</label>
+            <input type="text" value={name} onChange={e => { setName(e.target.value); if (!id) setId(autoId(e.target.value)); }}
+              placeholder="Mi categoría" style={{ width: '100%' }} autoFocus />
+          </div>
+          <div>
+            <label style={labelSt}>ID único * <span style={{ fontWeight: 400, color: 'var(--text-3)', fontSize: 11 }}>(no se puede cambiar)</span></label>
+            <input type="text" value={id} onChange={e => setId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+              placeholder="mi-categoria" style={{ width: '100%', fontFamily: 'monospace' }} />
+          </div>
+        </div>
+      )}
+      {!isNew && (
+        <div style={fieldW}>
+          <label style={labelSt}>Nombre *</label>
+          <input type="text" value={name} onChange={e => setName(e.target.value)} style={{ width: '100%' }} autoFocus />
+        </div>
+      )}
+      <div style={fieldW}>
+        <label style={labelSt}>Color</label>
+        <ColorPicker value={color} onChange={setColor} />
+      </div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {!isNew ? (
+          <button className="btn btn-ghost" onClick={del} disabled={deleting} style={{ color: '#dc2626', borderColor: '#dc2626' }}>
+            {deleting ? 'Eliminando…' : 'Eliminar'}
+          </button>
+        ) : <span />}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : isNew ? 'Crear' : 'Guardar'}</button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function CategoryRow({ cat, onSaved, onDeleted }) {
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <>
+      {editing && <CategoryDialog cat={cat} onClose={() => setEditing(false)} onSaved={onSaved} onDeleted={onDeleted} />}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, ...rowBorder, cursor: 'pointer' }} onClick={() => setEditing(true)}>
+        <div style={{ width: 18, height: 18, borderRadius: '50%', background: cat.color, flexShrink: 0 }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{cat.name}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'monospace' }}>{cat.id} · {cat.color}</div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── OBJECTIVES ────────────────────────────────────────────────────────────────
+
+function ObjectiveDialog({ obj, cats, onClose, onSaved, onDeleted }) {
+  const isNew = !obj;
+  const [form, setForm] = useState({
+    title: obj?.title || '', description: obj?.description || '',
+    category_id: obj?.category_id || '', start_date: obj?.start_date || '',
+    end_date: obj?.end_date || '', target_value: obj?.target_value || '',
+    priority: obj?.priority ?? 2, status: obj?.status || 'not_started', notes: obj?.notes || '',
+    color: obj?.color || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(f, v) { setForm(p => ({ ...p, [f]: v })); }
+
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try {
+      const payload = { ...form, priority: Number(form.priority), category_id: form.category_id || null, color: form.color || null };
+      if (isNew) await api.createObjective(payload);
+      else await api.updateObjective(obj.id, payload);
+      onSaved(); onClose();
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+
+  async function del() {
+    if (!window.confirm(`¿Eliminar objetivo "${obj.title}"?`)) return;
+    setDeleting(true);
+    const r = await api.deleteObjective(obj.id);
+    setDeleting(false);
+    if (r.error) { alert(r.error); return; }
+    onDeleted(); onClose();
+  }
+
+  return (
+    <Dialog title={isNew ? 'Nuevo objetivo' : `Editar — ${obj.title}`} onClose={onClose}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Título *</label>
+          <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
+        </div>
+        <div>
+          <label style={labelSt}>Categoría</label>
+          <select value={form.category_id} onChange={e => set('category_id', e.target.value)} style={{ width: '100%' }}>
+            <option value="">Sin categoría</option>
+            {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Inicio</label>
+          <input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Fin</label>
+          <input type="date" value={form.end_date} onChange={e => set('end_date', e.target.value)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Prioridad</label>
+          <select value={form.priority} onChange={e => set('priority', e.target.value)} style={{ width: '100%' }}>
+            <option value={1}>Alta ★</option>
+            <option value={2}>Normal</option>
+            <option value={3}>Baja</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelSt}>Estado</label>
+          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+            <option value="not_started">No iniciado</option>
+            <option value="in_progress">En curso</option>
+            <option value="completed">Completado</option>
+            <option value="blocked">Bloqueado</option>
+          </select>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Meta</label>
+          <input type="text" value={form.target_value} onChange={e => set('target_value', e.target.value)} placeholder="ej. 500 seguidores" style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Notas</label>
+          <input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} />
+        </div>
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Color de la barra de progreso</label>
+        <ColorPicker value={form.color || '#2563eb'} onChange={v => set('color', v)} />
+      </div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {!isNew ? (
+          <button className="btn btn-ghost" onClick={del} disabled={deleting} style={{ color: '#dc2626', borderColor: '#dc2626' }}>
+            {deleting ? 'Eliminando…' : 'Eliminar'}
+          </button>
+        ) : <span />}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : isNew ? 'Crear' : 'Guardar'}</button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function ObjectiveRow({ obj, cats, onSaved, onDeleted }) {
+  const [editing, setEditing] = useState(false);
+  const catName = cats.find(c => c.id === obj.category_id)?.name || '—';
+
+  return (
+    <>
+      {editing && <ObjectiveDialog obj={obj} cats={cats} onClose={() => setEditing(false)} onSaved={onSaved} onDeleted={onDeleted} />}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, ...rowBorder, cursor: 'pointer' }} onClick={() => setEditing(true)}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{obj.title}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{catName} · {obj.end_date || 'sin fecha'} · {obj.status}</div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── MILESTONES ────────────────────────────────────────────────────────────────
+
+function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
+  const isNew = !m;
+  const [form, setForm] = useState({
+    title: m?.title || '', description: m?.description || '',
+    objective_id: m?.objective_id || '', target_date: m?.target_date || '',
+    weight: m?.weight ?? 10, status: m?.status || 'not_started',
+    percentage_completed: m?.percentage_completed ?? 0,
+  });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(f, v) { setForm(p => ({ ...p, [f]: v })); }
+
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    if (isNew && !form.objective_id) { setError('El objetivo es obligatorio'); return; }
+    setSaving(true); setError('');
+    try {
+      const payload = { ...form, weight: Number(form.weight), percentage_completed: Number(form.percentage_completed) };
+      if (isNew) await api.createMilestone(payload);
+      else await api.updateMilestone(m.id, payload);
+      onSaved(); onClose();
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+
+  async function del() {
+    if (!window.confirm(`¿Eliminar hito "${m.title}"?`)) return;
+    setDeleting(true);
+    const r = await api.deleteMilestone(m.id);
+    setDeleting(false);
+    if (r.error) { alert(r.error); return; }
+    onDeleted(); onClose();
+  }
+
+  return (
+    <Dialog title={isNew ? 'Nuevo hito' : `Editar — ${m.title}`} onClose={onClose}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Título *</label>
+          <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
+        </div>
+        <div>
+          <label style={labelSt}>Objetivo {isNew && '*'}</label>
+          <select value={form.objective_id} onChange={e => set('objective_id', e.target.value)} style={{ width: '100%' }}>
+            <option value="">Sin objetivo</option>
+            {objectives.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Fecha objetivo</label>
+          <input type="date" value={form.target_date} onChange={e => set('target_date', e.target.value)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Estado</label>
+          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+            <option value="not_started">No iniciado</option>
+            <option value="in_progress">En curso</option>
+            <option value="completed">Completado</option>
+            <option value="blocked">Bloqueado</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelSt}>Peso (%)</label>
+          <input type="number" min="1" max="100" value={form.weight} onChange={e => set('weight', e.target.value)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>% completado</label>
+          <input type="number" min="0" max="100" step="5" value={form.percentage_completed} onChange={e => set('percentage_completed', e.target.value)} style={{ width: '100%' }} />
+        </div>
+      </div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {!isNew ? (
+          <button className="btn btn-ghost" onClick={del} disabled={deleting} style={{ color: '#dc2626', borderColor: '#dc2626' }}>
+            {deleting ? 'Eliminando…' : 'Eliminar'}
+          </button>
+        ) : <span />}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : isNew ? 'Crear' : 'Guardar'}</button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function MilestoneSettingsRow({ m, objectives, onSaved, onDeleted }) {
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <>
+      {editing && <MilestoneDialog m={m} objectives={objectives} onClose={() => setEditing(false)} onSaved={onSaved} onDeleted={onDeleted} />}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, ...rowBorder, paddingLeft: 12, cursor: 'pointer' }} onClick={() => setEditing(true)}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 500, fontSize: 13 }}>{m.title}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{m.target_date || 'sin fecha'} · {m.status} · peso {m.weight}</div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
+
+export default function Settings() {
+  const [cats, setCats] = useState([]);
+  const [objectives, setObjectives] = useState([]);
+  const [milestones, setMilestones] = useState([]);
+  const [creatingCat, setCreatingCat] = useState(false);
+  const [creatingObj, setCreatingObj] = useState(false);
+  const [creatingMs, setCreatingMs] = useState(false);
+
+  function loadCats() { api.categories().then(setCats); }
+  function loadObjectives() { api.objectives().then(setObjectives); }
+  function loadMilestones() { api.milestones().then(setMilestones); }
+  function loadAll() { loadCats(); loadObjectives(); loadMilestones(); }
+
+  useEffect(() => { loadAll(); }, []);
+
+  const milestonesByObj = milestones.reduce((acc, m) => {
+    (acc[m.objective_id] = acc[m.objective_id] || []).push(m);
+    return acc;
+  }, {});
+
+  return (
+    <div>
+      {creatingCat && <CategoryDialog onClose={() => setCreatingCat(false)} onSaved={loadCats} />}
+      {creatingObj && <ObjectiveDialog cats={cats} onClose={() => setCreatingObj(false)} onSaved={loadObjectives} />}
+      {creatingMs  && <MilestoneDialog objectives={objectives} onClose={() => setCreatingMs(false)} onSaved={loadMilestones} />}
+
+      <div className="page-header">
+        <div>
+          <div className="page-title">Configuración</div>
+          <div className="page-subtitle">Gestión de categorías, objetivos e hitos</div>
+        </div>
+      </div>
+
+      <SectionCard title="Categorías" count={cats.length} onNew={() => setCreatingCat(true)}>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>
+          El ID es permanente; el nombre y el color son editables.
+        </p>
+        {cats.map(cat => <CategoryRow key={cat.id} cat={cat} onSaved={loadCats} onDeleted={loadCats} />)}
+      </SectionCard>
+
+      <SectionCard title="Objetivos" count={objectives.length} onNew={() => setCreatingObj(true)}>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>
+          No se puede eliminar un objetivo si tiene tareas o hitos asociados.
+        </p>
+        {objectives.map(obj => (
+          <ObjectiveRow key={obj.id} obj={obj} cats={cats} onSaved={loadObjectives} onDeleted={loadAll} />
+        ))}
+      </SectionCard>
+
+      <SectionCard title="Hitos" count={milestones.length} onNew={() => setCreatingMs(true)}>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>
+          Agrupados por objetivo. Solo se pueden eliminar hitos sin tareas asignadas.
+        </p>
+        {objectives.map(obj => {
+          const ms = milestonesByObj[obj.id];
+          if (!ms?.length) return null;
+          return (
+            <div key={obj.id} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.6px', padding: '8px 0 2px' }}>
+                {obj.title}
+              </div>
+              {ms.map(m => <MilestoneSettingsRow key={m.id} m={m} objectives={objectives} onSaved={loadMilestones} onDeleted={loadMilestones} />)}
+            </div>
+          );
+        })}
+      </SectionCard>
+    </div>
+  );
+}
