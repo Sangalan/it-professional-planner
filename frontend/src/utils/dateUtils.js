@@ -72,12 +72,11 @@ export function formatDuration(mins) {
 }
 
 export function formatCountdown(totalSeconds) {
-  if (totalSeconds <= 0) return '00:00';
+  if (totalSeconds <= 0) return '0m';
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
   if (h > 0) return `${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m`;
-  return `${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+  return `${String(m).padStart(2,'0')}m`;
 }
 
 export function secondsUntilTime(timeStr) {

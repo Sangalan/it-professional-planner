@@ -126,7 +126,8 @@ export default function DailyList() {
   const pending   = tasks.filter(t => t.status !== 'completed');
   const completed = tasks.filter(t => t.status === 'completed');
   const overdue   = tasks.filter(t => t.is_overdue && t.status !== 'completed');
-  const gapHours  = getGapHours(tasks);
+  const nowHour   = new Date().getHours();
+  const gapHours  = getGapHours(tasks).filter(h => !isToday || h >= nowHour);
 
   const dateLabel = isToday ? 'Hoy' : fmtDate(dateStr);
 

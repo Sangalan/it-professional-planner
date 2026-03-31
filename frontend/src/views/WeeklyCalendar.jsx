@@ -248,7 +248,8 @@ export default function WeeklyCalendar() {
               const ds = toDateStr(d);
               const today = isToday(d);
               const dayTasks = (tasksByDate[ds] || []).filter(t => t.start_time);
-              const gapHours = getGapHours(dayTasks);
+              const currentHour = Math.floor(currentMinutes / 60);
+              const gapHours = getGapHours(dayTasks).filter(h => !today || h >= currentHour);
               const totalHeight = HOURS.length * SLOT_H;
               const firstHourMin = HOURS[0] * 60;
 

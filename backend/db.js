@@ -28,6 +28,9 @@ try { db.prepare('ALTER TABLE events ADD COLUMN status TEXT DEFAULT "not_started
 try { db.prepare('ALTER TABLE events ADD COLUMN objective_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE events ADD COLUMN category_ids TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE events ADD COLUMN percentage_completed REAL DEFAULT 0').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE events ADD COLUMN registered INTEGER DEFAULT 0').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE events ADD COLUMN hotel_booked INTEGER DEFAULT 0').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE events ADD COLUMN flight_booked INTEGER DEFAULT 0').run(); } catch (_) {}
 
 // Reading list table (created via initSchema, no migration needed — new table)
 

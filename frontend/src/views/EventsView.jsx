@@ -60,6 +60,9 @@ function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
     objective_id:         event?.objective_id || '',
     notes:                event?.notes || '',
     percentage_completed: event?.percentage_completed ?? 0,
+    registered:           !!event?.registered,
+    hotel_booked:         !!event?.hotel_booked,
+    flight_booked:        !!event?.flight_booked,
   });
   const [catIds, setCatIds] = useState(initCatIds);
   const [saving, setSaving] = useState(false);
@@ -79,6 +82,9 @@ function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
       percentage_completed: Number(form.percentage_completed),
       category_ids: catIds,
       category_id: catIds[0] || null,
+      registered: form.registered ? 1 : 0,
+      hotel_booked: form.hotel_booked ? 1 : 0,
+      flight_booked: form.flight_booked ? 1 : 0,
     };
     if (isNew) {
       await api.createEvent(payload);
@@ -173,6 +179,22 @@ function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
               onChange={e => set('percentage_completed', Number(e.target.value))}
               style={{ flex: 1 }} />
             <span style={{ fontSize: 13, fontWeight: 600, minWidth: 36, color: 'var(--accent)' }}>{form.percentage_completed}%</span>
+          </div>
+        </div>
+
+        <div style={fieldW}>
+          <label style={labelSt}>Logística</label>
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+            {[
+              { key: 'registered',   label: 'Registrado' },
+              { key: 'hotel_booked', label: 'Hotel' },
+              { key: 'flight_booked',label: 'Avión' },
+            ].map(({ key, label }) => (
+              <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!form[key]} onChange={e => set(key, e.target.checked)} />
+                {label}
+              </label>
+            ))}
           </div>
         </div>
 
@@ -275,9 +297,12 @@ export default function EventsView() {
               const days = ev.days_remaining;
               const pct = ev.percentage_completed || 0;
               const daysCls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
+              const notRegistered = !ev.registered;
+              const missingLogistics = ev.registered && (!ev.hotel_booked || !ev.flight_booked);
+              const rowBg = notRegistered ? '#fee2e2' : missingLogistics ? '#fef9c3' : isActive ? 'var(--accent-light)' : 'transparent';
               return (
                 <div key={ev.id} className="task-row"
-                  style={{ cursor: 'pointer', background: isActive ? 'var(--accent-light)' : 'transparent', margin: isActive ? '0 -18px' : 0, padding: isActive ? '10px 18px' : '10px 0' }}
+                  style={{ cursor: 'pointer', background: rowBg, margin: '0 -18px', padding: '10px 18px' }}
                   onClick={() => setSelected(ev)}>
                   <div className="task-info">
                     <div style={{ fontWeight: 500, fontSize: 13 }}>🎪 {ev.title}</div>
@@ -287,6 +312,9 @@ export default function EventsView() {
                       {isActive && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>Activo</span>}
                       {ev.location && <span className="task-time">📍 {ev.location}</span>}
                       {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      <span style={{ fontSize: 11, color: ev.registered ? '#16a34a' : '#dc2626' }}>{ev.registered ? '✓ Reg.' : '✗ Reg.'}</span>
+                      {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.hotel_booked ? '#16a34a' : '#b45309' }}>{ev.hotel_booked ? '✓ Hotel' : '✗ Hotel'}</span>}
+                      {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.flight_booked ? '#16a34a' : '#b45309' }}>{ev.flight_booked ? '✓ Avión' : '✗ Avión'}</span>}
                     </div>
                     {pct > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>

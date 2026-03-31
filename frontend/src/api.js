@@ -37,6 +37,7 @@ export const api = {
   taskById:      (id) => get(`/tasks/${id}`),
   createTask:    (body) => post('/tasks', body),
   updateTask:    (id, body) => put(`/tasks/${id}`, body),
+  deleteTask:    (id) => fetch(BASE + `/tasks/${id}`, { method: 'DELETE' }).then(r => r.json()),
 
   createCategory:   (body) => post('/categories', body),
   updateCategory:   (id, body) => put(`/categories/${id}`, body),

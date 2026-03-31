@@ -9,7 +9,7 @@ function parseCatIds(raw, fallback) {
   return fallback ? [fallback] : [];
 }
 
-export default function TaskModal({ initial = {}, onSave, onClose }) {
+export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) {
   const isEdit = !!initial.id;
   const [form, setForm] = useState({
     title: '', description: '', date: '', start_time: '', end_time: '',
@@ -22,6 +22,7 @@ export default function TaskModal({ initial = {}, onSave, onClose }) {
   const [allMilestones, setAllMilestones] = useState([]);
   const [allContent, setAllContent] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -259,11 +260,27 @@ export default function TaskModal({ initial = {}, onSave, onClose }) {
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear tarea'}
-            </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+            {isEdit ? (
+              <button type="button" className="btn btn-ghost" disabled={deleting}
+                style={{ color: '#dc2626', borderColor: '#dc2626' }}
+                onClick={async () => {
+                  if (!confirm('¿Eliminar esta tarea?')) return;
+                  setDeleting(true);
+                  const r = await api.deleteTask(initial.id);
+                  setDeleting(false);
+                  if (r.error) { setError(r.error); return; }
+                  (onDeleted || onSave)();
+                }}>
+                {deleting ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            ) : <span />}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>
+                {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear tarea'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

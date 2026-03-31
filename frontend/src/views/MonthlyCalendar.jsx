@@ -186,7 +186,8 @@ export default function MonthlyCalendar() {
           const today = isToday(d);
           const isSelected = selected && toDateStr(d) === toDateStr(selected);
           const { tasks: dt, events: de } = getItemsForDay(d);
-          const dayGapHours = inMonth ? getGapHours(dt) : [];
+          const nowHour = new Date().getHours();
+          const dayGapHours = inMonth ? getGapHours(dt).filter(h => !today || h >= nowHour) : [];
           const allItems = [
             ...de.map(e => ({ ...e, _type: 'event' })),
             ...dt.slice(0, 3).map(t => ({ ...t, _type: 'task' })),

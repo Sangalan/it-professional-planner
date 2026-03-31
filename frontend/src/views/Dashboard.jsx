@@ -28,10 +28,12 @@ function ProgressCard({ label, pct, done, total, color }) {
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [cats, setCats] = useState([]);
+  const [events, setEvents] = useState([]);
 
   useEffect(() => {
     api.dashboard().then(setData);
     api.categories().then(setCats);
+    api.events().then(setEvents);
   }, []);
 
   if (!data) return <div className="empty-state">Cargando dashboard...</div>;
@@ -127,7 +129,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Próximos hitos */}
+        {/* Upcoming milestones */}
         <div className="card">
           <div className="card-header">
             <span className="card-title">Próximos hitos</span>
@@ -260,6 +262,48 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Events — pending logistics */}
+      {(() => {
+        const pending = events.filter(ev => ev.status !== 'cancelled' && ev.status !== 'completed' && (!ev.registered || (ev.format !== 'Online' && (!ev.hotel_booked || !ev.flight_booked))));
+        if (pending.length === 0) return null;
+        return (
+          <div className="card" style={{ marginTop: 20, borderColor: '#fde047' }}>
+            <div className="card-header" style={{ background: '#fef9c3' }}>
+              <span className="card-title" style={{ color: '#92400e' }}>🎪 Eventos — Cosas pendientes ({pending.length})</span>
+              <a href="/events" style={{ fontSize: 12, color: 'var(--accent)' }}>Ver todos →</a>
+            </div>
+            <div className="card-body" style={{ padding: '8px 18px' }}>
+              {pending.map(ev => {
+                const missing = [];
+                if (!ev.registered) missing.push({ label: 'Registrado', urgent: true });
+                if (ev.format !== 'Online' && !ev.hotel_booked) missing.push({ label: 'Hotel', urgent: false });
+                if (ev.format !== 'Online' && !ev.flight_booked) missing.push({ label: 'Avión', urgent: false });
+                return (
+                  <div key={ev.id} className="task-row" style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div className="dot" style={{ background: getCatColor(ev.category_id), marginTop: 4 }} />
+                    <div className="task-info">
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{ev.title}</div>
+                      <div className="task-meta" style={{ marginTop: 4 }}>
+                        <span className="task-time">{fmtShortDate(ev.start_date)}</span>
+                        {missing.map(m => (
+                          <span key={m.label} style={{
+                            fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
+                            background: m.urgent ? '#fee2e2' : '#fef9c3',
+                            color: m.urgent ? '#dc2626' : '#92400e',
+                          }}>
+                            ✗ {m.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

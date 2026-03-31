@@ -4,13 +4,6 @@ const { db, initSchema } = require('./db');
 
 initSchema();
 
-// Auto-seed if empty
-const count = db.prepare('SELECT COUNT(*) as n FROM categories').get();
-if (count.n === 0) {
-  console.log('Base de datos vacía — ejecutando seed inicial...');
-  require('./seed');
-}
-
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -272,6 +265,20 @@ app.put('/api/tasks/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id));
 });
 
+app.delete('/api/tasks/:id', (req, res) => {
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+  // Recompute objective progress
+  if (task.objective_id) {
+    const pct = computeTaskProgress(task.objective_id);
+    const obj = db.prepare('SELECT status FROM objectives WHERE id = ?').get(task.objective_id);
+    const newStatus = deriveObjectiveStatus(obj?.status, pct);
+    db.prepare('UPDATE objectives SET percentage_completed = ?, status = ? WHERE id = ?').run(pct, newStatus, task.objective_id);
+  }
+  res.json({ ok: true });
+});
+
 // ── OBJECTIVES ───────────────────────────────────────────────────────────────
 app.get('/api/objectives', (req, res) => {
   const objectives = db.prepare('SELECT * FROM objectives ORDER BY priority, start_date').all();
@@ -391,20 +398,20 @@ app.get('/api/events', (req, res) => {
 });
 
 app.post('/api/events', (req, res) => {
-  const { title, start_date, end_date, location, format, estimated_cost, status, notes, objective_id, category_id, category_ids, percentage_completed } = req.body;
+  const { title, start_date, end_date, location, format, estimated_cost, status, notes, objective_id, category_id, category_ids, percentage_completed, registered, hotel_booked, flight_booked } = req.body;
   if (!title) return res.status(400).json({ error: 'title es obligatorio' });
   const id = 'evt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
-  db.prepare('INSERT INTO events (id,title,start_date,end_date,location,format,estimated_cost,status,notes,objective_id,category_id,category_ids,percentage_completed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, title, start_date||null, end_date||null, location||null, format||null, estimated_cost||0, status||'not_started', notes||null, objective_id||null, primaryCat, cats.length ? JSON.stringify(cats) : null, percentage_completed||0);
+  db.prepare('INSERT INTO events (id,title,start_date,end_date,location,format,estimated_cost,status,notes,objective_id,category_id,category_ids,percentage_completed,registered,hotel_booked,flight_booked) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title, start_date||null, end_date||null, location||null, format||null, estimated_cost||0, status||'not_started', notes||null, objective_id||null, primaryCat, cats.length ? JSON.stringify(cats) : null, percentage_completed||0, registered?1:0, hotel_booked?1:0, flight_booked?1:0);
   const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(id);
   ev.days_remaining = daysRemaining(ev.end_date || ev.start_date);
   res.status(201).json(ev);
 });
 
 app.put('/api/events/:id', (req, res) => {
-  const { title, start_date, end_date, location, format, estimated_cost, status, notes, objective_id, category_id, category_ids, percentage_completed } = req.body;
+  const { title, start_date, end_date, location, format, estimated_cost, status, notes, objective_id, category_id, category_ids, percentage_completed, registered, hotel_booked, flight_booked } = req.body;
   const cats = category_ids !== undefined
     ? (Array.isArray(category_ids) ? category_ids : (typeof category_ids === 'string' ? JSON.parse(category_ids) : []))
     : null;
@@ -421,12 +428,19 @@ app.put('/api/events/:id', (req, res) => {
     objective_id         = COALESCE(@oid,   objective_id),
     category_id          = COALESCE(@cat,   category_id),
     category_ids         = COALESCE(@cids,  category_ids),
-    percentage_completed = COALESCE(@pct,   percentage_completed)
+    percentage_completed = COALESCE(@pct,   percentage_completed),
+    registered           = COALESCE(@reg,   registered),
+    hotel_booked         = COALESCE(@htl,   hotel_booked),
+    flight_booked        = COALESCE(@flt,   flight_booked)
     WHERE id = @id`)
     .run({ title: title??null, sd: start_date??null, ed: end_date??null, loc: location??null,
       fmt: format??null, cost: estimated_cost??null, s: status??null, n: notes??null,
       oid: objective_id??null, cat: primaryCat, cids: cats ? JSON.stringify(cats) : null,
-      pct: percentage_completed??null, id: req.params.id });
+      pct: percentage_completed??null,
+      reg: registered !== undefined ? (registered ? 1 : 0) : null,
+      htl: hotel_booked !== undefined ? (hotel_booked ? 1 : 0) : null,
+      flt: flight_booked !== undefined ? (flight_booked ? 1 : 0) : null,
+      id: req.params.id });
   const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
   ev.days_remaining = daysRemaining(ev.end_date || ev.start_date);
   res.json(ev);
