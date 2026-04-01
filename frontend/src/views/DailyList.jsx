@@ -1,10 +1,39 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { api } from '../api.js';
-import { toDateStr, fmtDate, formatDuration, getGapHours } from '../utils/dateUtils.js';
-import { statusLabel } from '../utils/categoryUtils.js';
+import { toDateStr, fmtDate, formatDuration, getGapHours, timeToMinutes } from '../utils/dateUtils.js';
+import { getCatColor } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
 import CatBadge from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
+
+const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00–22:00
+const SLOT_H = 60; // px per hour
+const WORK_START = 9 * 60;  // 09:00 in minutes
+const WORK_END   = 20 * 60; // 20:00 in minutes
+const WORK_WINDOW = (WORK_END - WORK_START) / 60; // 11h
+
+// Merge task intervals within 9:00–20:00 and return scheduled + free hours
+function computeWindowStats(tasks) {
+  const intervals = tasks
+    .filter(t => t.start_time && t.end_time)
+    .map(t => [
+      Math.max(timeToMinutes(t.start_time), WORK_START),
+      Math.min(timeToMinutes(t.end_time),   WORK_END),
+    ])
+    .filter(([s, e]) => s < e)
+    .sort(([a], [b]) => a - b);
+
+  let covered = 0;
+  let cursor  = WORK_START;
+  for (const [s, e] of intervals) {
+    if (s > cursor) cursor = s;
+    covered += Math.max(0, e - cursor);
+    cursor   = Math.max(cursor, e);
+  }
+  const scheduledH = covered / 60;
+  const freeH      = Math.max(0, WORK_WINDOW - scheduledH);
+  return { scheduledH, freeH };
+}
 
 function parseCatIds(raw, fallback) {
   if (Array.isArray(raw) && raw.length) return raw;
@@ -14,138 +43,112 @@ function parseCatIds(raw, fallback) {
   return fallback ? [fallback] : [];
 }
 
-function TaskRow({ task, onUpdate }) {
-  const [pct, setPct] = useState(task.percentage_completed || 0);
-  const [saving, setSaving] = useState(false);
-  const [editing, setEditing] = useState(false);
-
-  const isOverdue = task.is_overdue;
-  const isActive = (() => {
-    const now = new Date().toTimeString().slice(0, 5);
-    return task.start_time && task.end_time && task.start_time <= now && task.end_time > now;
-  })();
-
-  async function toggle() {
-    const newStatus = task.status === 'completed' ? 'pending' : 'completed';
-    const newPct    = newStatus === 'completed' ? 100 : task.percentage_completed;
-    setSaving(true);
-    await api.updateTask(task.id, { status: newStatus, percentage_completed: newPct });
-    setSaving(false);
-    onUpdate();
-  }
-
-  async function savePct(val) {
-    setPct(val);
-    await api.updateTask(task.id, {
-      percentage_completed: val,
-      status: val >= 100 ? 'completed' : val > 0 ? 'in_progress' : 'pending',
-    });
-    onUpdate();
-  }
-
-  const rowClass = [
-    'task-row',
-    isOverdue && task.status !== 'completed' ? 'overdue' : '',
-    isActive ? 'active-now' : '',
-  ].filter(Boolean).join(' ');
-
-  return (
-    <div className={rowClass}>
-      <div
-        className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
-        onClick={toggle}
-        title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}
-      >
-        {task.status === 'completed' ? '✓' : ''}
-      </div>
-      <div className="task-info" style={{ cursor: 'pointer' }} onClick={() => setEditing(true)}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>
-            {isActive && <span title="Tarea activa ahora" style={{ marginRight: 4 }}>▶</span>}
-            {task.title}
-          </div>
-          {task.is_fixed === 1 && <span title="Tarea fija" style={{ fontSize: 10, color: 'var(--text-3)' }}>📌</span>}
-        </div>
-        <div className="task-meta">
-          {task.start_time && (
-            <span className="task-time">{task.start_time}–{task.end_time}</span>
-          )}
-          {task.duration_estimated > 0 && (
-            <span className="task-time">({formatDuration(task.duration_estimated)})</span>
-          )}
-          {parseCatIds(task.category_ids, task.category_id).map(cid => (
-            <CatBadge key={cid} id={cid} />
-          ))}
-          {task.priority === 1 && <span className="badge" style={{ background: '#fef9c3', color: '#92400e' }}>Alta</span>}
-          {isOverdue && task.status !== 'completed' && <span className="overdue-tag">Vencida</span>}
-        </div>
-        {/* Progress slider */}
-        {task.status !== 'completed' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-            <input
-              type="range" min="0" max="100" step="5"
-              value={pct}
-              style={{ flex: 1, maxWidth: 140 }}
-              onChange={e => setPct(Number(e.target.value))}
-              onMouseUp={e => savePct(Number(e.target.value))}
-              onTouchEnd={e => savePct(Number(e.target.value))}
-            />
-            <span style={{ fontSize: 11, color: 'var(--text-3)', minWidth: 28 }}>{pct}%</span>
-          </div>
-        )}
-        {task.notes && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4, fontStyle: 'italic' }}>{task.notes}</div>}
-      </div>
-      {editing && (
-        <TaskModal
-          initial={task}
-          onClose={() => setEditing(false)}
-          onSave={() => { setEditing(false); onUpdate(); }}
-        />
-      )}
-    </div>
-  );
-}
-
 export default function DailyList() {
-  const [tasks, setTasks] = useState([]);
-  const [dateStr, setDateStr] = useState(toDateStr(new Date()));
+  const [tasks, setTasks]       = useState([]);
+  const [dateStr, setDateStr]   = useState(toDateStr(new Date()));
   const [filterCat, setFilterCat] = useState('');
-  const [cats, setCats] = useState([]);
+  const [cats, setCats]         = useState([]);
+  const [objectives, setObjectives] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [gapDialog, setGapDialog] = useState(null); // { hour }
+  const [editTask, setEditTask] = useState(null);
+  const [gapDialog, setGapDialog] = useState(null);
+  const [currentTime, setCurrentTime] = useState(new Date().toTimeString().slice(0, 5));
 
   async function load() {
-    const data = await api.tasks({ date: dateStr, ...(filterCat ? { category_id: filterCat } : {}) });
+    const data = await api.tasks({ date: dateStr });
     setTasks(data);
   }
 
-  useEffect(() => { load(); }, [dateStr, filterCat]);
+  useEffect(() => { load(); }, [dateStr]);
   useEffect(() => { api.categories().then(setCats); }, []);
+  useEffect(() => { api.objectives().then(setObjectives); }, []);
+  useEffect(() => {
+    const iv = setInterval(() => setCurrentTime(new Date().toTimeString().slice(0, 5)), 60000);
+    return () => clearInterval(iv);
+  }, []);
 
-  const isToday = dateStr === toDateStr(new Date());
+  const objMap = useMemo(() => {
+    const m = {};
+    for (const o of objectives) m[o.id] = o;
+    return m;
+  }, [objectives]);
+
+  function getTaskColor(task) {
+    const obj = task.objective_id ? objMap[task.objective_id] : null;
+    if (obj?.color) return obj.color;
+    if (obj?.category_id) return getCatColor(obj.category_id);
+    return getCatColor(task.category_id);
+  }
+
+  async function toggleTask(task) {
+    const newStatus = task.status === 'completed' ? 'pending' : 'completed';
+    await api.updateTask(task.id, { status: newStatus });
+    load();
+  }
+
+  const isToday    = dateStr === toDateStr(new Date());
+  const nowHour    = new Date().getHours();
+  const currentMin = timeToMinutes(currentTime);
+  const firstHourMin = HOURS[0] * 60;
+  const totalHeight  = HOURS.length * SLOT_H;
+  const nowOffset    = currentMin - firstHourMin;
+  const showNowBar   = isToday && nowOffset >= 0 && nowOffset < HOURS.length * 60;
+
+  // Filtered tasks
+  const visible = filterCat
+    ? tasks.filter(t => parseCatIds(t.category_ids, t.category_id).includes(filterCat))
+    : tasks;
+
+  const timedTasks   = visible.filter(t => t.start_time);
+  const untimedTasks = visible.filter(t => !t.start_time);
+  const overdue      = tasks.filter(t => t.is_overdue && t.status !== 'completed');
+  const gapHours     = getGapHours(tasks).filter(h => !isToday || h >= nowHour);
+
   const pending   = tasks.filter(t => t.status !== 'completed');
   const completed = tasks.filter(t => t.status === 'completed');
-  const overdue   = tasks.filter(t => t.is_overdue && t.status !== 'completed');
-  const nowHour   = new Date().getHours();
-  const gapHours  = getGapHours(tasks).filter(h => !isToday || h >= nowHour);
 
-  const dateLabel = isToday ? 'Hoy' : fmtDate(dateStr);
+  const { scheduledH, freeH } = computeWindowStats(tasks);
+
+  // Date label for header
+  const dateObj  = new Date(dateStr + 'T12:00:00');
+  const dayLabel = dateObj.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
     <div>
+      {/* ── Header ── */}
       <div className="page-header">
         <div>
-          <div className="page-title">Lista diaria — {dateLabel}</div>
-          <div className="page-subtitle">{pending.length} pendientes · {completed.length} completadas</div>
+          <div className="page-title" style={{ textTransform: 'capitalize' }}>
+            {isToday ? 'Hoy' : dayLabel}
+          </div>
+          <div className="page-subtitle" style={{ textTransform: 'capitalize' }}>
+            {isToday ? dayLabel + ' · ' : ''}{pending.length} pendientes · {completed.length} completadas
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+            <span style={{
+              fontSize: 12, padding: '3px 10px', borderRadius: 99,
+              background: '#dbeafe', color: '#1d4ed8', fontWeight: 600,
+            }}>
+              🕐 {scheduledH % 1 === 0 ? scheduledH : scheduledH.toFixed(1)}h programadas
+            </span>
+            <span style={{
+              fontSize: 12, padding: '3px 10px', borderRadius: 99,
+              background: freeH === 0 ? '#dcfce7' : '#fef9c3',
+              color:      freeH === 0 ? '#15803d'  : '#92400e',
+              fontWeight: 600,
+            }}>
+              ☀ {freeH % 1 === 0 ? freeH : freeH.toFixed(1)}h libres (9–20h)
+            </span>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-ghost btn-sm"
-            onClick={() => { const d = new Date(dateStr); d.setDate(d.getDate()-1); setDateStr(toDateStr(d)); }}>
+            onClick={() => { const d = new Date(dateStr); d.setDate(d.getDate() - 1); setDateStr(toDateStr(d)); }}>
             ← Anterior
           </button>
           <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)} />
           <button className="btn btn-ghost btn-sm"
-            onClick={() => { const d = new Date(dateStr); d.setDate(d.getDate()+1); setDateStr(toDateStr(d)); }}>
+            onClick={() => { const d = new Date(dateStr); d.setDate(d.getDate() + 1); setDateStr(toDateStr(d)); }}>
             Siguiente →
           </button>
           {!isToday && (
@@ -162,8 +165,24 @@ export default function DailyList() {
           onSave={() => { setShowCreate(false); load(); }}
         />
       )}
+      {editTask && (
+        <TaskModal
+          initial={editTask}
+          onClose={() => setEditTask(null)}
+          onSave={() => { setEditTask(null); load(); }}
+          onDeleted={() => { setEditTask(null); load(); }}
+        />
+      )}
+      {gapDialog && (
+        <GapPickerDialog
+          date={dateStr}
+          hour={gapDialog.hour}
+          onClose={() => setGapDialog(null)}
+          onCreated={load}
+        />
+      )}
 
-      {/* Category filter */}
+      {/* ── Category filter ── */}
       <div className="filter-row">
         <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Filtrar:</span>
         <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todas</span>
@@ -177,15 +196,7 @@ export default function DailyList() {
         ))}
       </div>
 
-      {gapDialog && (
-        <GapPickerDialog
-          date={dateStr}
-          hour={gapDialog.hour}
-          onClose={() => setGapDialog(null)}
-          onCreated={load}
-        />
-      )}
-
+      {/* ── Gap warning ── */}
       {gapHours.length > 0 && (
         <div style={{ marginBottom: 16, padding: '10px 14px', background: '#fef9c3', borderRadius: 6, border: '1px solid #fde047' }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>
@@ -193,59 +204,298 @@ export default function DailyList() {
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {gapHours.map(h => (
-              <span key={h}
-                onClick={() => setGapDialog({ hour: h })}
-                style={{
-                  cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
-                  background: '#fef08a', color: '#92400e', border: '1px solid #fde047', fontWeight: 600,
-                }}>
-                {String(h).padStart(2,'0')}:00
+              <span key={h} onClick={() => setGapDialog({ hour: h })} style={{
+                cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
+                background: '#fef08a', color: '#92400e', border: '1px solid #fde047', fontWeight: 600,
+              }}>
+                {String(h).padStart(2, '0')}:00
               </span>
             ))}
           </div>
         </div>
       )}
 
+      {/* ── Overdue warning ── */}
       {overdue.length > 0 && (
         <div style={{ marginBottom: 16, padding: '8px 12px', background: 'var(--danger-bg)', borderRadius: 6, border: '1px solid #fecaca', fontSize: 12, color: 'var(--danger)' }}>
           ⚠ {overdue.length} tarea{overdue.length > 1 ? 's' : ''} vencida{overdue.length > 1 ? 's' : ''}
         </div>
       )}
 
+      {/* ── Untimed tasks ── */}
+      {untimedTasks.length > 0 && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="card-header">
+            <span className="card-title">Sin horario ({untimedTasks.length})</span>
+          </div>
+          <div style={{ padding: '0 18px' }}>
+            {untimedTasks.map(task => (
+              <UntimeRow
+                key={task.id}
+                task={task}
+                color={getTaskColor(task)}
+                onToggle={() => toggleTask(task)}
+                onEdit={() => setEditTask(task)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Empty state ── */}
       {tasks.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
           Sin tareas para este día
         </div>
       ) : (
-        <>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-header">
-              <span className="card-title">Pendientes ({pending.length})</span>
-            </div>
-            <div style={{ padding: '0 18px' }}>
-              {pending.length === 0 ? (
-                <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--success)', fontWeight: 600 }}>
-                  ✅ Todo completado
+        /* ── Time grid ── */
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '52px 1fr',
+            background: 'var(--border)',
+            gap: 1,
+          }}>
+            {/* Hour labels column */}
+            <div style={{ background: 'var(--surface)' }}>
+              {HOURS.map(hour => (
+                <div key={hour} style={{
+                  height: SLOT_H,
+                  borderTop: '1px solid var(--border)',
+                  fontSize: 10,
+                  color: 'var(--text-3)',
+                  textAlign: 'right',
+                  padding: '5px 6px 0',
+                  lineHeight: 1,
+                }}>
+                  {String(hour).padStart(2, '0')}:00
                 </div>
-              ) : (
-                pending.map(t => <TaskRow key={t.id} task={t} onUpdate={load} />)
+              ))}
+            </div>
+
+            {/* Day column */}
+            <div style={{ position: 'relative', height: totalHeight, background: 'var(--surface)' }}>
+
+              {/* Hour grid lines */}
+              {HOURS.map((hour, idx) => (
+                <div key={hour} style={{
+                  position: 'absolute',
+                  top: idx * SLOT_H, left: 0, right: 0, height: SLOT_H,
+                  borderTop: '1px solid var(--border)',
+                  pointerEvents: 'none',
+                }} />
+              ))}
+
+              {/* Current time bar */}
+              {showNowBar && (
+                <div style={{
+                  position: 'absolute',
+                  top: (nowOffset / 60) * SLOT_H,
+                  left: 0, right: 0, height: 2,
+                  background: 'var(--danger)',
+                  zIndex: 10,
+                  pointerEvents: 'none',
+                }} />
               )}
+
+              {/* Gap indicators */}
+              {gapHours.map(h => {
+                const idx = h - HOURS[0];
+                if (idx < 0 || idx >= HOURS.length) return null;
+                return (
+                  <div key={`gap-${h}`}
+                    onClick={() => setGapDialog({ hour: h })}
+                    title={`Hueco libre ${String(h).padStart(2, '0')}:00–${String(h + 1).padStart(2, '0')}:00`}
+                    style={{
+                      position: 'absolute',
+                      top: idx * SLOT_H, left: 0, right: 0, height: SLOT_H,
+                      background: '#fef08a44',
+                      borderTop: '1px dashed #fde047',
+                      cursor: 'pointer',
+                      zIndex: 2,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                    <span style={{ fontSize: 10, color: '#a16207', fontWeight: 600, pointerEvents: 'none' }}>
+                      + tarea
+                    </span>
+                  </div>
+                );
+              })}
+
+              {/* Task blocks */}
+              {timedTasks.map(task => {
+                const startMin = timeToMinutes(task.start_time) - firstHourMin;
+                const endMin   = task.end_time
+                  ? timeToMinutes(task.end_time) - firstHourMin
+                  : startMin + 60;
+                const top    = Math.max(0, (startMin / 60) * SLOT_H);
+                const height = Math.max(22, ((endMin - startMin) / 60) * SLOT_H - 2);
+                const isNow  = isToday
+                  && timeToMinutes(task.start_time) <= currentMin
+                  && (task.end_time ? timeToMinutes(task.end_time) > currentMin : false);
+                const color   = getTaskColor(task);
+                const catIds  = parseCatIds(task.category_ids, task.category_id);
+                const dur     = task.duration_estimated
+                  || (task.end_time ? timeToMinutes(task.end_time) - timeToMinutes(task.start_time) : 0);
+
+                // How much info fits
+                const showMeta   = height >= 44;
+                const showCats   = height >= 66;
+                const showNotes  = height >= 90 && task.notes;
+
+                return (
+                  <div
+                    key={task.id}
+                    onClick={() => setEditTask(task)}
+                    style={{
+                      position: 'absolute',
+                      top, left: 6, right: 6, height,
+                      background: isNow
+                        ? color
+                        : color + (task.status === 'completed' ? '55' : 'cc'),
+                      borderRadius: 5,
+                      borderLeft: `4px solid ${color}`,
+                      padding: height < 44 ? '2px 8px' : '5px 10px',
+                      overflow: 'hidden',
+                      cursor: 'pointer',
+                      zIndex: 5,
+                      display: 'flex',
+                      alignItems: height < 44 ? 'center' : 'flex-start',
+                      gap: 7,
+                    }}
+                  >
+                    {/* Checkbox */}
+                    <div
+                      onClick={e => { e.stopPropagation(); toggleTask(task); }}
+                      title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}
+                      style={{
+                        width: 16, height: 16, flexShrink: 0,
+                        borderRadius: 3,
+                        border: `2px solid rgba(255,255,255,${task.status === 'completed' ? 1 : 0.65})`,
+                        background: task.status === 'completed' ? 'white' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer',
+                        color: color,
+                        fontSize: 10, fontWeight: 900,
+                        marginTop: height < 44 ? 0 : 1,
+                      }}
+                    >
+                      {task.status === 'completed' ? '✓' : ''}
+                    </div>
+
+                    {/* Content */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {/* Title */}
+                      <div style={{
+                        fontSize: 12, color: 'white', fontWeight: 600,
+                        lineHeight: 1.25,
+                        textDecoration: task.status === 'completed' ? 'line-through' : 'none',
+                        opacity: task.status === 'completed' ? 0.75 : 1,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {isNow && <span style={{ marginRight: 3 }}>▶</span>}
+                        {task.is_fixed === 1 && <span style={{ marginRight: 3, fontSize: 10 }}>📌</span>}
+                        {task.title}
+                      </div>
+
+                      {/* Time + duration */}
+                      {showMeta && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 10, color: 'rgba(255,255,255,.85)', fontVariantNumeric: 'tabular-nums' }}>
+                            {task.start_time}–{task.end_time}
+                          </span>
+                          {dur > 0 && (
+                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,.7)' }}>
+                              ({formatDuration(dur)})
+                            </span>
+                          )}
+                          {task.priority === 1 && (
+                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,.9)', fontWeight: 700 }}>★</span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Category badges */}
+                      {showCats && catIds.length > 0 && (
+                        <div style={{ display: 'flex', gap: 3, marginTop: 3, flexWrap: 'wrap' }}>
+                          {catIds.map(cid => {
+                            const cat = cats.find(c => c.id === cid);
+                            return cat ? (
+                              <span key={cid} style={{
+                                fontSize: 9, padding: '1px 6px', borderRadius: 8,
+                                background: 'rgba(255,255,255,.25)', color: 'white',
+                                fontWeight: 600, whiteSpace: 'nowrap',
+                              }}>
+                                {cat.name}
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      )}
+
+                      {/* Notes */}
+                      {showNotes && (
+                        <div style={{
+                          fontSize: 10, color: 'rgba(255,255,255,.7)',
+                          marginTop: 3, fontStyle: 'italic',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {task.notes}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
-
-          {completed.length > 0 && (
-            <div className="card">
-              <div className="card-header">
-                <span className="card-title" style={{ color: 'var(--success)' }}>Completadas ({completed.length})</span>
-              </div>
-              <div style={{ padding: '0 18px' }}>
-                {completed.map(t => <TaskRow key={t.id} task={t} onUpdate={load} />)}
-              </div>
-            </div>
-          )}
-        </>
+        </div>
       )}
+    </div>
+  );
+}
+
+function UntimeRow({ task, color, onToggle, onEdit }) {
+  const catIds = parseCatIds(task.category_ids, task.category_id);
+  const isOverdue = !!task.is_overdue && task.status !== 'completed';
+  return (
+    <div
+      className={`task-row${isOverdue ? ' overdue' : ''}`}
+      style={{ cursor: 'pointer' }}
+      onClick={onEdit}
+    >
+      <div
+        className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
+        onClick={e => { e.stopPropagation(); onToggle(); }}
+        title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}
+      >
+        {task.status === 'completed' ? '✓' : ''}
+      </div>
+      <div className="task-info">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+          <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>
+            {task.title}
+          </div>
+          {task.is_fixed === 1 && <span style={{ fontSize: 10, color: 'var(--text-3)' }}>📌</span>}
+        </div>
+        <div className="task-meta">
+          {task.duration_estimated > 0 && (
+            <span className="task-time">({formatDuration(task.duration_estimated)})</span>
+          )}
+          {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+          {task.priority === 1 && (
+            <span className="badge" style={{ background: '#fef9c3', color: '#92400e' }}>Alta</span>
+          )}
+          {isOverdue && <span className="overdue-tag">Vencida</span>}
+        </div>
+        {task.notes && (
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4, fontStyle: 'italic' }}>
+            {task.notes}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

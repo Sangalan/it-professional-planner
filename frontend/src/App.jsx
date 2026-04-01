@@ -14,7 +14,6 @@ import ReposView from './views/ReposView.jsx';
 import PRsView from './views/PRsView.jsx';
 import EventsView from './views/EventsView.jsx';
 import ReadingListView from './views/ReadingListView.jsx';
-import Reports from './views/Reports.jsx';
 import Search from './views/Search.jsx';
 import Settings from './views/Settings.jsx';
 import ImportExport from './views/ImportExport.jsx';
@@ -108,7 +107,6 @@ const navMain = [
   { path: '/week',      icon: '🗓',  label: 'Semana' },
   { path: '/month',     icon: '📅',  label: 'Mes' },
   { path: '/objectives',icon: '🎯',  label: 'Objetivos' },
-  { path: '/reports',   icon: '📈',  label: 'Reportes' },
 ];
 
 const navContent = [
@@ -180,14 +178,13 @@ export default function App() {
             <Route path="/week"       element={<WeeklyCalendar />} />
             <Route path="/month"      element={<MonthlyCalendar />} />
             <Route path="/objectives" element={<ObjectivesView />} />
-            <Route path="/publications"   element={<PublicationsView />} />
+            <Route path="/publications" element={<PublicationsView />} />
             <Route path="/certifications" element={<CertificationsView />} />
             <Route path="/repos"          element={<ReposView />} />
             <Route path="/prs"            element={<PRsView />} />
             <Route path="/reading-list"   element={<ReadingListView />} />
             <Route path="/events"         element={<EventsView />} />
-            <Route path="/reports"    element={<Reports />} />
-            <Route path="/search"        element={<Search />} />
+            <Route path="/search"     element={<Search />} />
             <Route path="/import-export" element={<ImportExport />} />
             <Route path="/settings"      element={<Settings />} />
           </Routes>

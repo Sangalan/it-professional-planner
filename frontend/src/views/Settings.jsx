@@ -295,8 +295,7 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
   const [form, setForm] = useState({
     title: m?.title || '', description: m?.description || '',
     objective_id: m?.objective_id || '', target_date: m?.target_date || '',
-    weight: m?.weight ?? 10, status: m?.status || 'not_started',
-    percentage_completed: m?.percentage_completed ?? 0,
+    status: m?.status || 'not_started',
   });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -309,7 +308,7 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
     if (isNew && !form.objective_id) { setError('El objetivo es obligatorio'); return; }
     setSaving(true); setError('');
     try {
-      const payload = { ...form, weight: Number(form.weight), percentage_completed: Number(form.percentage_completed) };
+      const payload = { ...form };
       if (isNew) await api.createMilestone(payload);
       else await api.updateMilestone(m.id, payload);
       onSaved(); onClose();
@@ -340,7 +339,7 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
           </select>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div>
           <label style={labelSt}>Fecha objetivo</label>
           <input type="date" value={form.target_date} onChange={e => set('target_date', e.target.value)} style={{ width: '100%' }} />
@@ -353,14 +352,6 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
             <option value="completed">Completado</option>
             <option value="blocked">Bloqueado</option>
           </select>
-        </div>
-        <div>
-          <label style={labelSt}>Peso (%)</label>
-          <input type="number" min="1" max="100" value={form.weight} onChange={e => set('weight', e.target.value)} style={{ width: '100%' }} />
-        </div>
-        <div>
-          <label style={labelSt}>% completado</label>
-          <input type="number" min="0" max="100" step="5" value={form.percentage_completed} onChange={e => set('percentage_completed', e.target.value)} style={{ width: '100%' }} />
         </div>
       </div>
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
@@ -388,7 +379,7 @@ function MilestoneSettingsRow({ m, objectives, onSaved, onDeleted }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, ...rowBorder, paddingLeft: 12, cursor: 'pointer' }} onClick={() => setEditing(true)}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 500, fontSize: 13 }}>{m.title}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{m.target_date || 'sin fecha'} · {m.status} · peso {m.weight}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{m.target_date || 'sin fecha'} · {m.status}</div>
         </div>
       </div>
     </>

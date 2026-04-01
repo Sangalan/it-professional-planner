@@ -31,6 +31,11 @@ try { db.prepare('ALTER TABLE events ADD COLUMN percentage_completed REAL DEFAUL
 try { db.prepare('ALTER TABLE events ADD COLUMN registered INTEGER DEFAULT 0').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE events ADD COLUMN hotel_booked INTEGER DEFAULT 0').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE events ADD COLUMN flight_booked INTEGER DEFAULT 0').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN fixed_days TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN fixed_start_date TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN fixed_end_date TEXT').run(); } catch (_) {}
+// Reset legacy is_fixed tasks that predate the recurrence system
+try { db.prepare('UPDATE tasks SET is_fixed = 0 WHERE is_fixed = 1 AND fixed_days IS NULL').run(); } catch (_) {}
 
 // Reading list table (created via initSchema, no migration needed — new table)
 

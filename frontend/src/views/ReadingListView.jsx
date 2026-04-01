@@ -341,9 +341,73 @@ function ReadList({ items, onToggle, onEdit }) {
   );
 }
 
+function FilterBar({ search, onSearch, filterCats, onFilterCats }) {
+  const cats = useCats();
+  function toggleCat(id) {
+    onFilterCats(filterCats.includes(id) ? filterCats.filter(c => c !== id) : [...filterCats, id]);
+  }
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <input
+        type="text"
+        value={search}
+        onChange={e => onSearch(e.target.value)}
+        placeholder="Buscar por título o notas…"
+        style={{ width: '100%', marginBottom: 10, fontSize: 13 }}
+      />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {cats.map(cat => {
+          const active = filterCats.includes(cat.id);
+          return (
+            <span key={cat.id} onClick={() => toggleCat(cat.id)} style={{
+              cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
+              background: active ? cat.color + '33' : 'var(--bg)',
+              color: active ? cat.color : 'var(--text-3)',
+              border: `1px solid ${active ? cat.color : 'var(--border)'}`,
+              fontWeight: active ? 600 : 400,
+              userSelect: 'none',
+            }}>
+              {cat.name}
+            </span>
+          );
+        })}
+        {(search || filterCats.length > 0) && (
+          <span onClick={() => { onSearch(''); onFilterCats([]); }} style={{
+            cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
+            background: 'var(--bg)', color: 'var(--text-3)',
+            border: '1px solid var(--border)', userSelect: 'none',
+          }}>
+            ✕ Limpiar
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function applyFilters(items, search, filterCats) {
+  let out = items;
+  if (search.trim()) {
+    const q = search.trim().toLowerCase();
+    out = out.filter(it =>
+      it.title.toLowerCase().includes(q) ||
+      (it.notes && it.notes.toLowerCase().includes(q))
+    );
+  }
+  if (filterCats.length > 0) {
+    out = out.filter(it => {
+      const ids = parseCatIds(it.category_ids, it.category_id);
+      return filterCats.some(fc => ids.includes(fc));
+    });
+  }
+  return out;
+}
+
 export default function ReadingListView() {
   const [items, setItems] = useState([]);
   const [dialog, setDialog] = useState(null); // null | 'new' | item object
+  const [search, setSearch] = useState('');
+  const [filterCats, setFilterCats] = useState([]);
 
   async function load() {
     api.readingList().then(setItems);
@@ -369,15 +433,18 @@ export default function ReadingListView() {
     await api.reorderReadingList(ids);
   }
 
-  const pending = items.filter(it => it.status === 'pending');
-  const read = items.filter(it => it.status !== 'pending');
+  const allPending = items.filter(it => it.status === 'pending');
+  const allRead = items.filter(it => it.status !== 'pending');
+  const isFiltering = search.trim() || filterCats.length > 0;
+  const pending = isFiltering ? applyFilters(allPending, search, filterCats) : allPending;
+  const read = isFiltering ? applyFilters(allRead, search, filterCats) : allRead;
 
   return (
     <div>
       <div className="page-header">
         <div>
           <div className="page-title">Para Leer</div>
-          <div className="page-subtitle">{pending.length} pendientes · {read.length} leídos</div>
+          <div className="page-subtitle">{allPending.length} pendientes · {allRead.length} leídos</div>
         </div>
         <button className="btn btn-primary" onClick={() => setDialog('new')}>+ Añadir</button>
       </div>
@@ -391,10 +458,12 @@ export default function ReadingListView() {
         />
       )}
 
+      <FilterBar search={search} onSearch={setSearch} filterCats={filterCats} onFilterCats={setFilterCats} />
+
       {pending.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📚</div>
-          Sin elementos pendientes
+          {isFiltering ? 'Sin resultados' : 'Sin elementos pendientes'}
         </div>
       ) : (
         <div className="card">

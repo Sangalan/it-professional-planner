@@ -4,8 +4,8 @@ import { fmtShortDate, fmtDate, formatDuration } from '../utils/dateUtils.js';
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import CatBadge from '../components/CatBadge.jsx';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend, LineChart, Line, CartesianGrid
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  PieChart, Pie, Legend, CartesianGrid
 } from 'recharts';
 
 function ProgressCard({ label, pct, done, total, color }) {
@@ -49,12 +49,15 @@ export default function Dashboard() {
       color: catMap[c.category_id]?.color || getCatColor(c.category_id),
     }));
 
-  // Bar chart weekly load
-  const weekData = (data.weekly_load || []).map((w, i) => ({
-    name: `S${i + 1}`,
-    Planificadas: w.total,
-    Completadas: w.done,
-  }));
+  // Bar chart: hours per objective (completed tasks)
+  const objHoursData = (data.objectives || [])
+    .filter(o => o.hours_completed > 0)
+    .map(o => ({
+      name: o.title.length > 22 ? o.title.slice(0, 20) + '…' : o.title,
+      fullName: o.title,
+      Horas: o.hours_completed,
+      color: o.color || getCatColor(o.category_id),
+    }));
 
   const todayFormatted = new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -178,20 +181,30 @@ export default function Dashboard() {
       </div>
 
       <div className="dash-grid-2">
-        {/* Weekly load chart */}
+        {/* Hours per objective chart */}
         <div className="card">
-          <div className="card-header"><span className="card-title">Carga semanal (últimas 4 semanas)</span></div>
+          <div className="card-header"><span className="card-title">Horas dedicadas por objetivo (tareas completadas)</span></div>
           <div className="card-body">
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={weekData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="Planificadas" fill="#cbd5e1" radius={[3,3,0,0]} />
-                <Bar dataKey="Completadas"  fill="#2563eb" radius={[3,3,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {objHoursData.length === 0 ? (
+              <div className="empty-state">Sin horas registradas aún</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={objHoursData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
+                  <YAxis tick={{ fontSize: 11 }} unit="h" />
+                  <Tooltip
+                    formatter={(v, _) => [`${v}h`, 'Horas completadas']}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
+                  />
+                  <Bar dataKey="Horas" radius={[4, 4, 0, 0]}>
+                    {objHoursData.map((entry, i) => (
+                      <Cell key={i} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 

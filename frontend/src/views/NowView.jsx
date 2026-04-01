@@ -187,17 +187,29 @@ export default function NowView() {
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>{taskProgress}% del tiempo transcurrido</div>
 
-          {/* Quick complete button */}
-          <div style={{ marginTop: 14 }}>
-            <button
-              className="btn btn-ghost btn-sm"
+          {/* Complete checkbox */}
+          <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div
               onClick={async () => {
-                await api.updateTask(current.id, { status: 'completed', percentage_completed: 100 });
+                const newStatus = current.status === 'completed' ? 'pending' : 'completed';
+                await api.updateTask(current.id, { status: newStatus, percentage_completed: newStatus === 'completed' ? 100 : current.percentage_completed });
                 refresh();
               }}
+              title={current.status === 'completed' ? 'Desmarcar como completada' : 'Marcar como completada'}
+              style={{
+                width: 22, height: 22, borderRadius: 5, cursor: 'pointer',
+                border: `2px solid ${current.status === 'completed' ? getCatColor(current.category_id) : 'var(--border-2)'}`,
+                background: current.status === 'completed' ? getCatColor(current.category_id) : 'white',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'white', fontSize: 13, fontWeight: 700,
+                flexShrink: 0,
+              }}
             >
-              ✓ Marcar como completada
-            </button>
+              {current.status === 'completed' ? '✓' : ''}
+            </div>
+            <span style={{ fontSize: 13, color: 'var(--text-2)' }}>
+              {current.status === 'completed' ? 'Completada' : 'Marcar como completada'}
+            </span>
           </div>
         </div>
       ) : (

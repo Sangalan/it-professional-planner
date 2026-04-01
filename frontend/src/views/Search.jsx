@@ -194,7 +194,7 @@ export default function Search() {
                     <CatBadge id={task.category_id} />
                     <span className={`badge badge-${task.status}`}>{statusLabel(task.status)}</span>
                     {task.priority === 1 && <span className="badge" style={{ background: '#fef9c3', color: '#92400e' }}>Alta ★</span>}
-                    {task.is_overdue && task.status !== 'completed' && <span className="overdue-tag">Vencida</span>}
+                    {!!task.is_overdue && task.status !== 'completed' && <span className="overdue-tag">Vencida</span>}
                   </div>
                   {task.notes && <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3, fontStyle: 'italic' }}>{task.notes}</div>}
                 </div>

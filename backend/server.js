@@ -12,11 +12,73 @@ app.use(express.json());
 
 function computeTaskProgress(objectiveId) {
   if (!objectiveId) return 0;
-  const all = db.prepare('SELECT status, duration_estimated FROM tasks WHERE objective_id = ?').all(objectiveId);
+  const all = db.prepare('SELECT status FROM tasks WHERE objective_id = ? AND is_fixed = 0').all(objectiveId);
   if (!all.length) return 0;
-  const totalDuration = all.reduce((s, t) => s + (t.duration_estimated || 60), 0);
-  const doneDuration = all.filter(t => t.status === 'completed').reduce((s, t) => s + (t.duration_estimated || 60), 0);
-  return Math.round((doneDuration / totalDuration) * 100);
+  const done = all.filter(t => t.status === 'completed').length;
+  return Math.round((done / all.length) * 100);
+}
+
+// Expand fixed-recurrence tasks into virtual instances within [from, to]
+function expandFixedTasks(from, to, filters = {}) {
+  let sql = `SELECT * FROM tasks WHERE is_fixed = 1 AND fixed_days IS NOT NULL
+    AND (fixed_end_date IS NULL OR fixed_end_date >= ?)
+    AND (fixed_start_date IS NULL OR fixed_start_date <= ?)`;
+  const params = [from, to];
+  if (filters.objective_id) { sql += ' AND objective_id = ?'; params.push(filters.objective_id); }
+  if (filters.milestone_id) { sql += ' AND milestone_id = ?'; params.push(filters.milestone_id); }
+
+  const templates = db.prepare(sql).all(...params);
+  const instances = [];
+  for (const ft of templates) {
+    const days = JSON.parse(ft.fixed_days || '[]');
+    let d = new Date(from + 'T12:00:00');
+    const end = new Date(to + 'T12:00:00');
+    const startBound = ft.fixed_start_date ? new Date(ft.fixed_start_date + 'T12:00:00') : null;
+    const endBound   = ft.fixed_end_date   ? new Date(ft.fixed_end_date   + 'T12:00:00') : null;
+    while (d <= end) {
+      if (days.includes(d.getDay())) {
+        if ((!startBound || d >= startBound) && (!endBound || d <= endBound)) {
+          instances.push({ ...ft, date: d.toISOString().slice(0, 10), is_overdue: 0 });
+        }
+      }
+      d.setDate(d.getDate() + 1);
+    }
+  }
+  return instances;
+}
+
+function computeMilestoneProgress(milestoneId) {
+  if (!milestoneId) return 0;
+  const all = db.prepare('SELECT status FROM tasks WHERE milestone_id = ? AND is_fixed = 0').all(milestoneId);
+  if (!all.length) return 0;
+  const done = all.filter(t => t.status === 'completed').length;
+  return Math.round((done / all.length) * 100);
+}
+
+function deriveMilestoneStatus(currentStatus, pct) {
+  if (currentStatus === 'blocked') return 'blocked';
+  if (pct === 100) return 'completed';
+  if (pct > 0)    return 'in_progress';
+  return 'not_started';
+}
+
+function recomputeForTask(milestoneId, objectiveId) {
+  if (milestoneId) {
+    const pct = computeMilestoneProgress(milestoneId);
+    const ms  = db.prepare('SELECT status FROM milestones WHERE id = ?').get(milestoneId);
+    if (ms) {
+      db.prepare('UPDATE milestones SET percentage_completed = ?, status = ? WHERE id = ?')
+        .run(pct, deriveMilestoneStatus(ms.status, pct), milestoneId);
+    }
+  }
+  if (objectiveId) {
+    const pct = computeTaskProgress(objectiveId);
+    const obj = db.prepare('SELECT status FROM objectives WHERE id = ?').get(objectiveId);
+    if (obj) {
+      db.prepare('UPDATE objectives SET percentage_completed = ?, status = ? WHERE id = ?')
+        .run(pct, deriveObjectiveStatus(obj.status, pct), objectiveId);
+    }
+  }
 }
 
 function deriveObjectiveStatus(currentStatus, pct) {
@@ -85,15 +147,16 @@ app.delete('/api/categories/:id', (req, res) => {
 
 // ── TASKS ────────────────────────────────────────────────────────────────────
 app.get('/api/tasks/search', (req, res) => {
-  const { q, from, to, category_id, status } = req.query;
+  const { q, from, to, category_id, status, objective_id } = req.query;
   let sql = 'SELECT * FROM tasks WHERE 1=1';
   const params = [];
 
-  if (q)           { sql += ' AND title LIKE ?';    params.push(`%${q}%`); }
-  if (from)        { sql += ' AND date >= ?';        params.push(from); }
-  if (to)          { sql += ' AND date <= ?';        params.push(to); }
-  if (category_id) { sql += ' AND category_id = ?'; params.push(category_id); }
-  if (status)      { sql += ' AND status = ?';      params.push(status); }
+  if (q)            { sql += ' AND title LIKE ?';       params.push(`%${q}%`); }
+  if (from)         { sql += ' AND date >= ?';           params.push(from); }
+  if (to)           { sql += ' AND date <= ?';           params.push(to); }
+  if (category_id)  { sql += ' AND category_id = ?';    params.push(category_id); }
+  if (status)       { sql += ' AND status = ?';         params.push(status); }
+  if (objective_id) { sql += ' AND objective_id = ?';   params.push(objective_id); }
 
   sql += ' ORDER BY date, start_time LIMIT 200';
   const tasks = db.prepare(sql).all(...params);
@@ -104,7 +167,8 @@ app.get('/api/tasks/search', (req, res) => {
 
 app.get('/api/tasks', (req, res) => {
   const { date, category_id, status, from, to, objective_id } = req.query;
-  let sql = 'SELECT * FROM tasks WHERE 1=1';
+  // Non-fixed tasks
+  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0';
   const params = [];
 
   if (date)         { sql += ' AND date = ?';           params.push(date); }
@@ -112,21 +176,29 @@ app.get('/api/tasks', (req, res) => {
   if (to)           { sql += ' AND date <= ?';           params.push(to); }
   if (category_id)  { sql += ' AND category_id = ?';    params.push(category_id); }
   if (status)       { sql += ' AND status = ?';         params.push(status); }
-  if (objective_id)  { sql += ' AND objective_id = ?';   params.push(objective_id); }
-  if (req.query.milestone_id) { sql += ' AND milestone_id = ?'; params.push(req.query.milestone_id); }
+  if (objective_id)               { sql += ' AND objective_id = ?';                    params.push(objective_id); }
+  if (req.query.milestone_id)     { sql += ' AND milestone_id = ?';                    params.push(req.query.milestone_id); }
+  if (req.query.no_milestone === '1') { sql += ' AND (milestone_id IS NULL OR milestone_id = \'\')'; }
 
   sql += ' ORDER BY date, start_time';
   const tasks = db.prepare(sql).all(...params);
-  const today = new Date().toISOString().slice(0, 10);
   tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
-  res.json(tasks);
+
+  // Expand fixed tasks when querying a date range
+  const fixed = (from && to) ? expandFixedTasks(from, to, {
+    objective_id: objective_id || null,
+    milestone_id: req.query.milestone_id || null,
+  }) : (date ? expandFixedTasks(date, date) : []);
+
+  res.json([...tasks, ...fixed]);
 });
 
 app.get('/api/tasks/today', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  const tasks = db.prepare('SELECT * FROM tasks WHERE date = ? ORDER BY start_time').all(today);
+  const tasks = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? ORDER BY start_time').all(today);
   tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
-  res.json(tasks);
+  const fixed = expandFixedTasks(today, today);
+  res.json([...tasks, ...fixed].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '')));
 });
 
 app.get('/api/tasks/week', (req, res) => {
@@ -139,15 +211,18 @@ app.get('/api/tasks/week', (req, res) => {
 
   const from = monday.toISOString().slice(0, 10);
   const to = sunday.toISOString().slice(0, 10);
-  const tasks = db.prepare('SELECT * FROM tasks WHERE date BETWEEN ? AND ? ORDER BY date, start_time').all(from, to);
+  const tasks = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND date BETWEEN ? AND ? ORDER BY date, start_time').all(from, to);
   tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
-  res.json(tasks);
+  const fixed = expandFixedTasks(from, to);
+  res.json([...tasks, ...fixed]);
 });
 
 app.get('/api/tasks/now', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const timeStr = new Date().toTimeString().slice(0, 5);
-  const tasks = db.prepare('SELECT * FROM tasks WHERE date = ? AND start_time IS NOT NULL ORDER BY start_time').all(today);
+  const regular = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND start_time IS NOT NULL ORDER BY start_time').all(today);
+  const fixed = expandFixedTasks(today, today).filter(t => t.start_time);
+  const tasks = [...regular, ...fixed].sort((a, b) => a.start_time.localeCompare(b.start_time));
 
   const active = tasks.find(t => t.start_time <= timeStr && t.end_time > timeStr);
   const upcoming = tasks.filter(t => t.start_time > timeStr).sort((a, b) => a.start_time.localeCompare(b.start_time));
@@ -172,8 +247,13 @@ function parseCategoryIds(category_ids, category_id) {
 
 app.post('/api/tasks', (req, res) => {
   const { title, description, category_id, category_ids, date, start_time, end_time,
-    duration_estimated, priority, objective_id, milestone_id, is_fixed, notes, label } = req.body;
-  if (!title || !date) return res.status(400).json({ error: 'title y date son obligatorios' });
+    duration_estimated, priority, objective_id, milestone_id, is_fixed,
+    fixed_days, fixed_start_date, fixed_end_date, notes, label } = req.body;
+
+  const isFixed = is_fixed ? 1 : 0;
+  // For fixed tasks, date defaults to fixed_start_date; for regular tasks date is required
+  const effectiveDate = date || (isFixed ? fixed_start_date : null);
+  if (!title || !effectiveDate) return res.status(400).json({ error: 'title y date son obligatorios' });
 
   const cats = parseCategoryIds(category_ids, category_id);
   const primaryCat = cats[0] || null;
@@ -188,20 +268,27 @@ app.post('/api/tasks', (req, res) => {
   const id = 'task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   db.prepare(`INSERT INTO tasks
     (id,title,description,category_id,category_ids,subcategory,date,start_time,end_time,
-     duration_estimated,status,priority,objective_id,milestone_id,is_fixed,notes,label,percentage_completed)
-    VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,0)`)
+     duration_estimated,status,priority,objective_id,milestone_id,is_fixed,
+     fixed_days,fixed_start_date,fixed_end_date,notes,label,percentage_completed)
+    VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,0)`)
     .run(id, title, description || '', primaryCat, JSON.stringify(cats), '',
-      date, start_time || null, end_time || null,
+      effectiveDate, start_time || null, end_time || null,
       duration_estimated ?? timeDiff(start_time, end_time),
       priority ?? 2, objective_id || null, milestone_id || null,
-      is_fixed ? 1 : 0, notes || '', label || '');
+      isFixed,
+      isFixed && fixed_days ? JSON.stringify(fixed_days) : null,
+      isFixed ? (fixed_start_date || null) : null,
+      isFixed ? (fixed_end_date || null) : null,
+      notes || '', label || '');
 
+  recomputeForTask(milestone_id || null, objective_id || null);
   res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
 });
 
 app.put('/api/tasks/:id', (req, res) => {
   const { title, description, category_id, category_ids, date, start_time, end_time,
     duration_estimated, priority, objective_id, milestone_id, is_fixed,
+    fixed_days, fixed_start_date, fixed_end_date,
     status, percentage_completed, notes, label } = req.body;
 
   const cats = category_ids !== undefined ? parseCategoryIds(category_ids, category_id) : null;
@@ -229,6 +316,9 @@ app.put('/api/tasks/:id', (req, res) => {
     objective_id        = COALESCE(@objective_id, objective_id),
     milestone_id        = COALESCE(@milestone_id, milestone_id),
     is_fixed            = COALESCE(@is_fixed,    is_fixed),
+    fixed_days          = COALESCE(@fixed_days,  fixed_days),
+    fixed_start_date    = COALESCE(@fixed_start_date, fixed_start_date),
+    fixed_end_date      = COALESCE(@fixed_end_date,   fixed_end_date),
     status              = COALESCE(@status,      status),
     percentage_completed= COALESCE(@pct,         percentage_completed),
     notes               = COALESCE(@notes,       notes),
@@ -246,6 +336,9 @@ app.put('/api/tasks/:id', (req, res) => {
       objective_id: objective_id ?? null,
       milestone_id: milestone_id ?? null,
       is_fixed: is_fixed !== undefined ? (is_fixed ? 1 : 0) : null,
+      fixed_days: fixed_days !== undefined ? (Array.isArray(fixed_days) ? JSON.stringify(fixed_days) : fixed_days) : null,
+      fixed_start_date: fixed_start_date ?? null,
+      fixed_end_date: fixed_end_date ?? null,
       status: status ?? null,
       pct: percentage_completed ?? null,
       notes: notes ?? null,
@@ -253,14 +346,17 @@ app.put('/api/tasks/:id', (req, res) => {
       id: req.params.id,
     });
 
-  // Recompute objective progress and status (old and new objective)
-  const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
-  for (const objId of [task.objective_id, updatedTask.objective_id].filter(Boolean)) {
-    const pct = computeTaskProgress(objId);
-    const obj = db.prepare('SELECT status FROM objectives WHERE id = ?').get(objId);
-    const newStatus = deriveObjectiveStatus(obj?.status, pct);
-    db.prepare('UPDATE objectives SET percentage_completed = ?, status = ? WHERE id = ?').run(pct, newStatus, objId);
+  // Allow explicit null for milestone_id (COALESCE ignores nulls)
+  if ('milestone_id' in req.body) {
+    db.prepare('UPDATE tasks SET milestone_id = ? WHERE id = ?').run(milestone_id ?? null, req.params.id);
   }
+
+  // Recompute milestone + objective (both old and new ids in case they changed)
+  const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  const milestoneIds = [...new Set([task.milestone_id, updatedTask.milestone_id].filter(Boolean))];
+  const objectiveIds = [...new Set([task.objective_id, updatedTask.objective_id].filter(Boolean))];
+  for (const mid of milestoneIds) recomputeForTask(mid, null);
+  for (const oid of objectiveIds) recomputeForTask(null, oid);
 
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id));
 });
@@ -269,13 +365,7 @@ app.delete('/api/tasks/:id', (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
-  // Recompute objective progress
-  if (task.objective_id) {
-    const pct = computeTaskProgress(task.objective_id);
-    const obj = db.prepare('SELECT status FROM objectives WHERE id = ?').get(task.objective_id);
-    const newStatus = deriveObjectiveStatus(obj?.status, pct);
-    db.prepare('UPDATE objectives SET percentage_completed = ?, status = ? WHERE id = ?').run(pct, newStatus, task.objective_id);
-  }
+  recomputeForTask(task.milestone_id, task.objective_id);
   res.json({ ok: true });
 });
 
@@ -283,13 +373,26 @@ app.delete('/api/tasks/:id', (req, res) => {
 app.get('/api/objectives', (req, res) => {
   const objectives = db.prepare('SELECT * FROM objectives ORDER BY priority, start_date').all();
   for (const obj of objectives) {
-    obj.milestones = db.prepare('SELECT * FROM milestones WHERE objective_id = ? ORDER BY target_date').all(obj.id);
-    obj.task_count  = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ?').get(obj.id).n;
-    obj.done_count  = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND status = 'completed'").get(obj.id).n;
-    const totalWeight = obj.milestones.reduce((s, m) => s + (m.weight || 1), 0);
+    obj.milestones = db.prepare(`
+      SELECT * FROM milestones WHERE objective_id = ?
+      ORDER BY
+        CASE WHEN status = 'completed' THEN 1 ELSE 0 END ASC,
+        target_date ASC NULLS LAST
+    `).all(obj.id);
+    obj.task_count = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ?').get(obj.id).n;
+    obj.done_count = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND status = 'completed'").get(obj.id).n;
+    const orphanRows = db.prepare("SELECT status FROM tasks WHERE objective_id = ? AND (milestone_id IS NULL OR milestone_id = '')").all(obj.id);
+    obj.orphan_count = orphanRows.length;
+    obj.orphan_done  = orphanRows.filter(t => t.status === 'completed').length;
     for (const m of obj.milestones) {
       m.days_remaining = daysRemaining(m.target_date);
-      m.weight_pct = totalWeight > 0 ? Math.round((m.weight || 1) / totalWeight * 100) : 0;
+      const mTasks = db.prepare('SELECT status FROM tasks WHERE milestone_id = ?').all(m.id);
+      m.task_total = mTasks.length;
+      m.task_done  = mTasks.filter(t => t.status === 'completed').length;
+      m.percentage_completed = m.task_total > 0
+        ? Math.round((m.task_done / m.task_total) * 100)
+        : 0;
+      m.status = deriveMilestoneStatus(m.status, m.percentage_completed);
     }
     obj.days_remaining = daysRemaining(obj.end_date);
     const pct = computeTaskProgress(obj.id);
@@ -320,7 +423,11 @@ app.delete('/api/objectives/:id', (req, res) => {
 });
 
 app.put('/api/objectives/:id', (req, res) => {
-  const { title, description, target_value, start_date, end_date, priority, status, percentage_completed, notes, color } = req.body;
+  const { title, description, target_value, start_date, end_date, priority, status, notes, color } = req.body;
+  // percentage_completed is always computed from tasks — never manually set
+  const pct = computeTaskProgress(req.params.id);
+  const obj = db.prepare('SELECT status FROM objectives WHERE id = ?').get(req.params.id);
+  const derivedStatus = status !== undefined ? deriveObjectiveStatus(status, pct) : deriveObjectiveStatus(obj?.status, pct);
   db.prepare(`UPDATE objectives SET
     title                = COALESCE(@title,        title),
     description          = COALESCE(@description,  description),
@@ -328,15 +435,15 @@ app.put('/api/objectives/:id', (req, res) => {
     start_date           = COALESCE(@start_date,   start_date),
     end_date             = COALESCE(@end_date,      end_date),
     priority             = COALESCE(@priority,     priority),
-    status               = COALESCE(@status,       status),
-    percentage_completed = COALESCE(@pct,          percentage_completed),
+    status               = @status,
+    percentage_completed = @pct,
     notes                = COALESCE(@notes,        notes),
     color                = COALESCE(@color,        color)
     WHERE id = @id`).run({
       title: title ?? null, description: description ?? null,
       target_value: target_value ?? null, start_date: start_date ?? null,
       end_date: end_date ?? null, priority: priority ?? null,
-      status: status ?? null, pct: percentage_completed ?? null, notes: notes ?? null,
+      status: derivedStatus, pct, notes: notes ?? null,
       color: color ?? null,
       id: req.params.id,
     });
@@ -367,18 +474,20 @@ app.delete('/api/milestones/:id', (req, res) => {
 });
 
 app.put('/api/milestones/:id', (req, res) => {
-  const { title, description, target_date, weight, status, percentage_completed } = req.body;
+  const { title, description, target_date, status } = req.body;
+  // percentage_completed and weight are no longer manually set — always computed from tasks
+  const pct = computeMilestoneProgress(req.params.id);
+  const ms  = db.prepare('SELECT status FROM milestones WHERE id = ?').get(req.params.id);
+  const derivedStatus = status ? deriveMilestoneStatus(status, pct) : (ms ? deriveMilestoneStatus(ms.status, pct) : 'not_started');
   db.prepare(`UPDATE milestones SET
     title                = COALESCE(@title,       title),
     description          = COALESCE(@description, description),
     target_date          = COALESCE(@target_date, target_date),
-    weight               = COALESCE(@weight,      weight),
-    status               = COALESCE(@status,      status),
-    percentage_completed = COALESCE(@pct,         percentage_completed)
+    status               = @status,
+    percentage_completed = @pct
     WHERE id = @id`).run({
       title: title ?? null, description: description ?? null,
-      target_date: target_date ?? null, weight: weight ?? null,
-      status: status ?? null, pct: percentage_completed ?? null, id: req.params.id,
+      target_date: target_date ?? null, status: derivedStatus, pct, id: req.params.id,
     });
   res.json(db.prepare('SELECT * FROM milestones WHERE id = ?').get(req.params.id));
 });
@@ -765,13 +874,8 @@ app.get('/api/dashboard', (req, res) => {
   const nextWeek = nextDate.toISOString().slice(0, 10);
   const nextEvents = db.prepare('SELECT * FROM events WHERE start_date BETWEEN ? AND ? ORDER BY start_date').all(today, nextWeek);
 
-  // Progress by objective
+  // Progress by objective (filled after objHoursMap is ready below)
   const objectives = db.prepare('SELECT * FROM objectives ORDER BY priority').all();
-  for (const obj of objectives) {
-    obj.task_count = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ?').get(obj.id).n;
-    obj.done_count = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND status = 'completed'").get(obj.id).n;
-    obj.days_remaining = daysRemaining(obj.end_date);
-  }
 
   // Tasks by category (last 30 days)
   const thirtyAgo = new Date();
@@ -783,20 +887,30 @@ app.get('/api/dashboard', (req, res) => {
     FROM tasks WHERE date >= ? GROUP BY category_id
   `).all(thirtyAgo.toISOString().slice(0, 10));
 
-  // Weekly load (last 4 weeks)
-  const weeks = [];
-  for (let w = 3; w >= 0; w--) {
-    const wStart = new Date();
-    wStart.setDate(wStart.getDate() - wStart.getDay() + 1 - w * 7);
-    const wEnd = new Date(wStart);
-    wEnd.setDate(wStart.getDate() + 6);
-    const from = wStart.toISOString().slice(0, 10);
-    const to   = wEnd.toISOString().slice(0, 10);
-    const wData = db.prepare(`SELECT
-      COUNT(*) as total,
-      SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as done
-      FROM tasks WHERE date BETWEEN ? AND ?`).get(from, to);
-    weeks.push({ from, to, total: wData.total, done: wData.done });
+  // Hours per objective (completed tasks, all time)
+  const objHoursRows = db.prepare(`
+    SELECT objective_id,
+      SUM(
+        CASE
+          WHEN duration_estimated IS NOT NULL AND duration_estimated > 0 THEN duration_estimated
+          WHEN start_time IS NOT NULL AND end_time IS NOT NULL THEN
+            (CAST(substr(end_time,1,2) AS INTEGER)*60 + CAST(substr(end_time,4,2) AS INTEGER)) -
+            (CAST(substr(start_time,1,2) AS INTEGER)*60 + CAST(substr(start_time,4,2) AS INTEGER))
+          ELSE 0
+        END
+      ) / 60.0 as hours
+    FROM tasks
+    WHERE status = 'completed' AND objective_id IS NOT NULL
+    GROUP BY objective_id
+  `).all();
+  const objHoursMap = {};
+  for (const row of objHoursRows) objHoursMap[row.objective_id] = row.hours;
+
+  for (const obj of objectives) {
+    obj.task_count = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ?').get(obj.id).n;
+    obj.done_count = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND status = 'completed'").get(obj.id).n;
+    obj.days_remaining = daysRemaining(obj.end_date);
+    obj.hours_completed = Math.round((objHoursMap[obj.id] || 0) * 10) / 10;
   }
 
   // Publications progress
@@ -820,7 +934,6 @@ app.get('/api/dashboard', (req, res) => {
     next_events: nextEvents,
     objectives,
     category_stats: catStats,
-    weekly_load: weeks,
     publications: { total: pubTotal, done: pubDone },
     certifications: { total: certTotal, done: certDone },
   });

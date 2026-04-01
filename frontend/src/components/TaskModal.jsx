@@ -13,9 +13,17 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
   const isEdit = !!initial.id;
   const [form, setForm] = useState({
     title: '', description: '', date: '', start_time: '', end_time: '',
-    priority: 2, objective_id: '', milestone_id: '', is_fixed: false, notes: '', label: '', status: 'pending',
+    priority: 2, objective_id: '', milestone_id: '', is_fixed: false,
+    fixed_days: [], fixed_start_date: '', fixed_end_date: '',
+    notes: '', label: '', status: 'pending',
     ...initial,
     category_ids: parseCatIds(initial.category_ids, initial.category_id),
+    fixed_days: (() => {
+      const raw = initial.fixed_days;
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') { try { return JSON.parse(raw); } catch (_) {} }
+      return [];
+    })(),
   });
   const [categories, setCategories] = useState([]);
   const [objectives, setObjectives] = useState([]);
@@ -63,7 +71,9 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.title.trim()) { setError('El título es obligatorio'); return; }
-    if (!form.date)         { setError('La fecha es obligatoria');  return; }
+    if (!form.is_fixed && !form.date) { setError('La fecha es obligatoria'); return; }
+    if (form.is_fixed && form.fixed_days.length === 0) { setError('Selecciona al menos un día de la semana'); return; }
+    if (form.is_fixed && !form.fixed_start_date) { setError('La fecha de inicio es obligatoria para tareas fijas'); return; }
     setSaving(true);
     setError('');
     try {
@@ -78,7 +88,10 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
         priority:     Number(form.priority),
         objective_id: form.objective_id || null,
         milestone_id: form.milestone_id || null,
-        is_fixed:     form.is_fixed ? 1 : 0,
+        is_fixed:          form.is_fixed ? 1 : 0,
+        fixed_days:        form.is_fixed ? form.fixed_days : null,
+        fixed_start_date:  form.is_fixed ? (form.fixed_start_date || null) : null,
+        fixed_end_date:    form.is_fixed ? (form.fixed_end_date || null) : null,
         notes:        form.notes || '',
         label:        form.label || '',
         status:       form.status || 'pending',
@@ -133,11 +146,13 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
           </div>
 
           {/* Date + times */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-            <div>
-              <label style={labelStyle}>Fecha *</label>
-              <input type="date" value={form.date} onChange={e => set('date', e.target.value)} style={{ width: '100%' }} />
-            </div>
+          <div style={{ display: 'grid', gridTemplateColumns: form.is_fixed ? '1fr 1fr' : '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+            {!form.is_fixed && (
+              <div>
+                <label style={labelStyle}>Fecha *</label>
+                <input type="date" value={form.date} onChange={e => set('date', e.target.value)} style={{ width: '100%' }} />
+              </div>
+            )}
             <div>
               <label style={labelStyle}>Hora inicio</label>
               <input type="time" value={form.start_time} onChange={e => set('start_time', e.target.value)} style={{ width: '100%' }} />
@@ -223,7 +238,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
           )}
 
           {/* Label + is_fixed */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, marginBottom: 14, alignItems: 'end' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, marginBottom: form.is_fixed ? 0 : 14, alignItems: 'end' }}>
             <div>
               <label style={labelStyle}>Etiqueta visual</label>
               <input type="text" value={form.label} onChange={e => set('label', e.target.value)}
@@ -234,6 +249,47 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
               Tarea fija 📌
             </label>
           </div>
+
+          {/* Fixed task recurrence options */}
+          {form.is_fixed && (
+            <div style={{ marginBottom: 14, padding: '12px 14px', background: 'var(--bg)', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={labelStyle}>Días de la semana</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                {[
+                  { day: 1, label: 'Lun' }, { day: 2, label: 'Mar' }, { day: 3, label: 'Mié' },
+                  { day: 4, label: 'Jue' }, { day: 5, label: 'Vie' }, { day: 6, label: 'Sáb' },
+                  { day: 0, label: 'Dom' },
+                ].map(({ day, label }) => {
+                  const active = form.fixed_days.includes(day);
+                  return (
+                    <span key={day} onClick={() => {
+                      set('fixed_days', active
+                        ? form.fixed_days.filter(d => d !== day)
+                        : [...form.fixed_days, day]);
+                    }} style={{
+                      cursor: 'pointer', fontSize: 12, padding: '4px 10px', borderRadius: 8,
+                      background: active ? 'var(--accent)' : 'var(--surface)',
+                      color: active ? 'white' : 'var(--text-2)',
+                      border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                      fontWeight: active ? 600 : 400, userSelect: 'none',
+                    }}>
+                      {label}
+                    </span>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={labelStyle}>Fecha inicio</label>
+                  <input type="date" value={form.fixed_start_date} onChange={e => set('fixed_start_date', e.target.value)} style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Fecha fin</label>
+                  <input type="date" value={form.fixed_end_date} onChange={e => set('fixed_end_date', e.target.value)} style={{ width: '100%' }} />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Description */}
           <div style={fieldWrap}>
