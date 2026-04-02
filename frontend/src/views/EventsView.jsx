@@ -167,18 +167,7 @@ function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
           </div>
           <div>
             <label style={labelSt}>Coste (€)</label>
-            <input type="number" min="0" step="0.01" value={form.estimated_cost} onChange={e => set('estimated_cost', e.target.value)} style={{ width: '100%' }} />
-          </div>
-        </div>
-
-        <div style={fieldW}>
-          <label style={labelSt}>% completado</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <input type="range" min="0" max="100" step="5"
-              value={form.percentage_completed}
-              onChange={e => set('percentage_completed', Number(e.target.value))}
-              style={{ flex: 1 }} />
-            <span style={{ fontSize: 13, fontWeight: 600, minWidth: 36, color: 'var(--accent)' }}>{form.percentage_completed}%</span>
+            <input type="text" inputMode="decimal" value={form.estimated_cost} onChange={e => set('estimated_cost', e.target.value)} style={{ width: '100%' }} />
           </div>
         </div>
 
@@ -307,15 +296,19 @@ export default function EventsView() {
                   <div className="task-info">
                     <div style={{ fontWeight: 500, fontSize: 13 }}>🎪 {ev.title}</div>
                     <div className="task-meta">
-                      <span className="task-time">{fmtShortDate(ev.start_date)} → {fmtShortDate(ev.end_date)}</span>
                       {days != null && <span className={`milestone-days ${daysCls}`}>{days < 0 ? `${Math.abs(days)}d pasado` : days === 0 ? 'Hoy' : `${days}d`}</span>}
+                      <span className="task-time">{fmtShortDate(ev.start_date)} → {fmtShortDate(ev.end_date)}</span>
                       {isActive && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>Activo</span>}
                       {ev.location && <span className="task-time">📍 {ev.location}</span>}
-                      {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
                       <span style={{ fontSize: 11, color: ev.registered ? '#16a34a' : '#dc2626' }}>{ev.registered ? '✓ Reg.' : '✗ Reg.'}</span>
                       {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.hotel_booked ? '#16a34a' : '#b45309' }}>{ev.hotel_booked ? '✓ Hotel' : '✗ Hotel'}</span>}
                       {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.flight_booked ? '#16a34a' : '#b45309' }}>{ev.flight_booked ? '✓ Avión' : '✗ Avión'}</span>}
                     </div>
+                    {catIds.length > 0 && (
+                      <div className="task-meta" style={{ marginTop: 3 }}>
+                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      </div>
+                    )}
                     {pct > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
                         <div className="progress-bar" style={{ flex: 1, maxWidth: 140, height: 4 }}>

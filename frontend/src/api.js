@@ -43,7 +43,7 @@ export const api = {
   updateCategory:   (id, body) => put(`/categories/${id}`, body),
   deleteCategory:   (id) => fetch(BASE + `/categories/${id}`, { method: 'DELETE' }).then(r => r.json()),
 
-  objectives:      () => get('/objectives'),
+  objectives:      (params = {}) => get('/objectives?' + new URLSearchParams(params)),
   createObjective: (body) => post('/objectives', body),
   updateObjective: (id, body) => put(`/objectives/${id}`, body),
   deleteObjective: (id) => fetch(BASE + `/objectives/${id}`, { method: 'DELETE' }).then(r => r.json()),

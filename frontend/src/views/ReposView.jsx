@@ -252,12 +252,16 @@ export default function ReposView() {
                       )}
                     </div>
                     <div className="task-meta">
-                      <span className="task-time">{fmtDate(repo.target_date)}</span>
                       <span className={`milestone-days ${cls}`}>
                         {days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}
                       </span>
-                      {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      <span className="task-time">{fmtDate(repo.target_date)}</span>
                     </div>
+                    {catIds.length > 0 && (
+                      <div className="task-meta" style={{ marginTop: 3 }}>
+                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      </div>
+                    )}
                   </div>
                   <span style={{
                     fontSize: 11, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap',

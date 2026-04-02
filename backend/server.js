@@ -371,8 +371,13 @@ app.delete('/api/tasks/:id', (req, res) => {
 
 // ── OBJECTIVES ───────────────────────────────────────────────────────────────
 app.get('/api/objectives', (req, res) => {
-  const objectives = db.prepare('SELECT * FROM objectives ORDER BY priority, start_date').all();
+  const { type } = req.query;
+  let sql = 'SELECT * FROM objectives';
+  if (type) sql += ` WHERE type = '${type.replace(/'/g, '')}'`;
+  sql += ' ORDER BY priority, start_date';
+  const objectives = db.prepare(sql).all();
   for (const obj of objectives) {
+    try { obj.category_ids = obj.category_ids ? JSON.parse(obj.category_ids) : (obj.category_id ? [obj.category_id] : []); } catch (_) { obj.category_ids = obj.category_id ? [obj.category_id] : []; }
     obj.milestones = db.prepare(`
       SELECT * FROM milestones WHERE objective_id = ?
       ORDER BY
@@ -397,19 +402,25 @@ app.get('/api/objectives', (req, res) => {
     obj.days_remaining = daysRemaining(obj.end_date);
     const pct = computeTaskProgress(obj.id);
     obj.percentage_completed = pct;
-    obj.status = deriveObjectiveStatus(obj.status, pct);
+    obj.total_billed = db.prepare(
+      'SELECT COALESCE(SUM(billed_amount),0) as s FROM milestones WHERE objective_id = ?'
+    ).get(obj.id).s;
   }
   res.json(objectives);
 });
 
 app.post('/api/objectives', (req, res) => {
-  const { title, description, category_id, start_date, end_date, target_value, progress_mode, priority, status, notes, color } = req.body;
+  const { title, description, category_id, category_ids, start_date, end_date, target_value, progress_mode, priority, status, notes, color, type } = req.body;
   if (!title) return res.status(400).json({ error: 'title es obligatorio' });
   const id = 'obj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-  db.prepare(`INSERT INTO objectives (id,title,description,category_id,start_date,end_date,target_value,progress_mode,percentage_completed,status,priority,notes,color)
-    VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?)`)
-    .run(id, title, description || '', category_id || null, start_date || null, end_date || null,
-      target_value || null, progress_mode || 'task_based', status || 'not_started', priority ?? 2, notes || '', color || null);
+  const catIds = Array.isArray(category_ids) ? category_ids : (category_id ? [category_id] : []);
+  const primaryCat = catIds[0] || category_id || null;
+  db.prepare(`INSERT INTO objectives (id,title,description,category_id,category_ids,start_date,end_date,target_value,progress_mode,percentage_completed,status,priority,notes,color,type)
+    VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?)`)
+    .run(id, title, description || '', primaryCat, catIds.length ? JSON.stringify(catIds) : null,
+      start_date || null, end_date || null,
+      target_value || null, progress_mode || 'task_based', status || 'not_started', priority ?? 2, notes || '', color || null,
+      type || 'objective');
   res.status(201).json(db.prepare('SELECT * FROM objectives WHERE id = ?').get(id));
 });
 
@@ -423,11 +434,14 @@ app.delete('/api/objectives/:id', (req, res) => {
 });
 
 app.put('/api/objectives/:id', (req, res) => {
-  const { title, description, target_value, start_date, end_date, priority, status, notes, color } = req.body;
+  const { title, description, target_value, start_date, end_date, priority, status, notes, color, type, category_id, category_ids } = req.body;
   // percentage_completed is always computed from tasks — never manually set
   const pct = computeTaskProgress(req.params.id);
   const obj = db.prepare('SELECT status FROM objectives WHERE id = ?').get(req.params.id);
-  const derivedStatus = status !== undefined ? deriveObjectiveStatus(status, pct) : deriveObjectiveStatus(obj?.status, pct);
+  // Honor the user-set status; only fall back to stored value if not provided
+  const savedStatus = status !== undefined ? status : obj?.status;
+  const catIds = Array.isArray(category_ids) ? category_ids : undefined;
+  const primaryCat = catIds ? (catIds[0] || null) : (category_id ?? undefined);
   db.prepare(`UPDATE objectives SET
     title                = COALESCE(@title,        title),
     description          = COALESCE(@description,  description),
@@ -438,13 +452,19 @@ app.put('/api/objectives/:id', (req, res) => {
     status               = @status,
     percentage_completed = @pct,
     notes                = COALESCE(@notes,        notes),
-    color                = COALESCE(@color,        color)
+    color                = COALESCE(@color,        color),
+    type                 = COALESCE(@type,         type),
+    category_id          = CASE WHEN @primaryCat IS NOT NULL THEN @primaryCat ELSE category_id END,
+    category_ids         = CASE WHEN @catIdsJson IS NOT NULL THEN @catIdsJson ELSE category_ids END
     WHERE id = @id`).run({
       title: title ?? null, description: description ?? null,
       target_value: target_value ?? null, start_date: start_date ?? null,
       end_date: end_date ?? null, priority: priority ?? null,
-      status: derivedStatus, pct, notes: notes ?? null,
+      status: savedStatus, pct, notes: notes ?? null,
       color: color ?? null,
+      type: type ?? null,
+      primaryCat: primaryCat ?? null,
+      catIdsJson: catIds !== undefined ? JSON.stringify(catIds) : null,
       id: req.params.id,
     });
   res.json(db.prepare('SELECT * FROM objectives WHERE id = ?').get(req.params.id));
@@ -458,11 +478,11 @@ app.get('/api/milestones', (req, res) => {
 });
 
 app.post('/api/milestones', (req, res) => {
-  const { objective_id, title, description, target_date, weight, status } = req.body;
+  const { objective_id, title, description, target_date, weight, status, billed_amount } = req.body;
   if (!title || !objective_id) return res.status(400).json({ error: 'title y objective_id son obligatorios' });
   const id = 'ms-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-  db.prepare('INSERT INTO milestones (id,objective_id,title,description,target_date,percentage_completed,status,weight) VALUES (?,?,?,?,?,0,?,?)')
-    .run(id, objective_id, title, description || '', target_date || null, status || 'not_started', weight ?? 10);
+  db.prepare('INSERT INTO milestones (id,objective_id,title,description,target_date,percentage_completed,status,weight,billed_amount) VALUES (?,?,?,?,?,0,?,?,?)')
+    .run(id, objective_id, title, description || '', target_date || null, status || 'not_started', weight ?? 10, billed_amount ?? 0);
   res.status(201).json(db.prepare('SELECT * FROM milestones WHERE id = ?').get(id));
 });
 
@@ -474,7 +494,7 @@ app.delete('/api/milestones/:id', (req, res) => {
 });
 
 app.put('/api/milestones/:id', (req, res) => {
-  const { title, description, target_date, status } = req.body;
+  const { title, description, target_date, status, billed_amount } = req.body;
   // percentage_completed and weight are no longer manually set — always computed from tasks
   const pct = computeMilestoneProgress(req.params.id);
   const ms  = db.prepare('SELECT status FROM milestones WHERE id = ?').get(req.params.id);
@@ -483,11 +503,14 @@ app.put('/api/milestones/:id', (req, res) => {
     title                = COALESCE(@title,       title),
     description          = COALESCE(@description, description),
     target_date          = COALESCE(@target_date, target_date),
+    billed_amount        = COALESCE(@billed_amount, billed_amount),
     status               = @status,
     percentage_completed = @pct
     WHERE id = @id`).run({
       title: title ?? null, description: description ?? null,
-      target_date: target_date ?? null, status: derivedStatus, pct, id: req.params.id,
+      target_date: target_date ?? null,
+      billed_amount: billed_amount !== undefined ? Number(billed_amount) : null,
+      status: derivedStatus, pct, id: req.params.id,
     });
   res.json(db.prepare('SELECT * FROM milestones WHERE id = ?').get(req.params.id));
 });

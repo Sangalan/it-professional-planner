@@ -254,11 +254,15 @@ export default function PRsView() {
                   <div className="task-info">
                     <div style={{ fontWeight: 500, fontSize: 13 }}>🔀 {pr.title}</div>
                     <div className="task-meta">
-                      <span className="task-time">{fmtShortDate(pr.start_date)} → {fmtShortDate(pr.end_date)}</span>
                       {days != null && <span className={`milestone-days ${daysCls}`}>{days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}</span>}
+                      <span className="task-time">{fmtShortDate(pr.start_date)} → {fmtShortDate(pr.end_date)}</span>
                       {isActive && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>Activa</span>}
-                      {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
                     </div>
+                    {catIds.length > 0 && (
+                      <div className="task-meta" style={{ marginTop: 3 }}>
+                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      </div>
+                    )}
                     {pct > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
                         <div className="progress-bar" style={{ flex: 1, maxWidth: 140, height: 4 }}>

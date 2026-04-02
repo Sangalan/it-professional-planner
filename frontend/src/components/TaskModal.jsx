@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { CategorySelector } from './CatBadge.jsx';
 
 function parseCatIds(raw, fallback) {
   if (Array.isArray(raw) && raw.length) return raw;
@@ -25,7 +26,6 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
       return [];
     })(),
   });
-  const [categories, setCategories] = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [allMilestones, setAllMilestones] = useState([]);
   const [allContent, setAllContent] = useState([]);
@@ -34,7 +34,6 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.categories().then(setCategories);
     api.objectives().then(setObjectives);
     api.milestones().then(setAllMilestones);
     Promise.all([
@@ -58,15 +57,6 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
   ];
 
   function set(field, value) { setForm(f => ({ ...f, [field]: value })); }
-
-  function toggleCat(id) {
-    setForm(f => {
-      const ids = f.category_ids.includes(id)
-        ? f.category_ids.filter(c => c !== id)
-        : [...f.category_ids, id];
-      return { ...f, category_ids: ids };
-    });
-  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -163,44 +153,20 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
             </div>
           </div>
 
-          {/* Categories (multi) + Priority */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 14, marginBottom: 14, alignItems: 'start' }}>
-            <div>
-              <label style={labelStyle}>
-                Categorías
-                {form.category_ids.length > 0 && (
-                  <span style={{ fontWeight: 400, color: 'var(--text-3)', marginLeft: 6 }}>
-                    ({form.category_ids.length} seleccionada{form.category_ids.length > 1 ? 's' : ''})
-                  </span>
-                )}
-              </label>
-              <div style={{
-                border: '1px solid var(--border)', borderRadius: 6,
-                padding: '6px 8px', maxHeight: 130, overflowY: 'auto',
-                display: 'flex', flexDirection: 'column', gap: 4,
-              }}>
-                {categories.map(c => {
-                  const checked = form.category_ids.includes(c.id);
-                  const isPrimary = form.category_ids[0] === c.id;
-                  return (
-                    <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 13 }}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleCat(c.id)} />
-                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: c.color, flexShrink: 0 }} />
-                      <span>{c.name}</span>
-                      {isPrimary && checked && <span style={{ fontSize: 10, color: 'var(--text-3)' }}>principal</span>}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-            <div style={{ minWidth: 110 }}>
-              <label style={labelStyle}>Prioridad</label>
-              <select value={form.priority} onChange={e => set('priority', e.target.value)} style={{ width: '100%' }}>
-                <option value={1}>Alta ★</option>
-                <option value={2}>Normal</option>
-                <option value={3}>Baja</option>
-              </select>
-            </div>
+          {/* Categories */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={labelStyle}>Categorías</label>
+            <CategorySelector selected={form.category_ids} onChange={ids => set('category_ids', ids)} />
+          </div>
+
+          {/* Priority */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={labelStyle}>Prioridad</label>
+            <select value={form.priority} onChange={e => set('priority', e.target.value)} style={{ width: '100%' }}>
+              <option value={1}>Alta ★</option>
+              <option value={2}>Normal</option>
+              <option value={3}>Baja</option>
+            </select>
           </div>
 
           {/* Objective + Milestone */}

@@ -245,12 +245,16 @@ export default function CertificationsView() {
                   <div className="task-info">
                     <div style={{ fontWeight: 500, fontSize: 13 }}>🏆 {cert.title}</div>
                     <div className="task-meta">
-                      <span className="task-time">{fmtDate(cert.target_date)}</span>
                       <span className={`milestone-days ${cls}`}>
                         {days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}
                       </span>
-                      {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      <span className="task-time">{fmtDate(cert.target_date)}</span>
                     </div>
+                    {catIds.length > 0 && (
+                      <div className="task-meta" style={{ marginTop: 3 }}>
+                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      </div>
+                    )}
                     {pct > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
                         <div className="progress-bar" style={{ flex: 1, maxWidth: 140, height: 4 }}>

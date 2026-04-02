@@ -261,11 +261,15 @@ export default function PublicationsView() {
                   <div className="task-info">
                     <div style={{ fontWeight: 500, fontSize: 13 }}>{icon} {pub.title}</div>
                     <div className="task-meta">
-                      <span className="task-time">{fmtDate(pub.date)}</span>
                       {dl && <span className={`milestone-days ${dl.cls}`}>{dl.text}</span>}
-                      {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      <span className="task-time">{fmtDate(pub.date)}</span>
                       {obj && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>→ {obj.title}</span>}
                     </div>
+                    {catIds.length > 0 && (
+                      <div className="task-meta" style={{ marginTop: 3 }}>
+                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      </div>
+                    )}
                   </div>
                   <span style={{
                     background: pub.status === 'published' ? '#dcfce7' : pub.status === 'draft' ? '#fef9c3' : 'var(--bg)',

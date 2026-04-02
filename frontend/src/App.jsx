@@ -8,6 +8,7 @@ import DailyList from './views/DailyList.jsx';
 import WeeklyCalendar from './views/WeeklyCalendar.jsx';
 import MonthlyCalendar from './views/MonthlyCalendar.jsx';
 import ObjectivesView from './views/ObjectivesView.jsx';
+import ClientsView from './views/ClientsView.jsx';
 import PublicationsView from './views/PublicationsView.jsx';
 import CertificationsView from './views/CertificationsView.jsx';
 import ReposView from './views/ReposView.jsx';
@@ -110,6 +111,7 @@ const navMain = [
 ];
 
 const navContent = [
+  { path: '/clients',        icon: '👤', label: 'Clientes' },
   { path: '/publications',   icon: '✍️',  label: 'Publicaciones' },
   { path: '/certifications', icon: '🏆', label: 'Certificaciones' },
   { path: '/repos',          icon: '📦', label: 'Repositorios' },
@@ -178,6 +180,7 @@ export default function App() {
             <Route path="/week"       element={<WeeklyCalendar />} />
             <Route path="/month"      element={<MonthlyCalendar />} />
             <Route path="/objectives" element={<ObjectivesView />} />
+            <Route path="/clients"    element={<ClientsView />} />
             <Route path="/publications" element={<PublicationsView />} />
             <Route path="/certifications" element={<CertificationsView />} />
             <Route path="/repos"          element={<ReposView />} />

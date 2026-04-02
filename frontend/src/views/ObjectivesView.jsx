@@ -315,22 +315,21 @@ function ObjectiveCard({ obj, onUpdate }) {
 
   const pct = Math.round(obj.percentage_completed || 0);
   const days = obj.days_remaining;
-  const daysLabel = days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d restantes`;
-  const daysColor = days < 0 ? 'var(--danger)' : days <= 14 ? 'var(--warning)' : 'var(--text-3)';
 
   return (
     <div className="obj-card" onClick={() => setExpanded(v => !v)}>
       <div className="obj-header">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <CatBadge id={obj.category_id} />
-            <span style={{ fontSize: 11, color: daysColor }}>{daysLabel}</span>
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{obj.done_count}/{obj.task_count} tareas</span>
-          </div>
-          <div className="obj-title">{obj.title}</div>
           {obj.target_value && (
-            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>Meta: {obj.target_value}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 2 }}>{obj.target_value}</div>
           )}
+          <div className="obj-title">{obj.title}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <span className={`milestone-days ${days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok'}`}>{days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}</span>
+            {obj.end_date && <span className="task-time">{obj.end_date}</span>}
+            <span className="task-time">{obj.task_count - obj.done_count} tareas restantes</span>
+          </div>
+          {(() => { const ids = obj.category_ids?.length ? obj.category_ids : (obj.category_id ? [obj.category_id] : []); return ids.length > 0 && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>{ids.map(id => <CatBadge key={id} id={id} />)}</div>; })()}
         </div>
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
           <div className="obj-pct" style={{ color }}>{pct}%</div>
@@ -357,10 +356,13 @@ function ObjectiveCard({ obj, onUpdate }) {
       {/* All milestones (simple + content items) sorted by date */}
       {expanded && (
         <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
-          {allMilestones.length === 0 && contentLoaded && obj.orphan_count === 0 && (
+          {!contentLoaded && (
+            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 12px' }}>Cargando hitos…</div>
+          )}
+          {contentLoaded && allMilestones.length === 0 && obj.orphan_count === 0 && (
             <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 12px' }}>Sin hitos</div>
           )}
-          {allMilestones.map(item => (
+          {contentLoaded && allMilestones.map(item => (
             <AnyMilestoneRow
               key={item.id}
               item={item}
@@ -370,7 +372,7 @@ function ObjectiveCard({ obj, onUpdate }) {
               version={mvVersion}
             />
           ))}
-          {obj.orphan_count > 0 && (
+          {contentLoaded && obj.orphan_count > 0 && (
             <SinHitoRow
               objId={obj.id}
               orphanCount={obj.orphan_count}

@@ -1,11 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
-
-const PRESET_COLORS = [
-  '#2563eb','#7c3aed','#059669','#ea580c','#dc2626',
-  '#0f766e','#6b7280','#b91c1c','#0369a1','#d97706',
-  '#db2777','#16a34a','#7c3aed','#475569','#1d4ed8',
-];
+import { CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
+import { statusLabel } from '../utils/categoryUtils.js';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const rowBorder = { padding: '10px 0', borderBottom: '1px solid var(--border)' };
@@ -47,22 +43,6 @@ function SectionCard({ title, count, children, onNew }) {
         <button className="btn btn-primary btn-sm" onClick={onNew}>+ Nuevo</button>
       </div>
       {open && <div className="card-body">{children}</div>}
-    </div>
-  );
-}
-
-function ColorPicker({ value, onChange }) {
-  return (
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-      {PRESET_COLORS.map(c => (
-        <div key={c} onClick={() => onChange(c)} style={{
-          width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer',
-          border: value === c ? '3px solid var(--text)' : '2px solid transparent', transition: 'border .1s',
-        }} title={c} />
-      ))}
-      <input type="color" value={value} onChange={e => onChange(e.target.value)}
-        style={{ width: 28, height: 28, border: 'none', padding: 0, cursor: 'pointer', borderRadius: 4 }}
-        title="Color personalizado" />
     </div>
   );
 }
@@ -164,14 +144,24 @@ function CategoryRow({ cat, onSaved, onDeleted }) {
 
 // ── OBJECTIVES ────────────────────────────────────────────────────────────────
 
-function ObjectiveDialog({ obj, cats, onClose, onSaved, onDeleted }) {
+function parseCatIds(raw, fallback) {
+  if (Array.isArray(raw) && raw.length) return raw;
+  if (typeof raw === 'string' && raw.startsWith('[')) {
+    try { const p = JSON.parse(raw); if (Array.isArray(p)) return p; } catch (_) {}
+  }
+  return fallback ? [fallback] : [];
+}
+
+function ObjectiveDialog({ obj, onClose, onSaved, onDeleted }) {
   const isNew = !obj;
   const [form, setForm] = useState({
     title: obj?.title || '', description: obj?.description || '',
-    category_id: obj?.category_id || '', start_date: obj?.start_date || '',
+    category_ids: parseCatIds(obj?.category_ids, obj?.category_id),
+    start_date: obj?.start_date || '',
     end_date: obj?.end_date || '', target_value: obj?.target_value || '',
     priority: obj?.priority ?? 2, status: obj?.status || 'not_started', notes: obj?.notes || '',
     color: obj?.color || '',
+    is_client: obj?.type === 'client',
   });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -183,7 +173,15 @@ function ObjectiveDialog({ obj, cats, onClose, onSaved, onDeleted }) {
     if (!form.title.trim()) { setError('El título es obligatorio'); return; }
     setSaving(true); setError('');
     try {
-      const payload = { ...form, priority: Number(form.priority), category_id: form.category_id || null, color: form.color || null };
+      const { is_client, ...rest } = form;
+      const payload = {
+        ...rest,
+        priority: Number(rest.priority),
+        category_ids: rest.category_ids,
+        category_id: rest.category_ids[0] || null,
+        color: rest.color || null,
+        type: is_client ? 'client' : 'objective',
+      };
       if (isNew) await api.createObjective(payload);
       else await api.updateObjective(obj.id, payload);
       onSaved(); onClose();
@@ -201,18 +199,13 @@ function ObjectiveDialog({ obj, cats, onClose, onSaved, onDeleted }) {
 
   return (
     <Dialog title={isNew ? 'Nuevo objetivo' : `Editar — ${obj.title}`} onClose={onClose}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-        <div>
-          <label style={labelSt}>Título *</label>
-          <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
-        </div>
-        <div>
-          <label style={labelSt}>Categoría</label>
-          <select value={form.category_id} onChange={e => set('category_id', e.target.value)} style={{ width: '100%' }}>
-            <option value="">Sin categoría</option>
-            {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Título *</label>
+        <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Categorías</label>
+        <CategorySelector selected={form.category_ids} onChange={ids => set('category_ids', ids)} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div>
@@ -251,6 +244,12 @@ function ObjectiveDialog({ obj, cats, onClose, onSaved, onDeleted }) {
           <input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} />
         </div>
       </div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!form.is_client} onChange={e => set('is_client', e.target.checked)} />
+          Es cliente 👤
+        </label>
+      </div>
       <div style={fieldW}>
         <label style={labelSt}>Color de la barra de progreso</label>
         <ColorPicker value={form.color || '#2563eb'} onChange={v => set('color', v)} />
@@ -277,11 +276,14 @@ function ObjectiveRow({ obj, cats, onSaved, onDeleted }) {
 
   return (
     <>
-      {editing && <ObjectiveDialog obj={obj} cats={cats} onClose={() => setEditing(false)} onSaved={onSaved} onDeleted={onDeleted} />}
+      {editing && <ObjectiveDialog obj={obj} onClose={() => setEditing(false)} onSaved={onSaved} onDeleted={onDeleted} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, ...rowBorder, cursor: 'pointer' }} onClick={() => setEditing(true)}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>{obj.title}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{catName} · {obj.end_date || 'sin fecha'} · {obj.status}</div>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>
+            {obj.type === 'client' && <span style={{ marginRight: 4 }}>👤</span>}
+            {obj.title}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{catName} · {obj.end_date || 'sin fecha'} · {statusLabel(obj.status)}</div>
         </div>
       </div>
     </>
@@ -296,6 +298,7 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
     title: m?.title || '', description: m?.description || '',
     objective_id: m?.objective_id || '', target_date: m?.target_date || '',
     status: m?.status || 'not_started',
+    billed_amount: m?.billed_amount ?? 0,
   });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -303,12 +306,15 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
 
   function set(f, v) { setForm(p => ({ ...p, [f]: v })); }
 
+  const parentObj = objectives.find(o => o.id === form.objective_id);
+  const isClientObj = parentObj?.type === 'client';
+
   async function save() {
     if (!form.title.trim()) { setError('El título es obligatorio'); return; }
     if (isNew && !form.objective_id) { setError('El objetivo es obligatorio'); return; }
     setSaving(true); setError('');
     try {
-      const payload = { ...form };
+      const payload = { ...form, billed_amount: isClientObj ? (Number(form.billed_amount) || 0) : 0 };
       if (isNew) await api.createMilestone(payload);
       else await api.updateMilestone(m.id, payload);
       onSaved(); onClose();
@@ -335,11 +341,11 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
           <label style={labelSt}>Objetivo {isNew && '*'}</label>
           <select value={form.objective_id} onChange={e => set('objective_id', e.target.value)} style={{ width: '100%' }}>
             <option value="">Sin objetivo</option>
-            {objectives.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
+            {objectives.map(o => <option key={o.id} value={o.id}>{o.type === 'client' ? '👤 ' : ''}{o.title}</option>)}
           </select>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isClientObj ? '1fr 1fr 1fr' : '1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div>
           <label style={labelSt}>Fecha objetivo</label>
           <input type="date" value={form.target_date} onChange={e => set('target_date', e.target.value)} style={{ width: '100%' }} />
@@ -353,6 +359,14 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
             <option value="blocked">Bloqueado</option>
           </select>
         </div>
+        {isClientObj && (
+          <div>
+            <label style={labelSt}>Facturado ($)</label>
+            <input type="text" inputMode="decimal" value={form.billed_amount}
+              onChange={e => set('billed_amount', e.target.value)}
+              style={{ width: '100%' }} placeholder="0.00" />
+          </div>
+        )}
       </div>
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -411,7 +425,7 @@ export default function Settings() {
   return (
     <div>
       {creatingCat && <CategoryDialog onClose={() => setCreatingCat(false)} onSaved={loadCats} />}
-      {creatingObj && <ObjectiveDialog cats={cats} onClose={() => setCreatingObj(false)} onSaved={loadObjectives} />}
+      {creatingObj && <ObjectiveDialog onClose={() => setCreatingObj(false)} onSaved={loadObjectives} />}
       {creatingMs  && <MilestoneDialog objectives={objectives} onClose={() => setCreatingMs(false)} onSaved={loadMilestones} />}
 
       <div className="page-header">

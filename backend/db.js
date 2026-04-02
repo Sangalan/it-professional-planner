@@ -36,6 +36,11 @@ try { db.prepare('ALTER TABLE tasks ADD COLUMN fixed_start_date TEXT').run(); } 
 try { db.prepare('ALTER TABLE tasks ADD COLUMN fixed_end_date TEXT').run(); } catch (_) {}
 // Reset legacy is_fixed tasks that predate the recurrence system
 try { db.prepare('UPDATE tasks SET is_fixed = 0 WHERE is_fixed = 1 AND fixed_days IS NULL').run(); } catch (_) {}
+// Client objectives support
+try { db.prepare('ALTER TABLE objectives ADD COLUMN type TEXT DEFAULT \'objective\'').run(); } catch (_) {}
+try { db.prepare('UPDATE objectives SET type = \'objective\' WHERE type IS NULL').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE milestones ADD COLUMN billed_amount REAL DEFAULT 0').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE objectives ADD COLUMN category_ids TEXT').run(); } catch (_) {}
 
 // Reading list table (created via initSchema, no migration needed — new table)
 
