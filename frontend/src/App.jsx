@@ -15,6 +15,7 @@ import ReposView from './views/ReposView.jsx';
 import PRsView from './views/PRsView.jsx';
 import EventsView from './views/EventsView.jsx';
 import ReadingListView from './views/ReadingListView.jsx';
+import DocumentsView from './views/DocumentsView.jsx';
 import Search from './views/Search.jsx';
 import Settings from './views/Settings.jsx';
 import ImportExport from './views/ImportExport.jsx';
@@ -118,6 +119,7 @@ const navContent = [
   { path: '/prs',            icon: '🔀', label: 'Pull Requests' },
   { path: '/events',         icon: '🎪', label: 'Eventos' },
   { path: '/reading-list',   icon: '📚', label: 'Para Leer' },
+  { path: '/documents',      icon: '📁', label: 'Documentos' },
 ];
 
 const navTools = [
@@ -186,6 +188,7 @@ export default function App() {
             <Route path="/repos"          element={<ReposView />} />
             <Route path="/prs"            element={<PRsView />} />
             <Route path="/reading-list"   element={<ReadingListView />} />
+            <Route path="/documents"      element={<DocumentsView />} />
             <Route path="/events"         element={<EventsView />} />
             <Route path="/search"     element={<Search />} />
             <Route path="/import-export" element={<ImportExport />} />

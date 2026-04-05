@@ -217,7 +217,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
           </div>
 
           {/* Fixed task recurrence options */}
-          {form.is_fixed && (
+          {!!form.is_fixed && (
             <div style={{ marginBottom: 14, padding: '12px 14px', background: 'var(--bg)', borderRadius: 8, border: '1px solid var(--border)' }}>
               <div style={labelStyle}>Días de la semana</div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>

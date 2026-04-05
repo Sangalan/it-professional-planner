@@ -97,29 +97,24 @@ function DetailDialog({ pr, objectives, onClose, onSaved, onDeleted }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-3)', lineHeight: 1 }}>✕</button>
         </div>
 
-        {isNew ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-            <div>
-              <label style={labelSt}>Título *</label>
-              <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
-            </div>
-            <div>
-              <label style={labelSt}>Inicio</label>
-              <input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} style={{ width: '100%' }} />
-            </div>
-            <div>
-              <label style={labelSt}>Fin</label>
-              <input type="date" value={form.end_date} onChange={e => set('end_date', e.target.value)} style={{ width: '100%' }} />
-            </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={labelSt}>Título *</label>
+            <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus={isNew} />
           </div>
-        ) : (
-          <>
-            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{pr.title}</div>
-            <div className="task-meta" style={{ marginBottom: 16 }}>
-              <span className="task-time">{fmtShortDate(pr.start_date)} → {fmtShortDate(pr.end_date)}</span>
-              {isActive && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>Activa ahora</span>}
-            </div>
-          </>
+          <div>
+            <label style={labelSt}>Inicio</label>
+            <input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} style={{ width: '100%' }} />
+          </div>
+          <div>
+            <label style={labelSt}>Fin</label>
+            <input type="date" value={form.end_date} onChange={e => set('end_date', e.target.value)} style={{ width: '100%' }} />
+          </div>
+        </div>
+        {!isNew && isActive && (
+          <div className="task-meta" style={{ marginBottom: 14 }}>
+            <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>Activa ahora</span>
+          </div>
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>

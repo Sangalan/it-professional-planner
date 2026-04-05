@@ -84,6 +84,11 @@ export const api = {
   deleteReadingItem:   (id) => fetch(BASE + `/reading-list/${id}`, { method: 'DELETE' }).then(r => r.json()),
   reorderReadingList:  (ids) => post('/reading-list/reorder', { ids }),
 
+  documents:     (params = {}) => get('/documents?' + new URLSearchParams(params)),
+  uploadDocument: (formData) => fetch('/api/documents', { method: 'POST', body: formData }).then(r => r.json()),
+  updateDocument: (id, body) => put(`/documents/${id}`, body),
+  deleteDocument: (id) => fetch('/api/documents/' + id, { method: 'DELETE' }).then(r => r.json()),
+
   workBlocks:    () => get('/work-blocks'),
 
   dashboard:     () => get('/dashboard'),

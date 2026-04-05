@@ -42,6 +42,12 @@ try { db.prepare('UPDATE objectives SET type = \'objective\' WHERE type IS NULL'
 try { db.prepare('ALTER TABLE milestones ADD COLUMN billed_amount REAL DEFAULT 0').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE objectives ADD COLUMN category_ids TEXT').run(); } catch (_) {}
 
+try { db.prepare('ALTER TABLE documents ADD COLUMN category_ids TEXT').run(); } catch (_) {}
+
+// Documents uploads directory
+const uploadsDir = path.join(dataDir, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
 // Reading list table (created via initSchema, no migration needed — new table)
 
 
@@ -158,6 +164,15 @@ function initSchema() {
       objective_id TEXT,
       status TEXT DEFAULT 'not_started',
       notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS documents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      mime_type TEXT,
+      size INTEGER,
+      created_at TEXT DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS reading_list (

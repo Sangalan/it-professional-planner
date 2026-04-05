@@ -1,5 +1,8 @@
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { db, initSchema } = require('./db');
 
 initSchema();
@@ -7,6 +10,18 @@ initSchema();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const uploadsDir = path.join(__dirname, 'data', 'uploads');
+app.use('/uploads', express.static(uploadsDir));
+
+const storage = multer.diskStorage({
+  destination: uploadsDir,
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e6);
+    cb(null, unique + path.extname(file.originalname));
+  },
+});
+const upload = multer({ storage });
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -1087,6 +1102,50 @@ app.post('/api/import', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Documents ────────────────────────────────────────────────────────────────
+
+app.get('/api/documents', (req, res) => {
+  const { q, sort = 'created_at' } = req.query;
+  const col = sort === 'name' ? 'name' : 'created_at';
+  let sql = `SELECT * FROM documents`;
+  const params = [];
+  if (q) { sql += ` WHERE name LIKE ?`; params.push(`%${q}%`); }
+  sql += ` ORDER BY ${col} DESC`;
+  const rows = db.prepare(sql).all(...params).map(d => ({
+    ...d,
+    category_ids: (() => { try { return JSON.parse(d.category_ids || '[]'); } catch (_) { return []; } })(),
+  }));
+  res.json(rows);
+});
+
+app.post('/api/documents', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const id = require('crypto').randomUUID();
+  const name = req.body.name || req.file.originalname;
+  const catIds = req.body.category_ids ? JSON.stringify(JSON.parse(req.body.category_ids)) : '[]';
+  db.prepare(`INSERT INTO documents (id, name, filename, mime_type, size, category_ids) VALUES (?,?,?,?,?,?)`)
+    .run(id, name, req.file.filename, req.file.mimetype, req.file.size, catIds);
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+  res.json({ ...doc, category_ids: JSON.parse(doc.category_ids || '[]') });
+});
+
+app.put('/api/documents/:id', (req, res) => {
+  const { name, category_ids } = req.body;
+  db.prepare('UPDATE documents SET name = ?, category_ids = ? WHERE id = ?')
+    .run(name, JSON.stringify(category_ids || []), req.params.id);
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  res.json({ ...doc, category_ids: JSON.parse(doc.category_ids || '[]') });
+});
+
+app.delete('/api/documents/:id', (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.json({ ok: true });
+  const filePath = path.join(uploadsDir, doc.filename);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 const PORT = process.env.PORT || 3002;
