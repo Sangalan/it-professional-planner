@@ -1,5 +1,9 @@
 const BASE = '/api';
 
+function sortCategoriesByName(categories) {
+  return [...categories].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 async function get(path) {
   const r = await fetch(BASE + path);
   if (!r.ok) throw new Error(`API error ${r.status}: ${path}`);
@@ -27,7 +31,7 @@ async function post(path, body = {}) {
 }
 
 export const api = {
-  categories:    () => get('/categories'),
+  categories:    () => get('/categories').then(sortCategoriesByName),
 
   tasks:         (params = {}) => get('/tasks?' + new URLSearchParams(params)),
   searchTasks:   (params = {}) => get('/tasks/search?' + new URLSearchParams(params)),

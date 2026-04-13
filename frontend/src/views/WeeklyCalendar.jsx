@@ -26,6 +26,8 @@ export default function WeeklyCalendar() {
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);
   const [workBlocks, setWorkBlocks] = useState([]);
+  const [objectiveColors, setObjectiveColors] = useState({});
+  const [milestoneTitles, setMilestoneTitles] = useState({});
   const [currentTime, setCurrentTime] = useState(new Date().toTimeString().slice(0, 5));
   const [createFor, setCreateFor] = useState(null);   // date string
   const [editTask, setEditTask] = useState(null);      // task object
@@ -45,6 +47,41 @@ export default function WeeklyCalendar() {
     const iv = setInterval(() => setCurrentTime(new Date().toTimeString().slice(0, 5)), 60000);
     return () => clearInterval(iv);
   }, []);
+
+  useEffect(() => {
+    Promise.all([
+      api.objectives(),
+      api.milestones(),
+      api.publications(),
+      api.certifications(),
+      api.repos(),
+      api.prs(),
+      api.events(),
+    ]).then(([objs, milestones, pubs, certs, repos, prs, evts]) => {
+      const objectiveColorMap = {};
+      for (const o of objs) objectiveColorMap[o.id] = o.color || null;
+      setObjectiveColors(objectiveColorMap);
+
+      const titleMap = {};
+      for (const m of milestones) titleMap[m.id] = m.title;
+      for (const p of pubs) titleMap[p.id] = p.title;
+      for (const c of certs) titleMap[c.id] = c.title;
+      for (const r of repos) titleMap[r.id] = r.name || r.title;
+      for (const pr of prs) titleMap[pr.id] = pr.title;
+      for (const e of evts) titleMap[e.id] = e.title;
+      setMilestoneTitles(titleMap);
+    }).catch(() => {});
+  }, []);
+
+  function getTaskColor(task) {
+    if (task.objective_id && objectiveColors[task.objective_id]) return objectiveColors[task.objective_id];
+    return getCatColor(task.category_id);
+  }
+
+  function getMilestoneLabel(task) {
+    if (!task?.milestone_id) return 'Sin hito';
+    return milestoneTitles[task.milestone_id] || 'Sin hito';
+  }
 
   function prevWeek() { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); }
   function nextWeek() { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); }
@@ -204,12 +241,17 @@ export default function WeeklyCalendar() {
                   {(tasksByDate[ds] || []).filter(t => !t.start_time).map(t => (
                     <div key={t.id} title={t.title} onClick={e => { e.stopPropagation(); setEditTask(t); }} style={{
                       fontSize: 9, padding: '1px 4px', borderRadius: 3,
-                      background: getCatColor(t.category_id) + (t.status === 'completed' ? '55' : 'aa'),
+                      background: getTaskColor(t) + (t.status === 'completed' ? '55' : 'aa'),
                       color: 'white', marginTop: 2,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      overflow: 'hidden',
                       cursor: 'pointer',
                     }}>
-                      {t.title}{t.status === 'completed' ? ' ✓' : ''}
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {t.title}{t.status === 'completed' ? ' ✓' : ''}
+                      </div>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.92 }}>
+                        {getMilestoneLabel(t)}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -319,9 +361,10 @@ export default function WeeklyCalendar() {
                     const startMin = timeToMinutes(task.start_time) - firstHourMin;
                     const endMin   = task.end_time ? timeToMinutes(task.end_time) - firstHourMin : startMin + 60;
                     const top    = Math.max(0, (startMin / 60) * SLOT_H);
-                    const height = Math.max(18, ((endMin - startMin) / 60) * SLOT_H - 2);
+                    const height = Math.max(28, ((endMin - startMin) / 60) * SLOT_H - 2);
                     const isNow  = today && timeToMinutes(task.start_time) <= currentMinutes &&
                                    (task.end_time ? timeToMinutes(task.end_time) > currentMinutes : false);
+                    const taskColor = getTaskColor(task);
                     return (
                       <div key={task.id}
                         title={`${task.title} (${task.start_time}–${task.end_time || '?'})`}
@@ -330,19 +373,22 @@ export default function WeeklyCalendar() {
                           position: 'absolute',
                           top, left: 2, right: 2, height,
                           background: isNow
-                            ? getCatColor(task.category_id)
-                            : getCatColor(task.category_id) + (task.status === 'completed' ? '55' : 'cc'),
+                            ? taskColor
+                            : taskColor + (task.status === 'completed' ? '55' : 'cc'),
                           borderRadius: 4,
                           padding: '2px 4px',
                           overflow: 'hidden',
                           cursor: 'pointer',
                           zIndex: 5,
-                          borderLeft: `3px solid ${getCatColor(task.category_id)}`,
+                          borderLeft: `3px solid ${taskColor}`,
                         }}
                       >
                         <div style={{ fontSize: 9, color: 'white', fontWeight: 600, lineHeight: 1.2, overflow: 'hidden' }}>
                           {task.start_time} {task.title}
                           {task.status === 'completed' && ' ✓'}
+                        </div>
+                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,.9)', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {getMilestoneLabel(task)}
                         </div>
                       </div>
                     );

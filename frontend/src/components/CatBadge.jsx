@@ -35,6 +35,31 @@ export function ColorPicker({ value, onChange }) {
   );
 }
 
+export function CategoryOption({ cat, active, onClick }) {
+  const color = cat.color || '#94a3b8';
+  const textColor = cat.text_color || '#1f2937';
+  const borderColor = active ? textColor : textColor + '55';
+
+  return (
+    <span
+      onClick={onClick}
+      style={{
+        cursor: 'pointer',
+        fontSize: 12,
+        padding: '4px 10px',
+        borderRadius: 10,
+        background: active ? color + '22' : 'var(--bg)',
+        color: active ? textColor : 'var(--text-2)',
+        border: `1px solid ${borderColor}`,
+        fontWeight: active ? 600 : 400,
+        userSelect: 'none',
+      }}
+    >
+      {cat.name}
+    </span>
+  );
+}
+
 export function CategorySelector({ selected, onChange }) {
   const cats = useCats();
   function toggle(id) {
@@ -44,17 +69,7 @@ export function CategorySelector({ selected, onChange }) {
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
       {cats.map(cat => {
         const active = selected.includes(cat.id);
-        return (
-          <span key={cat.id} onClick={() => toggle(cat.id)} style={{
-            cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
-            background: active ? cat.color + '33' : 'var(--bg)',
-            color: active ? cat.color : 'var(--text-3)',
-            border: `1px solid ${active ? cat.color : 'var(--border)'}`,
-            fontWeight: active ? 600 : 400, userSelect: 'none',
-          }}>
-            {cat.name}
-          </span>
-        );
+        return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
       })}
     </div>
   );
@@ -64,10 +79,11 @@ export default function CatBadge({ id, style = {}, ...rest }) {
   const cats = useCats();
   const cat = cats.find(c => c.id === id);
   const color = cat?.color || '#94a3b8';
+  const textColor = cat?.text_color || color;
   return (
     <span
       className="badge"
-      style={{ background: color + '22', color, ...style }}
+      style={{ background: color + '22', color: textColor, border: `1px solid ${textColor}`, ...style }}
       {...rest}
     >
       {cat?.name || id || '—'}

@@ -51,25 +51,23 @@ function SectionCard({ title, count, children, onNew }) {
 
 function CategoryDialog({ cat, onClose, onSaved, onDeleted }) {
   const isNew = !cat;
-  const [id, setId] = useState(cat?.id || '');
   const [name, setName] = useState(cat?.name || '');
   const [color, setColor] = useState(cat?.color || '#2563eb');
+  const [textColor, setTextColor] = useState(cat?.text_color || '#1f2937');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
 
-  function autoId(n) {
-    return n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  function nameToId(n) {
+    return n.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   }
 
   async function save() {
     if (!name.trim()) { setError('El nombre es obligatorio'); return; }
-    if (isNew && !id.trim()) { setError('El ID es obligatorio'); return; }
-    if (isNew && !/^[a-z0-9-]+$/.test(id)) { setError('El ID solo puede contener letras minúsculas, números y guiones'); return; }
     setSaving(true); setError('');
     try {
-      if (isNew) await api.createCategory({ id: id.trim(), name: name.trim(), color });
-      else await api.updateCategory(cat.id, { name: name.trim(), color });
+      if (isNew) await api.createCategory({ id: nameToId(name), name: name.trim(), color, text_color: textColor });
+      else await api.updateCategory(cat.id, { name: name.trim(), color, text_color: textColor });
       onSaved(); onClose();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   }
@@ -85,29 +83,34 @@ function CategoryDialog({ cat, onClose, onSaved, onDeleted }) {
 
   return (
     <Dialog title={isNew ? 'Nueva categoría' : `Editar categoría — ${cat.name}`} onClose={onClose}>
-      {isNew && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-          <div>
-            <label style={labelSt}>Nombre *</label>
-            <input type="text" value={name} onChange={e => { setName(e.target.value); if (!id) setId(autoId(e.target.value)); }}
-              placeholder="Mi categoría" style={{ width: '100%' }} autoFocus />
-          </div>
-          <div>
-            <label style={labelSt}>ID único * <span style={{ fontWeight: 400, color: 'var(--text-3)', fontSize: 11 }}>(no se puede cambiar)</span></label>
-            <input type="text" value={id} onChange={e => setId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-              placeholder="mi-categoria" style={{ width: '100%', fontFamily: 'monospace' }} />
-          </div>
-        </div>
-      )}
-      {!isNew && (
-        <div style={fieldW}>
-          <label style={labelSt}>Nombre *</label>
-          <input type="text" value={name} onChange={e => setName(e.target.value)} style={{ width: '100%' }} autoFocus />
-        </div>
-      )}
       <div style={fieldW}>
-        <label style={labelSt}>Color</label>
+        <label style={labelSt}>Nombre *</label>
+        <input type="text" value={name} onChange={e => setName(e.target.value)}
+          placeholder="Mi categoría" style={{ width: '100%' }} autoFocus />
+        {isNew && name.trim() && (
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4, fontFamily: 'monospace' }}>
+            ID: {nameToId(name)}
+          </div>
+        )}
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Color de fondo</label>
         <ColorPicker value={color} onChange={setColor} />
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Color del texto</label>
+        <ColorPicker value={textColor} onChange={setTextColor} />
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <label style={labelSt}>Vista previa</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span className="badge" style={{ background: color + '22', color: textColor, border: `1px solid ${textColor}`, fontSize: 13, padding: '4px 12px' }}>
+            {name.trim() || 'Ejemplo'}
+          </span>
+          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+            Así se verá la categoría
+          </div>
+        </div>
       </div>
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -132,10 +135,12 @@ function CategoryRow({ cat, onSaved, onDeleted }) {
     <>
       {editing && <CategoryDialog cat={cat} onClose={() => setEditing(false)} onSaved={onSaved} onDeleted={onDeleted} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, ...rowBorder, cursor: 'pointer' }} onClick={() => setEditing(true)}>
-        <div style={{ width: 18, height: 18, borderRadius: '50%', background: cat.color, flexShrink: 0 }} />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>{cat.name}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'monospace' }}>{cat.id} · {cat.color}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <span style={{ width: 18, height: 18, borderRadius: '50%', background: cat.color, border: '1px solid var(--border)' }} title="Color de fondo" />
+          <span style={{ width: 18, height: 18, borderRadius: '50%', background: cat.text_color || '#1f2937', border: '1px solid var(--border)' }} title="Color del texto" />
+        </div>
+        <div style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>
+          {cat.name}
         </div>
       </div>
     </>
@@ -273,11 +278,16 @@ function ObjectiveDialog({ obj, onClose, onSaved, onDeleted }) {
 function ObjectiveRow({ obj, cats, onSaved, onDeleted }) {
   const [editing, setEditing] = useState(false);
   const catName = cats.find(c => c.id === obj.category_id)?.name || '—';
+  const objectiveColor = obj.color || '#2563eb';
 
   return (
     <>
       {editing && <ObjectiveDialog obj={obj} onClose={() => setEditing(false)} onSaved={onSaved} onDeleted={onDeleted} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, ...rowBorder, cursor: 'pointer' }} onClick={() => setEditing(true)}>
+        <span
+          style={{ width: 12, height: 12, borderRadius: 3, background: objectiveColor, border: '1px solid var(--border)', flexShrink: 0 }}
+          title="Color del objetivo"
+        />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {obj.type === 'client' && <span style={{ marginRight: 4 }}>👤</span>}

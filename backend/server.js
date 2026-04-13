@@ -117,24 +117,24 @@ function isOverdue(dateStr, status) {
 
 // ── CATEGORIES ──────────────────────────────────────────────────────────────
 app.get('/api/categories', (req, res) => {
-  res.json(db.prepare('SELECT * FROM categories').all());
+  res.json(db.prepare('SELECT * FROM categories ORDER BY name COLLATE NOCASE ASC').all());
 });
 
 app.post('/api/categories', (req, res) => {
-  const { id, name, color } = req.body;
+  const { id, name, color, text_color } = req.body;
   if (!id || !name || !color) return res.status(400).json({ error: 'id, name y color son obligatorios' });
   if (db.prepare('SELECT id FROM categories WHERE id = ?').get(id))
     return res.status(409).json({ error: 'Ya existe una categoría con ese id' });
-  db.prepare('INSERT INTO categories (id, name, color) VALUES (?, ?, ?)').run(id, name, color);
+  db.prepare('INSERT INTO categories (id, name, color, text_color) VALUES (?, ?, ?, ?)').run(id, name, color, text_color ?? null);
   res.status(201).json(db.prepare('SELECT * FROM categories WHERE id = ?').get(id));
 });
 
 app.put('/api/categories/:id', (req, res) => {
-  const { name, color } = req.body;
+  const { name, color, text_color } = req.body;
   const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
   if (!cat) return res.status(404).json({ error: 'Not found' });
-  db.prepare('UPDATE categories SET name = COALESCE(?, name), color = COALESCE(?, color) WHERE id = ?')
-    .run(name ?? null, color ?? null, req.params.id);
+  db.prepare('UPDATE categories SET name = COALESCE(?, name), color = COALESCE(?, color), text_color = ? WHERE id = ?')
+    .run(name ?? null, color ?? null, text_color ?? null, req.params.id);
   res.json(db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id));
 });
 

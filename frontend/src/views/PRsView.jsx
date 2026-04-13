@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtShortDate } from '../utils/dateUtils.js';
-import CatBadge, { useCats } from '../components/CatBadge.jsx';
+import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
@@ -31,17 +31,7 @@ function CategorySelector({ selected, onChange }) {
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
       {cats.map(cat => {
         const active = selected.includes(cat.id);
-        return (
-          <span key={cat.id} onClick={() => toggle(cat.id)} style={{
-            cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
-            background: active ? cat.color + '33' : 'var(--bg)',
-            color: active ? cat.color : 'var(--text-3)',
-            border: `1px solid ${active ? cat.color : 'var(--border)'}`,
-            fontWeight: active ? 600 : 400,
-          }}>
-            {cat.name}
-          </span>
-        );
+        return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
       })}
     </div>
   );

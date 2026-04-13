@@ -43,6 +43,7 @@ try { db.prepare('ALTER TABLE milestones ADD COLUMN billed_amount REAL DEFAULT 0
 try { db.prepare('ALTER TABLE objectives ADD COLUMN category_ids TEXT').run(); } catch (_) {}
 
 try { db.prepare('ALTER TABLE documents ADD COLUMN category_ids TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE categories ADD COLUMN text_color TEXT').run(); } catch (_) {}
 
 // Documents uploads directory
 const uploadsDir = path.join(dataDir, 'uploads');

@@ -12,7 +12,7 @@ import GapPickerDialog from '../components/GapPickerDialog.jsx';
 
 const DOW = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 
-function DayDetail({ dateStr, tasks, events, onClose, onRefresh }) {
+function DayDetail({ dateStr, tasks, events, getTaskColor, getMilestoneLabel, onClose, onRefresh }) {
   const [localTasks, setLocalTasks] = useState(tasks);
   const [editTask, setEditTask] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -94,8 +94,12 @@ function DayDetail({ dateStr, tasks, events, onClose, onRefresh }) {
                 >
                   {task.status === 'completed' ? '✓' : ''}
                 </div>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: getTaskColor(task), marginTop: 5, flexShrink: 0 }} />
                 <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditTask(task)}>
                   <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>{task.title}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, fontStyle: 'italic' }}>
+                    {getMilestoneLabel(task)}
+                  </div>
                   <div className="task-meta">
                     {task.start_time && <span className="task-time">{task.start_time}–{task.end_time}</span>}
                     <CatBadge id={task.category_id} />
@@ -117,6 +121,8 @@ export default function MonthlyCalendar() {
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);
   const [cats, setCats] = useState([]);
+  const [objectiveColors, setObjectiveColors] = useState({});
+  const [milestoneTitles, setMilestoneTitles] = useState({});
   const [filterCat, setFilterCat] = useState('');
   const [selected, setSelected] = useState(null);
   const [gapDialog, setGapDialog] = useState(null); // { date, gapHours }
@@ -133,6 +139,41 @@ export default function MonthlyCalendar() {
   useEffect(() => { reloadMonth(); }, [month]);
 
   useEffect(() => { api.categories().then(setCats); }, []);
+
+  useEffect(() => {
+    Promise.all([
+      api.objectives(),
+      api.milestones(),
+      api.publications(),
+      api.certifications(),
+      api.repos(),
+      api.prs(),
+      api.events(),
+    ]).then(([objs, milestones, pubs, certs, repos, prs, evts]) => {
+      const objectiveColorMap = {};
+      for (const o of objs) objectiveColorMap[o.id] = o.color || null;
+      setObjectiveColors(objectiveColorMap);
+
+      const titleMap = {};
+      for (const m of milestones) titleMap[m.id] = m.title;
+      for (const p of pubs) titleMap[p.id] = p.title;
+      for (const c of certs) titleMap[c.id] = c.title;
+      for (const r of repos) titleMap[r.id] = r.name || r.title;
+      for (const pr of prs) titleMap[pr.id] = pr.title;
+      for (const e of evts) titleMap[e.id] = e.title;
+      setMilestoneTitles(titleMap);
+    }).catch(() => {});
+  }, []);
+
+  function getTaskColor(task) {
+    if (task.objective_id && objectiveColors[task.objective_id]) return objectiveColors[task.objective_id];
+    return getCatColor(task.category_id);
+  }
+
+  function getMilestoneLabel(task) {
+    if (!task?.milestone_id) return 'Sin hito';
+    return milestoneTitles[task.milestone_id] || 'Sin hito';
+  }
 
   function getItemsForDay(d) {
     const ds = toDateStr(d);
@@ -207,12 +248,21 @@ export default function MonthlyCalendar() {
               <div className="cal-day">{d.getDate()}</div>
               <div className="cal-items">
                 {allItems.map((item, i) => {
-                  const color = getCatColor(item.category_id);
+                  const color = item._type === 'task' ? getTaskColor(item) : getCatColor(item.category_id);
                   return (
                     <div key={i} className="cal-item"
-                      style={{ background: color + 'cc' }}
+                      style={{
+                        background: color + 'cc',
+                        whiteSpace: item._type === 'task' ? 'normal' : 'nowrap',
+                        lineHeight: item._type === 'task' ? 1.2 : undefined,
+                      }}
                       title={item.title}>
                       {item.title}
+                      {item._type === 'task' && (
+                        <div style={{ fontSize: 9, opacity: 0.92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {getMilestoneLabel(item)}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -255,6 +305,8 @@ export default function MonthlyCalendar() {
           dateStr={toDateStr(selected)}
           tasks={selItems.tasks}
           events={selItems.events}
+          getTaskColor={getTaskColor}
+          getMilestoneLabel={getMilestoneLabel}
           onClose={() => setSelected(null)}
           onRefresh={reloadMonth}
         />
