@@ -5,6 +5,7 @@ import { getCatColor } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
 import CatBadge from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
+import SpanishDateInput from '../components/SpanishDateInput.jsx';
 
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00–22:00
 const SLOT_H = 60; // px per hour
@@ -146,7 +147,7 @@ export default function DailyList() {
             onClick={() => { const d = new Date(dateStr); d.setDate(d.getDate() - 1); setDateStr(toDateStr(d)); }}>
             ← Anterior
           </button>
-          <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)} />
+          <SpanishDateInput value={dateStr} onChange={setDateStr} style={{ minWidth: 150 }} />
           <button className="btn btn-ghost btn-sm"
             onClick={() => { const d = new Date(dateStr); d.setDate(d.getDate() + 1); setDateStr(toDateStr(d)); }}>
             Siguiente →

@@ -4,6 +4,7 @@ import { fmtDate, fmtShortDate } from '../utils/dateUtils.js';
 import { statusLabel } from '../utils/categoryUtils.js';
 import CatBadge, { CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
+import SpanishDateInput from '../components/SpanishDateInput.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW  = { marginBottom: 14 };
@@ -120,11 +121,11 @@ function ClientDialog({ client, onClose, onSaved }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div>
           <label style={labelSt}>Inicio</label>
-          <input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} style={{ width: '100%' }} />
+          <SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} />
         </div>
         <div>
           <label style={labelSt}>Fin</label>
-          <input type="date" value={form.end_date} onChange={e => set('end_date', e.target.value)} style={{ width: '100%' }} />
+          <SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} />
         </div>
         <div>
           <label style={labelSt}>Prioridad</label>
@@ -229,7 +230,7 @@ function MilestoneDialog({ milestone, clientId, onClose, onSaved }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div>
           <label style={labelSt}>Fecha objetivo</label>
-          <input type="date" value={form.target_date} onChange={e => set('target_date', e.target.value)} style={{ width: '100%' }} />
+          <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
         </div>
         <div>
           <label style={labelSt}>Estado</label>

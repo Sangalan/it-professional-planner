@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtShortDate } from '../utils/dateUtils.js';
 import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import SpanishDateInput from '../components/SpanishDateInput.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
@@ -94,11 +95,11 @@ function DetailDialog({ pr, objectives, onClose, onSaved, onDeleted }) {
           </div>
           <div>
             <label style={labelSt}>Inicio</label>
-            <input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} style={{ width: '100%' }} />
+            <SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} />
           </div>
           <div>
             <label style={labelSt}>Fin</label>
-            <input type="date" value={form.end_date} onChange={e => set('end_date', e.target.value)} style={{ width: '100%' }} />
+            <SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} />
           </div>
         </div>
         {!isNew && isActive && (

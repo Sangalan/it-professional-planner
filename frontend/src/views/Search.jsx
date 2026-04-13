@@ -4,6 +4,7 @@ import { fmtDate, formatDuration } from '../utils/dateUtils.js';
 import { statusLabel } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
 import CatBadge from '../components/CatBadge.jsx';
+import SpanishDateInput from '../components/SpanishDateInput.jsx';
 
 const STATUS_OPTIONS = [
   { value: '', label: 'Todos los estados' },
@@ -99,11 +100,11 @@ export default function Search() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div>
             <label style={labelSt}>Desde</label>
-            <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={{ width: '100%' }} />
+            <SpanishDateInput value={from} onChange={setFrom} style={{ width: '100%' }} />
           </div>
           <div>
             <label style={labelSt}>Hasta</label>
-            <input type="date" value={to} onChange={e => setTo(e.target.value)} style={{ width: '100%' }} />
+            <SpanishDateInput value={to} onChange={setTo} style={{ width: '100%' }} />
           </div>
           <div>
             <label style={labelSt}>Categoría</label>

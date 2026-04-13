@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { CategorySelector } from './CatBadge.jsx';
+import SpanishDateInput from './SpanishDateInput.jsx';
 
 function parseCatIds(raw, fallback) {
   if (Array.isArray(raw) && raw.length) return raw;
@@ -140,7 +141,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
             {!form.is_fixed && (
               <div>
                 <label style={labelStyle}>Fecha *</label>
-                <input type="date" value={form.date} onChange={e => set('date', e.target.value)} style={{ width: '100%' }} />
+                <SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} />
               </div>
             )}
             <div>
@@ -247,11 +248,11 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <div>
                   <label style={labelStyle}>Fecha inicio</label>
-                  <input type="date" value={form.fixed_start_date} onChange={e => set('fixed_start_date', e.target.value)} style={{ width: '100%' }} />
+                  <SpanishDateInput value={form.fixed_start_date} onChange={v => set('fixed_start_date', v)} style={{ width: '100%' }} />
                 </div>
                 <div>
                   <label style={labelStyle}>Fecha fin</label>
-                  <input type="date" value={form.fixed_end_date} onChange={e => set('fixed_end_date', e.target.value)} style={{ width: '100%' }} />
+                  <SpanishDateInput value={form.fixed_end_date} onChange={v => set('fixed_end_date', v)} style={{ width: '100%' }} />
                 </div>
               </div>
             </div>

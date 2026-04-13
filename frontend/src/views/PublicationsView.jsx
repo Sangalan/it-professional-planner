@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
 import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import SpanishDateInput from '../components/SpanishDateInput.jsx';
 
 const TYPE_ICONS = { video: '🎬', article: '📝', post: '✍️' };
 const TYPE_LABELS = { video: 'Vídeo', article: 'Artículo', post: 'Post' };
@@ -109,7 +110,7 @@ function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
           </div>
           <div>
             <label style={labelSt}>Fecha {dl && <span className={`milestone-days ${dl.cls}`} style={{ marginLeft: 6, fontSize: 11 }}>{dl.text}</span>}</label>
-            <input type="date" value={form.date} onChange={e => set('date', e.target.value)} style={{ width: '100%' }} />
+            <SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} />
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
