@@ -6,6 +6,7 @@ import TaskModal from '../components/TaskModal.jsx';
 import CatBadge from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
+import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
 
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00–22:00
 const SLOT_H = 60; // px per hour
@@ -53,6 +54,7 @@ export default function DailyList() {
   const [showCreate, setShowCreate] = useState(false);
   const [editTask, setEditTask] = useState(null);
   const [gapDialog, setGapDialog] = useState(null);
+  const [calendarView, setCalendarView] = useState('current');
   const [currentTime, setCurrentTime] = useState(new Date().toTimeString().slice(0, 5));
 
   async function load() {
@@ -117,8 +119,8 @@ export default function DailyList() {
   return (
     <div>
       {/* ── Header ── */}
-      <div className="page-header">
-        <div>
+      <div className="page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 12, alignItems: 'start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div className="page-title" style={{ textTransform: 'capitalize' }}>
             {isToday ? 'Hoy' : dayLabel}
           </div>
@@ -142,7 +144,21 @@ export default function DailyList() {
             </span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0, marginLeft: 12 }}>
+          <div style={{ display: 'flex', gap: 6, marginRight: 4 }}>
+            <button
+              className={`btn btn-sm ${calendarView === 'current' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setCalendarView('current')}
+            >
+              Vista actual
+            </button>
+            <button
+              className={`btn btn-sm ${calendarView === 'content' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setCalendarView('content')}
+            >
+              Vista contenido
+            </button>
+          </div>
           <button className="btn btn-ghost btn-sm"
             onClick={() => { const d = new Date(dateStr); d.setDate(d.getDate() - 1); setDateStr(toDateStr(d)); }}>
             ← Anterior
@@ -152,9 +168,12 @@ export default function DailyList() {
             onClick={() => { const d = new Date(dateStr); d.setDate(d.getDate() + 1); setDateStr(toDateStr(d)); }}>
             Siguiente →
           </button>
-          {!isToday && (
-            <button className="btn btn-ghost btn-sm" onClick={() => setDateStr(toDateStr(new Date()))}>Hoy</button>
-          )}
+          <button
+            className={`btn btn-sm ${isToday ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setDateStr(toDateStr(new Date()))}
+          >
+            Hoy
+          </button>
           <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>+ Nueva tarea</button>
         </div>
       </div>
@@ -183,75 +202,79 @@ export default function DailyList() {
         />
       )}
 
-      {/* ── Category filter ── */}
-      <div className="filter-row">
-        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Filtrar:</span>
-        <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todas</span>
-        {cats.map(c => (
-          <span key={c.id}
-            className={`chip ${filterCat === c.id ? 'active' : ''}`}
-            style={{ borderColor: filterCat === c.id ? c.color : undefined }}
-            onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>
-            {c.name}
-          </span>
-        ))}
-      </div>
-
-      {/* ── Gap warning ── */}
-      {gapHours.length > 0 && (
-        <div style={{ marginBottom: 16, padding: '10px 14px', background: '#fef9c3', borderRadius: 6, border: '1px solid #fde047' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>
-            ⚠ {gapHours.length} hueco{gapHours.length > 1 ? 's' : ''} libre{gapHours.length > 1 ? 's' : ''} (9:00–20:00)
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {gapHours.map(h => (
-              <span key={h} onClick={() => setGapDialog({ hour: h })} style={{
-                cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
-                background: '#fef08a', color: '#92400e', border: '1px solid #fde047', fontWeight: 600,
-              }}>
-                {String(h).padStart(2, '0')}:00
+      {calendarView === 'content' ? (
+        <CalendarContentSummary mode="day" date={dateStr} />
+      ) : (
+        <>
+          {/* ── Category filter ── */}
+          <div className="filter-row">
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Filtrar:</span>
+            <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todas</span>
+            {cats.map(c => (
+              <span key={c.id}
+                className={`chip ${filterCat === c.id ? 'active' : ''}`}
+                style={{ borderColor: filterCat === c.id ? c.color : undefined }}
+                onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>
+                {c.name}
               </span>
             ))}
           </div>
-        </div>
-      )}
 
-      {/* ── Overdue warning ── */}
-      {overdue.length > 0 && (
-        <div style={{ marginBottom: 16, padding: '8px 12px', background: 'var(--danger-bg)', borderRadius: 6, border: '1px solid #fecaca', fontSize: 12, color: 'var(--danger)' }}>
-          ⚠ {overdue.length} tarea{overdue.length > 1 ? 's' : ''} vencida{overdue.length > 1 ? 's' : ''}
-        </div>
-      )}
+          {/* ── Gap warning ── */}
+          {gapHours.length > 0 && (
+            <div style={{ marginBottom: 16, padding: '10px 14px', background: '#fef9c3', borderRadius: 6, border: '1px solid #fde047' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>
+                ⚠ {gapHours.length} hueco{gapHours.length > 1 ? 's' : ''} libre{gapHours.length > 1 ? 's' : ''} (9:00–20:00)
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {gapHours.map(h => (
+                  <span key={h} onClick={() => setGapDialog({ hour: h })} style={{
+                    cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
+                    background: '#fef08a', color: '#92400e', border: '1px solid #fde047', fontWeight: 600,
+                  }}>
+                    {String(h).padStart(2, '0')}:00
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {/* ── Untimed tasks ── */}
-      {untimedTasks.length > 0 && (
-        <div className="card" style={{ marginBottom: 14 }}>
-          <div className="card-header">
-            <span className="card-title">Sin horario ({untimedTasks.length})</span>
-          </div>
-          <div style={{ padding: '0 18px' }}>
-            {untimedTasks.map(task => (
-              <UntimeRow
-                key={task.id}
-                task={task}
-                color={getTaskColor(task)}
-                onToggle={() => toggleTask(task)}
-                onEdit={() => setEditTask(task)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+          {/* ── Overdue warning ── */}
+          {overdue.length > 0 && (
+            <div style={{ marginBottom: 16, padding: '8px 12px', background: 'var(--danger-bg)', borderRadius: 6, border: '1px solid #fecaca', fontSize: 12, color: 'var(--danger)' }}>
+              ⚠ {overdue.length} tarea{overdue.length > 1 ? 's' : ''} vencida{overdue.length > 1 ? 's' : ''}
+            </div>
+          )}
 
-      {/* ── Empty state ── */}
-      {tasks.length === 0 ? (
-        <div className="empty-state card" style={{ padding: 40 }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
-          Sin tareas para este día
-        </div>
-      ) : (
-        /* ── Time grid ── */
-        <div className="card" style={{ overflow: 'hidden' }}>
+          {/* ── Untimed tasks ── */}
+          {untimedTasks.length > 0 && (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="card-header">
+                <span className="card-title">Sin horario ({untimedTasks.length})</span>
+              </div>
+              <div style={{ padding: '0 18px' }}>
+                {untimedTasks.map(task => (
+                  <UntimeRow
+                    key={task.id}
+                    task={task}
+                    color={getTaskColor(task)}
+                    onToggle={() => toggleTask(task)}
+                    onEdit={() => setEditTask(task)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Empty state ── */}
+          {tasks.length === 0 ? (
+            <div className="empty-state card" style={{ padding: 40 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📭</div>
+              Sin tareas para este día
+            </div>
+          ) : (
+            /* ── Time grid ── */
+            <div className="card" style={{ overflow: 'hidden' }}>
           <div style={{
             display: 'grid',
             gridTemplateColumns: '52px 1fr',
@@ -451,7 +474,9 @@ export default function DailyList() {
               })}
             </div>
           </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

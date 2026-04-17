@@ -7,6 +7,7 @@ import {
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
+import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
 
 // Hours to display in the week view
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00–22:00
@@ -32,6 +33,7 @@ export default function WeeklyCalendar() {
   const [createFor, setCreateFor] = useState(null);   // date string
   const [editTask, setEditTask] = useState(null);      // task object
   const [gapDialog, setGapDialog] = useState(null);   // { date, hour }
+  const [calendarView, setCalendarView] = useState('current');
 
   const days = useMemo(() => getWeekDays(weekStart), [weekStart]);
 
@@ -140,6 +142,20 @@ export default function WeeklyCalendar() {
           <div className="page-subtitle">Vista semanal por bloques horarios</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6, marginRight: 4 }}>
+            <button
+              className={`btn btn-sm ${calendarView === 'current' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setCalendarView('current')}
+            >
+              Vista actual
+            </button>
+            <button
+              className={`btn btn-sm ${calendarView === 'content' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setCalendarView('content')}
+            >
+              Vista contenido
+            </button>
+          </div>
           <button className="btn btn-ghost btn-sm" onClick={prevWeek}>← Anterior</button>
           <button className="btn btn-ghost btn-sm" onClick={goToday}>Esta semana</button>
           <button className="btn btn-ghost btn-sm" onClick={nextWeek}>Siguiente →</button>
@@ -184,91 +200,95 @@ export default function WeeklyCalendar() {
         />
       )}
 
-      {/* Work blocks legend */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', fontSize: 11 }}>
-        <span style={{ color: 'var(--text-3)', fontSize: 11 }}>Bloques tipo:</span>
-        {workBlocks.map(b => (
-          <span key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-2)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: getCatColor(b.category_id), display: 'inline-block' }} />
-            {b.start_time}–{b.end_time} {b.name}
-          </span>
-        ))}
-      </div>
-
-      <div style={{ overflowX: 'auto' }}>
-        <div style={{ minWidth: 700 }}>
-          {/* Header row */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: `52px repeat(7, 1fr)`,
-            background: 'var(--border)',
-            gap: 1,
-            borderRadius: '8px 8px 0 0',
-            overflow: 'hidden',
-            border: '1px solid var(--border)',
-            borderBottom: 'none',
-          }}>
-            <div style={{ background: 'var(--surface)', padding: '8px 4px' }} />
-            {days.map(d => {
-              const ds = toDateStr(d);
-              const today = isToday(d);
-              return (
-                <div key={ds} style={{
-                  background: today ? 'var(--accent-light)' : 'var(--surface)',
-                  padding: '8px 6px', textAlign: 'center',
-                }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase' }}>
-                    {fmtDayOfWeek(d)}
-                  </div>
-                  <div style={{
-                    fontSize: 20, fontWeight: 700,
-                    color: today ? 'var(--accent)' : 'var(--text-2)'
-                  }}>
-                    {d.getDate()}
-                  </div>
-                  {/* All-day events */}
-                  {(eventsByDate[ds] || []).map(ev => (
-                    <div key={ev.id} title={ev.title} style={{
-                      fontSize: 9, padding: '1px 4px', borderRadius: 3,
-                      background: getCatColor(ev.category_id) + 'cc',
-                      color: 'white', marginTop: 2,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                    }}>
-                      {ev.title}
-                    </div>
-                  ))}
-                  {/* All-day tasks (no start_time) */}
-                  {(tasksByDate[ds] || []).filter(t => !t.start_time).map(t => (
-                    <div key={t.id} title={t.title} onClick={e => { e.stopPropagation(); setEditTask(t); }} style={{
-                      fontSize: 9, padding: '1px 4px', borderRadius: 3,
-                      background: getTaskColor(t) + (t.status === 'completed' ? '55' : 'aa'),
-                      color: 'white', marginTop: 2,
-                      overflow: 'hidden',
-                      cursor: 'pointer',
-                    }}>
-                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {t.title}{t.status === 'completed' ? ' ✓' : ''}
-                      </div>
-                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.92 }}>
-                        {getMilestoneLabel(t)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
+      {calendarView === 'content' ? (
+        <CalendarContentSummary mode="week" weekDays={days} />
+      ) : (
+        <>
+          {/* Work blocks legend */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', fontSize: 11 }}>
+            <span style={{ color: 'var(--text-3)', fontSize: 11 }}>Bloques tipo:</span>
+            {workBlocks.map(b => (
+              <span key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-2)' }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: getCatColor(b.category_id), display: 'inline-block' }} />
+                {b.start_time}–{b.end_time} {b.name}
+              </span>
+            ))}
           </div>
 
-          {/* Time grid */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: `52px repeat(7, 1fr)`,
-            background: 'var(--border)',
-            gap: 1,
-            border: '1px solid var(--border)',
-            borderRadius: '0 0 8px 8px',
-            overflow: 'hidden',
-          }}>
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ minWidth: 700 }}>
+              {/* Header row */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: `52px repeat(7, 1fr)`,
+                background: 'var(--border)',
+                gap: 1,
+                borderRadius: '8px 8px 0 0',
+                overflow: 'hidden',
+                border: '1px solid var(--border)',
+                borderBottom: 'none',
+              }}>
+                <div style={{ background: 'var(--surface)', padding: '8px 4px' }} />
+                {days.map(d => {
+                  const ds = toDateStr(d);
+                  const today = isToday(d);
+                  return (
+                    <div key={ds} style={{
+                      background: today ? 'var(--accent-light)' : 'var(--surface)',
+                      padding: '8px 6px', textAlign: 'center',
+                    }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase' }}>
+                        {fmtDayOfWeek(d)}
+                      </div>
+                      <div style={{
+                        fontSize: 20, fontWeight: 700,
+                        color: today ? 'var(--accent)' : 'var(--text-2)'
+                      }}>
+                        {d.getDate()}
+                      </div>
+                      {/* All-day events */}
+                      {(eventsByDate[ds] || []).map(ev => (
+                        <div key={ev.id} title={ev.title} style={{
+                          fontSize: 9, padding: '1px 4px', borderRadius: 3,
+                          background: getCatColor(ev.category_id) + 'cc',
+                          color: 'white', marginTop: 2,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                        }}>
+                          {ev.title}
+                        </div>
+                      ))}
+                      {/* All-day tasks (no start_time) */}
+                      {(tasksByDate[ds] || []).filter(t => !t.start_time).map(t => (
+                        <div key={t.id} title={t.title} onClick={e => { e.stopPropagation(); setEditTask(t); }} style={{
+                          fontSize: 9, padding: '1px 4px', borderRadius: 3,
+                          background: getTaskColor(t) + (t.status === 'completed' ? '55' : 'aa'),
+                          color: 'white', marginTop: 2,
+                          overflow: 'hidden',
+                          cursor: 'pointer',
+                        }}>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {t.title}{t.status === 'completed' ? ' ✓' : ''}
+                          </div>
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.92 }}>
+                            {getMilestoneLabel(t)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Time grid */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: `52px repeat(7, 1fr)`,
+                background: 'var(--border)',
+                gap: 1,
+                border: '1px solid var(--border)',
+                borderRadius: '0 0 8px 8px',
+                overflow: 'hidden',
+              }}>
             {/* Time labels column */}
             <div style={{ background: 'var(--surface)' }}>
               {HOURS.map(hour => (
@@ -396,9 +416,11 @@ export default function WeeklyCalendar() {
                 </div>
               );
             })}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

@@ -16,7 +16,7 @@ function parseValue(value) {
   try { return parseISO(value); } catch (_) { return null; }
 }
 
-export default function SpanishDateInput({ value, onChange, style, placeholder = 'Seleccionar fecha' }) {
+export default function SpanishDateInput({ value, onChange, style, placeholder = 'Fecha' }) {
   const rootRef = useRef(null);
   const popupRef = useRef(null);
   const selectedDate = parseValue(value);

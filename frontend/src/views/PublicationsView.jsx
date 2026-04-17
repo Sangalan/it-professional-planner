@@ -3,6 +3,8 @@ import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
 import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
+import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 
 const TYPE_ICONS = { video: '🎬', article: '📝', post: '✍️' };
 const TYPE_LABELS = { video: 'Vídeo', article: 'Artículo', post: 'Post' };
@@ -56,6 +58,7 @@ function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
     status: pub?.status || 'pending',
     objective_id: pub?.objective_id || '',
     notes: pub?.notes || '',
+    publication_text: pub?.publication_text || '',
   });
   const [catIds, setCatIds] = useState(initCatIds);
   const [saving, setSaving] = useState(false);
@@ -133,6 +136,11 @@ function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
           <CategorySelector selected={catIds} onChange={setCatIds} />
         </div>
         <div style={fieldW}>
+          <label style={labelSt}>Texto de la publicación</label>
+          <textarea value={form.publication_text} onChange={e => set('publication_text', e.target.value)} rows={5}
+            style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6 }} />
+        </div>
+        <div style={fieldW}>
           <label style={labelSt}>Notas</label>
           <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3}
             style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6 }} />
@@ -166,9 +174,10 @@ export default function PublicationsView() {
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [filterCat, setFilterCat] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const cats = useCats();
+  const [filterCats, setFilterCats] = useState([]);
+  const [searchTitle, setSearchTitle] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
   async function load() {
     api.publications().then(setPubs);
@@ -178,11 +187,28 @@ export default function PublicationsView() {
   useEffect(() => { load(); }, []);
 
   const usedCatIds = [...new Set(pubs.flatMap(p => parseCatIds(p.category_ids, p.category_id)))];
-  const usedCats = cats.filter(c => usedCatIds.includes(c.id));
+  const normalizedSearch = searchTitle.trim().toLowerCase();
+  const dateMatches = (value) => {
+    if (!value) return !fromDate && !toDate;
+    if (fromDate && value < fromDate) return false;
+    if (toDate && value > toDate) return false;
+    return true;
+  };
 
-  const displayed = pubs
-    .filter(p => !filterCat || parseCatIds(p.category_ids, p.category_id).includes(filterCat))
-    .filter(p => !filterStatus || p.status === filterStatus);
+  const filteredBySearch = pubs
+    .filter(p => !normalizedSearch || (p.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(p => dateMatches(p.date))
+    .filter(p => filterCats.length === 0 || filterCats.some(fc => parseCatIds(p.category_ids, p.category_id).includes(fc)))
+  const activePubs = filteredBySearch
+    .filter(p => p.status !== 'published');
+  const publishedPubs = filteredBySearch.filter(p => p.status === 'published');
+  const totalPubs = pubs.length;
+  const totalPublished = pubs.filter(p => p.status === 'published').length;
+  const totalActive = pubs.filter(p => p.status !== 'published').length;
+  const progressPct = totalPubs > 0 ? Math.round((totalPublished / totalPubs) * 100) : 0;
+  const postCount = pubs.filter(p => p.type === 'post').length;
+  const articleCount = pubs.filter(p => p.type === 'article').length;
+  const videoCount = pubs.filter(p => p.type === 'video').length;
 
   const objMap = Object.fromEntries(objectives.map(o => [o.id, o]));
 
@@ -191,7 +217,7 @@ export default function PublicationsView() {
       <div className="page-header">
         <div>
           <div className="page-title">Publicaciones</div>
-          <div className="page-subtitle">{displayed.length} publicaciones</div>
+          <div className="page-subtitle">{activePubs.length} activas · {publishedPubs.length} publicadas</div>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>+ Nueva</button>
       </div>
@@ -215,33 +241,38 @@ export default function PublicationsView() {
         />
       )}
 
-      {/* Filters */}
-      {usedCats.length > 0 && (
-        <div className="filter-row" style={{ marginBottom: 8 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Categoría:</span>
-          <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todos</span>
-          {usedCats.map(c => (
-            <span key={c.id} className={`chip ${filterCat === c.id ? 'active' : ''}`} onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>{c.name}</span>
-          ))}
-        </div>
-      )}
-      <div className="filter-row" style={{ marginBottom: 16 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Estado:</span>
-        <span className={`chip ${!filterStatus ? 'active' : ''}`} onClick={() => setFilterStatus('')}>Todos</span>
-        {STATUS_OPTIONS.map(s => (
-          <span key={s.value} className={`chip ${filterStatus === s.value ? 'active' : ''}`} onClick={() => setFilterStatus(filterStatus === s.value ? '' : s.value)}>{s.label}</span>
-        ))}
-      </div>
+      <ContentMetricsSummary
+        title="Resumen de publicaciones"
+        metrics={[
+          { label: 'Publicaciones activas', value: totalActive, sub: 'pendientes o borrador' },
+          { label: 'Publicadas', value: totalPublished, sub: `de ${totalPubs} total`, valueStyle: { color: 'var(--success)' } },
+          { label: 'Progreso global', value: `${progressPct}%`, sub: `${totalPublished}/${totalPubs} completadas`, valueStyle: { color: 'var(--accent)' } },
+          { label: 'Distribución por tipo', value: `📝 ${articleCount} · ✍️ ${postCount} · 🎬 ${videoCount}`, sub: 'artículos, posts y vídeos', valueStyle: { fontSize: 16 } },
+        ]}
+      />
 
-      {displayed.length === 0 ? (
+      <ContentSearchFilters
+        title={searchTitle}
+        onTitleChange={setSearchTitle}
+        fromDate={fromDate}
+        onFromDateChange={setFromDate}
+        toDate={toDate}
+        onToDateChange={setToDate}
+        selectedCats={filterCats}
+        onSelectedCatsChange={setFilterCats}
+        availableCatIds={usedCatIds}
+      />
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 8 }}>Por publicar</div>
+      {activePubs.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>✍️</div>
-          Sin publicaciones
+          Sin publicaciones pendientes con estos filtros
         </div>
       ) : (
         <div className="card">
           <div style={{ padding: '0 18px' }}>
-            {displayed.map(pub => {
+            {activePubs.map(pub => {
               const icon = TYPE_ICONS[pub.type] || '✍️';
               const obj = objMap[pub.objective_id];
               const days = pub.days_remaining;
@@ -268,6 +299,42 @@ export default function PublicationsView() {
                     fontSize: 11, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap',
                   }}>
                     {STATUS_OPTIONS.find(s => s.value === pub.status)?.label || pub.status}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', margin: '18px 0 8px' }}>Publicadas</div>
+      {publishedPubs.length === 0 ? (
+        <div className="empty-state card" style={{ padding: 32 }}>
+          No hay elementos publicados con estos filtros
+        </div>
+      ) : (
+        <div className="card">
+          <div style={{ padding: '0 18px' }}>
+            {publishedPubs.map(pub => {
+              const icon = TYPE_ICONS[pub.type] || '✍️';
+              const obj = objMap[pub.objective_id];
+              const catIds = parseCatIds(pub.category_ids, pub.category_id);
+              return (
+                <div key={pub.id} className="task-row" style={{ cursor: 'pointer' }} onClick={() => setSelected(pub)}>
+                  <div className="task-info">
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>{icon} {pub.title}</div>
+                    <div className="task-meta">
+                      <span className="task-time">{fmtDate(pub.date)}</span>
+                      {obj && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>→ {obj.title}</span>}
+                    </div>
+                    {catIds.length > 0 && (
+                      <div className="task-meta" style={{ marginTop: 3 }}>
+                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{ background: '#dcfce7', color: '#16a34a', fontSize: 11, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap' }}>
+                    Publicado ✓
                   </span>
                 </div>
               );

@@ -9,6 +9,7 @@ import { getCatColor } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
 import CatBadge from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
+import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
 
 const DOW = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 
@@ -126,6 +127,7 @@ export default function MonthlyCalendar() {
   const [filterCat, setFilterCat] = useState('');
   const [selected, setSelected] = useState(null);
   const [gapDialog, setGapDialog] = useState(null); // { date, gapHours }
+  const [calendarView, setCalendarView] = useState('current');
 
   const days = useMemo(() => getDaysInMonthGrid(month), [month]);
 
@@ -193,6 +195,20 @@ export default function MonthlyCalendar() {
           <div className="page-subtitle">Calendario mensual</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6, marginRight: 4 }}>
+            <button
+              className={`btn btn-sm ${calendarView === 'current' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setCalendarView('current')}
+            >
+              Vista actual
+            </button>
+            <button
+              className={`btn btn-sm ${calendarView === 'content' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setCalendarView('content')}
+            >
+              Vista contenido
+            </button>
+          </div>
           <button className="btn btn-ghost btn-sm" onClick={() => setMonth(m => subMonths(m, 1))}>← Anterior</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setMonth(new Date(2026, 3, 1))}>Abr 2026</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setMonth(new Date(2026, 4, 1))}>May 2026</button>
@@ -202,124 +218,130 @@ export default function MonthlyCalendar() {
         </div>
       </div>
 
-      {/* Category filter */}
-      <div className="filter-row">
-        <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todas</span>
-        {cats.map(c => (
-          <span key={c.id}
-            className={`chip ${filterCat === c.id ? 'active' : ''}`}
-            style={{ '--chip-color': c.color }}
-            onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: c.color, display: 'inline-block', marginRight: 4 }} />
-            {c.name}
-          </span>
-        ))}
-      </div>
+      {calendarView === 'content' ? (
+        <CalendarContentSummary mode="month" monthDate={month} />
+      ) : (
+        <>
+          {/* Category filter */}
+          <div className="filter-row">
+            <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todas</span>
+            {cats.map(c => (
+              <span key={c.id}
+                className={`chip ${filterCat === c.id ? 'active' : ''}`}
+                style={{ '--chip-color': c.color }}
+                onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: c.color, display: 'inline-block', marginRight: 4 }} />
+                {c.name}
+              </span>
+            ))}
+          </div>
 
-      <div className="cal-grid">
-        {/* Header */}
-        {DOW.map(d => <div key={d} className="cal-header-cell">{d}</div>)}
+          <div className="cal-grid">
+            {/* Header */}
+            {DOW.map(d => <div key={d} className="cal-header-cell">{d}</div>)}
 
-        {/* Days */}
-        {days.map(d => {
-          const ds = toDateStr(d);
-          const inMonth = isSameMonth(d, month);
-          const today = isToday(d);
-          const isSelected = selected && toDateStr(d) === toDateStr(selected);
-          const { tasks: dt, events: de } = getItemsForDay(d);
-          const nowHour = new Date().getHours();
-          const dayGapHours = inMonth ? getGapHours(dt).filter(h => !today || h >= nowHour) : [];
-          const allItems = [
-            ...de.map(e => ({ ...e, _type: 'event' })),
-            ...dt.slice(0, 3).map(t => ({ ...t, _type: 'task' })),
-          ].slice(0, 4);
+            {/* Days */}
+            {days.map(d => {
+              const ds = toDateStr(d);
+              const inMonth = isSameMonth(d, month);
+              const today = isToday(d);
+              const isSelected = selected && toDateStr(d) === toDateStr(selected);
+              const { tasks: dt, events: de } = getItemsForDay(d);
+              const nowHour = new Date().getHours();
+              const dayGapHours = inMonth ? getGapHours(dt).filter(h => !today || h >= nowHour) : [];
+              const allItems = [
+                ...de.map(e => ({ ...e, _type: 'event' })),
+                ...dt.slice(0, 3).map(t => ({ ...t, _type: 'task' })),
+              ].slice(0, 4);
 
-          return (
-            <div
-              key={ds}
-              className={[
-                'cal-cell',
-                !inMonth ? 'other-month' : '',
-                today ? 'today' : '',
-                isSelected ? 'selected' : '',
-              ].filter(Boolean).join(' ')}
-              onClick={() => setSelected(d)}
-            >
-              <div className="cal-day">{d.getDate()}</div>
-              <div className="cal-items">
-                {allItems.map((item, i) => {
-                  const color = item._type === 'task' ? getTaskColor(item) : getCatColor(item.category_id);
-                  return (
-                    <div key={i} className="cal-item"
-                      style={{
-                        background: color + 'cc',
-                        whiteSpace: item._type === 'task' ? 'normal' : 'nowrap',
-                        lineHeight: item._type === 'task' ? 1.2 : undefined,
-                      }}
-                      title={item.title}>
-                      {item.title}
-                      {item._type === 'task' && (
-                        <div style={{ fontSize: 9, opacity: 0.92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {getMilestoneLabel(item)}
+              return (
+                <div
+                  key={ds}
+                  className={[
+                    'cal-cell',
+                    !inMonth ? 'other-month' : '',
+                    today ? 'today' : '',
+                    isSelected ? 'selected' : '',
+                  ].filter(Boolean).join(' ')}
+                  onClick={() => setSelected(d)}
+                >
+                  <div className="cal-day">{d.getDate()}</div>
+                  <div className="cal-items">
+                    {allItems.map((item, i) => {
+                      const color = item._type === 'task' ? getTaskColor(item) : getCatColor(item.category_id);
+                      return (
+                        <div key={i} className="cal-item"
+                          style={{
+                            background: color + 'cc',
+                            whiteSpace: item._type === 'task' ? 'normal' : 'nowrap',
+                            lineHeight: item._type === 'task' ? 1.2 : undefined,
+                          }}
+                          title={item.title}>
+                          {item.title}
+                          {item._type === 'task' && (
+                            <div style={{ fontSize: 9, opacity: 0.92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {getMilestoneLabel(item)}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {dt.length + de.length > 4 && (
-                  <div style={{ fontSize: 9, color: 'var(--text-3)', paddingLeft: 4 }}>
-                    +{dt.length + de.length - 4} más
+                      );
+                    })}
+                    {dt.length + de.length > 4 && (
+                      <div style={{ fontSize: 9, color: 'var(--text-3)', paddingLeft: 4 }}>
+                        +{dt.length + de.length - 4} más
+                      </div>
+                    )}
+                    {dayGapHours.length > 0 && (
+                      <div
+                        onClick={e => { e.stopPropagation(); setGapDialog({ date: ds, gapHours: dayGapHours }); }}
+                        title={`${dayGapHours.length} hueco${dayGapHours.length > 1 ? 's' : ''} libre${dayGapHours.length > 1 ? 's' : ''} (9–20h)`}
+                        style={{
+                          fontSize: 9, padding: '1px 4px', borderRadius: 3,
+                          background: '#fef08a', color: '#92400e',
+                          fontWeight: 600, cursor: 'pointer', marginTop: 1,
+                        }}>
+                        ⚠ {dayGapHours.length}h
+                      </div>
+                    )}
                   </div>
-                )}
-                {dayGapHours.length > 0 && (
-                  <div
-                    onClick={e => { e.stopPropagation(); setGapDialog({ date: ds, gapHours: dayGapHours }); }}
-                    title={`${dayGapHours.length} hueco${dayGapHours.length > 1 ? 's' : ''} libre${dayGapHours.length > 1 ? 's' : ''} (9–20h)`}
-                    style={{
-                      fontSize: 9, padding: '1px 4px', borderRadius: 3,
-                      background: '#fef08a', color: '#92400e',
-                      fontWeight: 600, cursor: 'pointer', marginTop: 1,
-                    }}>
-                    ⚠ {dayGapHours.length}h
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                </div>
+              );
+            })}
+          </div>
 
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12, fontSize: 11 }}>
-        {cats.map(c => (
-          <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-3)' }}>
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: c.color, display: 'inline-block' }} />
-            {c.name}
-          </span>
-        ))}
-      </div>
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12, fontSize: 11 }}>
+            {cats.map(c => (
+              <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-3)' }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: c.color, display: 'inline-block' }} />
+                {c.name}
+              </span>
+            ))}
+          </div>
 
-      {/* Day detail modal */}
-      {selected && selItems && (
-        <DayDetail
-          dateStr={toDateStr(selected)}
-          tasks={selItems.tasks}
-          events={selItems.events}
-          getTaskColor={getTaskColor}
-          getMilestoneLabel={getMilestoneLabel}
-          onClose={() => setSelected(null)}
-          onRefresh={reloadMonth}
-        />
-      )}
+          {/* Day detail modal */}
+          {selected && selItems && (
+            <DayDetail
+              dateStr={toDateStr(selected)}
+              tasks={selItems.tasks}
+              events={selItems.events}
+              getTaskColor={getTaskColor}
+              getMilestoneLabel={getMilestoneLabel}
+              onClose={() => setSelected(null)}
+              onRefresh={reloadMonth}
+            />
+          )}
 
-      {gapDialog && (
-        <GapPickerDialog
-          date={gapDialog.date}
-          hour={null}
-          gapHours={gapDialog.gapHours}
-          onClose={() => setGapDialog(null)}
-          onCreated={reloadMonth}
-        />
+          {gapDialog && (
+            <GapPickerDialog
+              date={gapDialog.date}
+              hour={null}
+              gapHours={gapDialog.gapHours}
+              onClose={() => setGapDialog(null)}
+              onCreated={reloadMonth}
+            />
+          )}
+        </>
       )}
     </div>
   );

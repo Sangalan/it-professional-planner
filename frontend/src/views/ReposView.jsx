@@ -3,6 +3,8 @@ import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
 import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
+import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
@@ -81,32 +83,20 @@ function DetailDialog({ repo, objectives, onClose, onSaved, onDeleted }) {
         boxShadow: 'var(--shadow-md)',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700 }}>📦 {isNew ? 'Nuevo repositorio' : 'Repositorio'}</h2>
+          <h2 style={{ fontSize: 16, fontWeight: 700 }}>📦 {isNew ? 'Nuevo proyecto' : 'Proyecto'}</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-3)', lineHeight: 1 }}>✕</button>
         </div>
 
-        {isNew ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, marginBottom: 14 }}>
-            <div>
-              <label style={labelSt}>Título *</label>
-              <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} autoFocus />
-            </div>
-            <div>
-              <label style={labelSt}>Fecha objetivo</label>
-              <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
-            </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={labelSt}>Título *</label>
+            <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} autoFocus />
           </div>
-        ) : (
-          <>
-            <div style={{ fontSize: 15, fontWeight: 600, fontFamily: 'monospace', marginBottom: 4 }}>{repo.title}</div>
-            <div className="task-meta" style={{ marginBottom: 16 }}>
-              <span className="task-time">Publicar antes del {fmtDate(repo.target_date)}</span>
-              {days != null && <span className={`milestone-days ${cls}`}>
-                {days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}
-              </span>}
-            </div>
-          </>
-        )}
+          <div>
+            <label style={labelSt}>Fecha objetivo</label>
+            <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
+          </div>
+        </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
           <div>
@@ -127,7 +117,7 @@ function DetailDialog({ repo, objectives, onClose, onSaved, onDeleted }) {
         <div style={fieldW}>
           <label style={labelSt}>URL GitHub</label>
           <input type="url" value={form.url} onChange={e => set('url', e.target.value)}
-            placeholder="https://github.com/usuario/repo"
+            placeholder="https://github.com/usuario/proyecto"
             style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} />
         </div>
 
@@ -145,7 +135,7 @@ function DetailDialog({ repo, objectives, onClose, onSaved, onDeleted }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           {!isNew ? (
             <button className="btn btn-ghost" onClick={async () => {
-              if (!confirm('¿Eliminar este repositorio?')) return;
+              if (!confirm('¿Eliminar este proyecto?')) return;
               setDeleting(true);
               const r = await api.deleteRepo(repo.id);
               setDeleting(false);
@@ -170,8 +160,10 @@ export default function ReposView() {
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [filterCat, setFilterCat] = useState('');
-  const cats = useCats();
+  const [searchTitle, setSearchTitle] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [filterCats, setFilterCats] = useState([]);
 
   async function load() {
     api.repos().then(setRepos);
@@ -182,18 +174,29 @@ export default function ReposView() {
 
   // Categories used by at least one repo
   const usedCatIds = [...new Set(repos.flatMap(r => parseCatIds(r.category_ids, r.category_id)))];
-  const usedCats = cats.filter(c => usedCatIds.includes(c.id));
-
-  const visible = filterCat
-    ? repos.filter(r => parseCatIds(r.category_ids, r.category_id).includes(filterCat))
-    : repos;
+  const normalizedSearch = searchTitle.trim().toLowerCase();
+  const dateMatches = (value) => {
+    if (!value) return !fromDate && !toDate;
+    if (fromDate && value < fromDate) return false;
+    if (toDate && value > toDate) return false;
+    return true;
+  };
+  const visible = repos
+    .filter(r => !normalizedSearch || (r.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(r => dateMatches(r.target_date))
+    .filter(r => filterCats.length === 0 || filterCats.some(fc => parseCatIds(r.category_ids, r.category_id).includes(fc)));
+  const totalRepos = repos.length;
+  const completedRepos = repos.filter(r => r.status === 'completed').length;
+  const inProgressRepos = repos.filter(r => r.status === 'in_progress').length;
+  const progressPct = totalRepos > 0 ? Math.round((completedRepos / totalRepos) * 100) : 0;
+  const objectiveById = Object.fromEntries(objectives.map(o => [o.id, o]));
 
   return (
     <div>
       <div className="page-header">
         <div>
-          <div className="page-title">Repositorios</div>
-          <div className="page-subtitle">{visible.length} repositorios</div>
+          <div className="page-title">Proyectos</div>
+          <div className="page-subtitle">{visible.length} proyectos</div>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>+ Nuevo</button>
       </div>
@@ -205,22 +208,32 @@ export default function ReposView() {
         <DetailDialog repo={selected} objectives={objectives} onClose={() => setSelected(null)} onSaved={load} onDeleted={() => { setSelected(null); load(); }} />
       )}
 
-      {/* Filters */}
-      {usedCats.length > 0 && (
-        <div className="filter-row" style={{ marginBottom: 16 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Categoría:</span>
-          <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todos</span>
-          {usedCats.map(c => (
-            <span key={c.id} className={`chip ${filterCat === c.id ? 'active' : ''}`}
-              onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>{c.name}</span>
-          ))}
-        </div>
-      )}
+      <ContentMetricsSummary
+        title="Resumen de proyectos"
+        metrics={[
+          { label: 'Proyectos', value: totalRepos, sub: 'registrados en total' },
+          { label: 'Publicados', value: completedRepos, sub: `de ${totalRepos} total`, valueStyle: { color: 'var(--success)' } },
+          { label: 'En desarrollo', value: inProgressRepos, sub: 'trabajo activo', valueStyle: { color: '#2563eb' } },
+          { label: 'Progreso global', value: `${progressPct}%`, sub: `${completedRepos}/${totalRepos} completados`, valueStyle: { color: 'var(--accent)' } },
+        ]}
+      />
+
+      <ContentSearchFilters
+        title={searchTitle}
+        onTitleChange={setSearchTitle}
+        fromDate={fromDate}
+        onFromDateChange={setFromDate}
+        toDate={toDate}
+        onToDateChange={setToDate}
+        selectedCats={filterCats}
+        onSelectedCatsChange={setFilterCats}
+        availableCatIds={usedCatIds}
+      />
 
       {visible.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📦</div>
-          {filterCat ? 'Sin repositorios en esta categoría' : 'Sin repositorios'}
+          {filterCats.length > 0 || searchTitle || fromDate || toDate ? 'Sin resultados' : 'Sin proyectos'}
         </div>
       ) : (
         <div className="card">
@@ -229,11 +242,13 @@ export default function ReposView() {
               const days = repo.days_remaining;
               const cls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
               const catIds = parseCatIds(repo.category_ids, repo.category_id);
+              const isClientProject = repo.objective_id && objectiveById[repo.objective_id]?.type === 'client';
+              const icon = isClientProject ? '👤' : '📦';
               return (
                 <div key={repo.id} className="task-row" style={{ cursor: 'pointer' }} onClick={() => setSelected(repo)}>
                   <div className="task-info">
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontWeight: 600, fontSize: 13, fontFamily: 'monospace' }}>📦 {repo.title}</span>
+                      <span style={{ fontWeight: 600, fontSize: 13, fontFamily: 'monospace' }}>{icon} {repo.title}</span>
                       {repo.url && (
                         <a href={repo.url} target="_blank" rel="noopener noreferrer"
                           onClick={e => e.stopPropagation()}

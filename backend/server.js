@@ -140,21 +140,60 @@ app.put('/api/categories/:id', (req, res) => {
 
 app.delete('/api/categories/:id', (req, res) => {
   const id = req.params.id;
-  const checks = [
-    ['tasks',          'tareas'],
-    ['objectives',     'objetivos'],
-    ['events',         'eventos'],
-    ['publications',   'publicaciones'],
-    ['certifications', 'certificaciones'],
-    ['repos',          'repositorios'],
-    ['prs',            'PRs'],
-    ['work_blocks',    'bloques de trabajo'],
+  const refs = [
+    { table: 'tasks',          label: 'Tareas',            titleCol: 'title', dateCol: 'date',        hasCategoryId: true, hasCategoryIds: true },
+    { table: 'objectives',     label: 'Objetivos',         titleCol: 'title', dateCol: 'end_date',    hasCategoryId: true, hasCategoryIds: true },
+    { table: 'events',         label: 'Eventos',           titleCol: 'title', dateCol: 'start_date',  hasCategoryId: true, hasCategoryIds: true },
+    { table: 'publications',   label: 'Publicaciones',     titleCol: 'title', dateCol: 'date',        hasCategoryId: true, hasCategoryIds: true },
+    { table: 'certifications', label: 'Certificaciones',   titleCol: 'title', dateCol: 'target_date', hasCategoryId: true, hasCategoryIds: true },
+    { table: 'repos',          label: 'Proyectos',         titleCol: 'title', dateCol: 'target_date', hasCategoryId: true, hasCategoryIds: true },
+    { table: 'prs',            label: 'PRs',               titleCol: 'title', dateCol: 'end_date',    hasCategoryId: true, hasCategoryIds: true },
+    { table: 'work_blocks',    label: 'Bloques de trabajo',titleCol: 'name',  dateCol: null,          hasCategoryId: true, hasCategoryIds: false },
+    { table: 'reading_list',   label: 'Para Leer',         titleCol: 'title', dateCol: 'created_at',  hasCategoryId: true, hasCategoryIds: true },
+    { table: 'documents',      label: 'Documentos',        titleCol: 'name',  dateCol: 'created_at',  hasCategoryId: false, hasCategoryIds: true },
   ];
-  const usages = checks
-    .map(([t, l]) => ({ l, n: db.prepare(`SELECT COUNT(*) as n FROM ${t} WHERE category_id = ?`).get(id).n }))
-    .filter(u => u.n > 0);
+
+  const usages = refs.map(ref => {
+    const cols = [`id`, `${ref.titleCol} AS title`];
+    if (ref.hasCategoryId) cols.push(`category_id`);
+    if (ref.dateCol) cols.push(`${ref.dateCol} AS date`);
+    if (ref.hasCategoryIds) cols.push(`category_ids`);
+    const clauses = [];
+    const params = [];
+    if (ref.hasCategoryId) {
+      clauses.push(`category_id = ?`);
+      params.push(id);
+    }
+    if (ref.hasCategoryIds) {
+      clauses.push(`category_ids LIKE ?`);
+      params.push(`%${id}%`);
+    }
+    const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' OR ')}` : '';
+    const rows = db.prepare(`SELECT ${cols.join(', ')} FROM ${ref.table} ${whereSql}`).all(...params);
+    const matched = rows.filter(r => {
+      const ids = parseCategoryIds(
+        ref.hasCategoryIds ? r.category_ids : null,
+        ref.hasCategoryId ? r.category_id : null
+      );
+      return ids.includes(id);
+    });
+    return { ...ref, rows: matched };
+  }).filter(u => u.rows.length > 0);
+
   if (usages.length > 0) {
-    return res.status(409).json({ error: `Categoría en uso: ${usages.map(u => `${u.n} ${u.l}`).join(', ')}` });
+    const lines = usages.map(u => {
+      const preview = u.rows.slice(0, 5).map(r => `"${r.title || r.id}"${r.date ? ` (${r.date})` : ''}`).join(', ');
+      const extra = u.rows.length > 5 ? `, +${u.rows.length - 5} más` : '';
+      return `- ${u.label} (${u.rows.length}): ${preview}${extra}`;
+    });
+    return res.status(409).json({
+      error: `No se puede eliminar la categoría porque está en uso por:\n${lines.join('\n')}`,
+      usages: usages.map(u => ({
+        type: u.label,
+        count: u.rows.length,
+        items: u.rows.map(r => ({ id: r.id, title: r.title || r.id, date: r.date || null })),
+      })),
+    });
   }
   db.prepare('DELETE FROM categories WHERE id = ?').run(id);
   res.json({ ok: true });
@@ -513,7 +552,8 @@ app.put('/api/milestones/:id', (req, res) => {
   // percentage_completed and weight are no longer manually set — always computed from tasks
   const pct = computeMilestoneProgress(req.params.id);
   const ms  = db.prepare('SELECT status FROM milestones WHERE id = ?').get(req.params.id);
-  const derivedStatus = status ? deriveMilestoneStatus(status, pct) : (ms ? deriveMilestoneStatus(ms.status, pct) : 'not_started');
+  // Honor the user-selected status; only fall back to stored value if status is not provided.
+  const savedStatus = status !== undefined ? status : (ms?.status || 'not_started');
   db.prepare(`UPDATE milestones SET
     title                = COALESCE(@title,       title),
     description          = COALESCE(@description, description),
@@ -525,7 +565,7 @@ app.put('/api/milestones/:id', (req, res) => {
       title: title ?? null, description: description ?? null,
       target_date: target_date ?? null,
       billed_amount: billed_amount !== undefined ? Number(billed_amount) : null,
-      status: derivedStatus, pct, id: req.params.id,
+      status: savedStatus, pct, id: req.params.id,
     });
   res.json(db.prepare('SELECT * FROM milestones WHERE id = ?').get(req.params.id));
 });
@@ -547,6 +587,7 @@ app.get('/api/events', (req, res) => {
 app.post('/api/events', (req, res) => {
   const { title, start_date, end_date, location, format, estimated_cost, status, notes, objective_id, category_id, category_ids, percentage_completed, registered, hotel_booked, flight_booked } = req.body;
   if (!title) return res.status(400).json({ error: 'title es obligatorio' });
+  if (start_date && end_date && end_date < start_date) return res.status(400).json({ error: 'end_date no puede ser anterior a start_date' });
   const id = 'evt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
@@ -559,10 +600,14 @@ app.post('/api/events', (req, res) => {
 
 app.put('/api/events/:id', (req, res) => {
   const { title, start_date, end_date, location, format, estimated_cost, status, notes, objective_id, category_id, category_ids, percentage_completed, registered, hotel_booked, flight_booked } = req.body;
+  if (start_date && end_date && end_date < start_date) return res.status(400).json({ error: 'end_date no puede ser anterior a start_date' });
   const cats = category_ids !== undefined
     ? (Array.isArray(category_ids) ? category_ids : (typeof category_ids === 'string' ? JSON.parse(category_ids) : []))
     : null;
-  const primaryCat = cats ? (cats[0] || null) : (category_id ?? null);
+  const primaryCat = cats !== null ? (cats[0] || null) : (category_id ?? null);
+  const catClause = cats !== null
+    ? 'category_id = @cat, category_ids = @cids,'
+    : 'category_id = COALESCE(@cat, category_id), category_ids = COALESCE(@cids, category_ids),';
   db.prepare(`UPDATE events SET
     title                = COALESCE(@title, title),
     start_date           = COALESCE(@sd,    start_date),
@@ -573,8 +618,7 @@ app.put('/api/events/:id', (req, res) => {
     status               = COALESCE(@s,     status),
     notes                = COALESCE(@n,     notes),
     objective_id         = COALESCE(@oid,   objective_id),
-    category_id          = COALESCE(@cat,   category_id),
-    category_ids         = COALESCE(@cids,  category_ids),
+    ${catClause}
     percentage_completed = COALESCE(@pct,   percentage_completed),
     registered           = COALESCE(@reg,   registered),
     hotel_booked         = COALESCE(@htl,   hotel_booked),
@@ -582,7 +626,7 @@ app.put('/api/events/:id', (req, res) => {
     WHERE id = @id`)
     .run({ title: title??null, sd: start_date??null, ed: end_date??null, loc: location??null,
       fmt: format??null, cost: estimated_cost??null, s: status??null, n: notes??null,
-      oid: objective_id??null, cat: primaryCat, cids: cats ? JSON.stringify(cats) : null,
+      oid: objective_id??null, cat: primaryCat, cids: cats !== null ? JSON.stringify(cats) : null,
       pct: percentage_completed??null,
       reg: registered !== undefined ? (registered ? 1 : 0) : null,
       htl: hotel_booked !== undefined ? (hotel_booked ? 1 : 0) : null,
@@ -615,20 +659,20 @@ app.get('/api/publications', (req, res) => {
 });
 
 app.post('/api/publications', (req, res) => {
-  const { title, type, date, status, notes, objective_id, category_id, category_ids } = req.body;
+  const { title, type, date, status, notes, publication_text, objective_id, category_id, category_ids } = req.body;
   if (!title) return res.status(400).json({ error: 'title es obligatorio' });
   const id = 'pub-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
-  db.prepare('INSERT INTO publications (id,title,type,date,status,notes,objective_id,category_id,category_ids) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(id, title, type || 'post', date || null, status || 'pending', notes || null, objective_id || null, primaryCat, cats.length ? JSON.stringify(cats) : null);
+  db.prepare('INSERT INTO publications (id,title,type,date,status,notes,publication_text,objective_id,category_id,category_ids) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title, type || 'post', date || null, status || 'pending', notes || null, publication_text || null, objective_id || null, primaryCat, cats.length ? JSON.stringify(cats) : null);
   const pub = db.prepare('SELECT * FROM publications WHERE id = ?').get(id);
   pub.days_remaining = daysRemaining(pub.date);
   res.status(201).json(pub);
 });
 
 app.put('/api/publications/:id', (req, res) => {
-  const { status, notes, objective_id, title, type, date, category_id, category_ids } = req.body;
+  const { status, notes, publication_text, objective_id, title, type, date, category_id, category_ids } = req.body;
   const cats = category_ids !== undefined
     ? (Array.isArray(category_ids) ? category_ids : (typeof category_ids === 'string' ? JSON.parse(category_ids) : []))
     : null;
@@ -639,6 +683,7 @@ app.put('/api/publications/:id', (req, res) => {
     date         = COALESCE(@date,        date),
     status       = COALESCE(@status,      status),
     notes        = COALESCE(@notes,       notes),
+    publication_text = COALESCE(@publication_text, publication_text),
     objective_id = COALESCE(@oid,         objective_id),
     category_id  = COALESCE(@cat,         category_id),
     category_ids = COALESCE(@cids,        category_ids)
@@ -646,6 +691,7 @@ app.put('/api/publications/:id', (req, res) => {
     .run({
       title: title ?? null, type: type ?? null, date: date ?? null,
       status: status ?? null, notes: notes ?? null, oid: objective_id ?? null,
+      publication_text: publication_text ?? null,
       cat: primaryCat, cids: cats ? JSON.stringify(cats) : null,
       id: req.params.id,
     });
@@ -767,7 +813,7 @@ app.put('/api/repos/:id', (req, res) => {
 
 app.delete('/api/repos/:id', (req, res) => {
   const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE milestone_id = ?').get(req.params.id).n;
-  if (tasks > 0) return res.status(409).json({ error: `Este repositorio tiene ${tasks} tareas asociadas` });
+  if (tasks > 0) return res.status(409).json({ error: `Este proyecto tiene ${tasks} tareas asociadas` });
   db.prepare('DELETE FROM repos WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -1062,7 +1108,7 @@ app.post('/api/import', (req, res) => {
     for (const p of (data.publications || [])) {
       const id = resolveId('publications', p.id);
       if (!id) { track('publications', false); continue; }
-      db.prepare('INSERT INTO publications (id,date,type,title,category_id,status,notes) VALUES (@id,@date,@type,@title,@category_id,@status,@notes)')
+      db.prepare('INSERT INTO publications (id,date,type,title,category_id,status,notes,publication_text,objective_id,category_ids) VALUES (@id,@date,@type,@title,@category_id,@status,@notes,@publication_text,@objective_id,@category_ids)')
         .run({ ...p, id });
       track('publications', true);
     }

@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { fmtShortDate, fmtDate } from '../utils/dateUtils.js';
+import { fmtShortDate } from '../utils/dateUtils.js';
 import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
+import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'Pendiente' },
@@ -20,6 +22,10 @@ function parseCatIds(raw, fallback) {
     try { const p = JSON.parse(raw); if (Array.isArray(p) && p.length) return p; } catch (_) {}
   }
   return fallback ? [fallback] : [];
+}
+
+function fmtCost(value) {
+  return `€${Number(value || 0).toLocaleString('es-ES', { maximumFractionDigits: 0 })}`;
 }
 
 function CategorySelector({ selected, onChange }) {
@@ -63,6 +69,10 @@ function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
 
   async function save() {
     if (!form.title.trim()) return;
+    if (form.start_date && form.end_date && form.end_date < form.start_date) {
+      alert('La fecha de fin no puede ser anterior a la fecha de inicio');
+      return;
+    }
     setSaving(true);
     const payload = {
       ...form,
@@ -219,8 +229,10 @@ export default function EventsView() {
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [filterCat, setFilterCat] = useState('');
-  const cats = useCats();
+  const [searchTitle, setSearchTitle] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [filterCats, setFilterCats] = useState([]);
 
   async function load() {
     api.events().then(setEvents);
@@ -230,10 +242,95 @@ export default function EventsView() {
   useEffect(() => { load(); }, []);
 
   const usedCatIds = [...new Set(events.flatMap(e => parseCatIds(e.category_ids, e.category_id)))];
-  const usedCats = cats.filter(c => usedCatIds.includes(c.id));
-  const visible = filterCat ? events.filter(e => parseCatIds(e.category_ids, e.category_id).includes(filterCat)) : events;
+  const normalizedSearch = searchTitle.trim().toLowerCase();
+  const dateMatches = (ev) => {
+    const start = ev.start_date || ev.end_date;
+    const end = ev.end_date || ev.start_date;
+    if (!start && !end) return !fromDate && !toDate;
+    if (fromDate && end && end < fromDate) return false;
+    if (toDate && start && start > toDate) return false;
+    return true;
+  };
+  const visible = events
+    .filter(e => !normalizedSearch || (e.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(dateMatches)
+    .filter(e => filterCats.length === 0 || filterCats.some(fc => parseCatIds(e.category_ids, e.category_id).includes(fc)));
 
   const today = new Date().toISOString().slice(0, 10);
+  const isPastEvent = ev => {
+    if (ev.status === 'cancelled') return true;
+    const endOrStart = ev.end_date || ev.start_date;
+    return !!endOrStart && endOrStart < today;
+  };
+  const upcomingOrCurrentEvents = visible.filter(ev => !isPastEvent(ev));
+  const pastEvents = visible.filter(isPastEvent);
+  const totalEvents = events.length;
+  const upcomingEvents = events.filter(ev => !isPastEvent(ev)).length;
+  const completedEvents = events.filter(ev => ev.status === 'completed').length;
+  const totalCost = events.reduce((sum, ev) => sum + (Number(ev.estimated_cost) || 0), 0);
+
+  function renderEventRow(ev) {
+    const isActive = ev.start_date && ev.end_date && ev.start_date <= today && ev.end_date >= today;
+    const isPast = isPastEvent(ev);
+    const catIds = parseCatIds(ev.category_ids, ev.category_id);
+    const days = ev.days_remaining;
+    const pct = ev.percentage_completed || 0;
+    const daysCls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
+    const notRegistered = !ev.registered;
+    const missingLogistics = ev.registered && (!ev.hotel_booked || !ev.flight_booked);
+    const rowBg = ev.status === 'cancelled'
+      ? '#e5e7eb'
+      : isPast
+        ? '#ffffff'
+      : notRegistered
+        ? '#fee2e2'
+        : missingLogistics
+          ? '#fef9c3'
+          : isActive
+            ? 'var(--accent-light)'
+            : 'transparent';
+    return (
+      <div key={ev.id} className="task-row"
+        style={{ cursor: 'pointer', background: rowBg, margin: '0 -18px', padding: '10px 18px' }}
+        onClick={() => setSelected(ev)}>
+        <div className="task-info">
+          <div style={{ fontWeight: 500, fontSize: 13, textDecoration: ev.status === 'cancelled' ? 'line-through' : 'none' }}>🎪 {ev.title}</div>
+          <div className="task-meta">
+            {days != null && <span className={`milestone-days ${daysCls}`}>{days < 0 ? `${Math.abs(days)}d pasado` : days === 0 ? 'Hoy' : `${days}d`}</span>}
+            <span className="task-time">{fmtShortDate(ev.start_date)} → {fmtShortDate(ev.end_date)}</span>
+            {isActive && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>Activo</span>}
+            {ev.location && <span className="task-time">📍 {ev.location}</span>}
+            <span style={{ fontSize: 11, color: ev.registered ? '#16a34a' : '#dc2626' }}>{ev.registered ? '✓ Reg.' : '✗ Reg.'}</span>
+            {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.hotel_booked ? '#16a34a' : '#b45309' }}>{ev.hotel_booked ? '✓ Hotel' : '✗ Hotel'}</span>}
+            {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.flight_booked ? '#16a34a' : '#b45309' }}>{ev.flight_booked ? '✓ Avión' : '✗ Avión'}</span>}
+          </div>
+          {catIds.length > 0 && (
+            <div className="task-meta" style={{ marginTop: 3 }}>
+              {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+            </div>
+          )}
+          {pct > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+              <div className="progress-bar" style={{ flex: 1, maxWidth: 140, height: 4 }}>
+                <div className="progress-fill" style={{ width: `${pct}%` }} />
+              </div>
+              <span style={{ fontSize: 11, color: 'var(--text-3)', minWidth: 28 }}>{pct}%</span>
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+          <span style={{
+            fontSize: 11, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap',
+            background: ev.status === 'completed' ? '#dcfce7' : ev.status === 'in_progress' ? '#dbeafe' : ev.status === 'cancelled' ? '#e5e7eb' : 'var(--bg)',
+            color: ev.status === 'completed' ? '#16a34a' : ev.status === 'in_progress' ? '#2563eb' : ev.status === 'cancelled' ? '#4b5563' : 'var(--text-2)',
+          }}>
+            {STATUS_OPTIONS.find(s => s.value === ev.status)?.label || ev.status}
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{fmtCost(ev.estimated_cost)}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -252,75 +349,53 @@ export default function EventsView() {
         <DetailDialog event={selected} objectives={objectives} onClose={() => setSelected(null)} onSaved={load} onDeleted={() => { setSelected(null); load(); }} />
       )}
 
-      {usedCats.length > 0 && (
-        <div className="filter-row" style={{ marginBottom: 16 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Categoría:</span>
-          <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todos</span>
-          {usedCats.map(c => (
-            <span key={c.id} className={`chip ${filterCat === c.id ? 'active' : ''}`}
-              onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>{c.name}</span>
-          ))}
-        </div>
-      )}
+      <ContentMetricsSummary
+        title="Resumen de eventos"
+        metrics={[
+          { label: 'Eventos totales', value: totalEvents, sub: 'registrados' },
+          { label: 'Próximos/activos', value: upcomingEvents, sub: 'pendientes de ocurrir', valueStyle: { color: '#2563eb' } },
+          { label: 'Completados', value: completedEvents, sub: `de ${totalEvents} total`, valueStyle: { color: 'var(--success)' } },
+          { label: 'Coste total', value: fmtCost(totalCost), sub: 'suma de todos los eventos', valueStyle: { color: 'var(--accent)' } },
+        ]}
+      />
+
+      <ContentSearchFilters
+        title={searchTitle}
+        onTitleChange={setSearchTitle}
+        fromDate={fromDate}
+        onFromDateChange={setFromDate}
+        toDate={toDate}
+        onToDateChange={setToDate}
+        selectedCats={filterCats}
+        onSelectedCatsChange={setFilterCats}
+        availableCatIds={usedCatIds}
+      />
 
       {visible.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🎪</div>
-          {filterCat ? 'Sin eventos en esta categoría' : 'Sin eventos'}
+          {filterCats.length > 0 || searchTitle || fromDate || toDate ? 'Sin resultados' : 'Sin eventos'}
         </div>
       ) : (
-        <div className="card">
-          <div style={{ padding: '0 18px' }}>
-            {visible.map(ev => {
-              const isActive = ev.start_date && ev.end_date && ev.start_date <= today && ev.end_date >= today;
-              const catIds = parseCatIds(ev.category_ids, ev.category_id);
-              const days = ev.days_remaining;
-              const pct = ev.percentage_completed || 0;
-              const daysCls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
-              const notRegistered = !ev.registered;
-              const missingLogistics = ev.registered && (!ev.hotel_booked || !ev.flight_booked);
-              const rowBg = notRegistered ? '#fee2e2' : missingLogistics ? '#fef9c3' : isActive ? 'var(--accent-light)' : 'transparent';
-              return (
-                <div key={ev.id} className="task-row"
-                  style={{ cursor: 'pointer', background: rowBg, margin: '0 -18px', padding: '10px 18px' }}
-                  onClick={() => setSelected(ev)}>
-                  <div className="task-info">
-                    <div style={{ fontWeight: 500, fontSize: 13 }}>🎪 {ev.title}</div>
-                    <div className="task-meta">
-                      {days != null && <span className={`milestone-days ${daysCls}`}>{days < 0 ? `${Math.abs(days)}d pasado` : days === 0 ? 'Hoy' : `${days}d`}</span>}
-                      <span className="task-time">{fmtShortDate(ev.start_date)} → {fmtShortDate(ev.end_date)}</span>
-                      {isActive && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>Activo</span>}
-                      {ev.location && <span className="task-time">📍 {ev.location}</span>}
-                      <span style={{ fontSize: 11, color: ev.registered ? '#16a34a' : '#dc2626' }}>{ev.registered ? '✓ Reg.' : '✗ Reg.'}</span>
-                      {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.hotel_booked ? '#16a34a' : '#b45309' }}>{ev.hotel_booked ? '✓ Hotel' : '✗ Hotel'}</span>}
-                      {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.flight_booked ? '#16a34a' : '#b45309' }}>{ev.flight_booked ? '✓ Avión' : '✗ Avión'}</span>}
-                    </div>
-                    {catIds.length > 0 && (
-                      <div className="task-meta" style={{ marginTop: 3 }}>
-                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
-                      </div>
-                    )}
-                    {pct > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
-                        <div className="progress-bar" style={{ flex: 1, maxWidth: 140, height: 4 }}>
-                          <div className="progress-fill" style={{ width: `${pct}%` }} />
-                        </div>
-                        <span style={{ fontSize: 11, color: 'var(--text-3)', minWidth: 28 }}>{pct}%</span>
-                      </div>
-                    )}
-                  </div>
-                  <span style={{
-                    fontSize: 11, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap',
-                    background: ev.status === 'completed' ? '#dcfce7' : ev.status === 'in_progress' ? '#dbeafe' : ev.status === 'cancelled' ? '#fee2e2' : 'var(--bg)',
-                    color: ev.status === 'completed' ? '#16a34a' : ev.status === 'in_progress' ? '#2563eb' : ev.status === 'cancelled' ? '#dc2626' : 'var(--text-2)',
-                  }}>
-                    {STATUS_OPTIONS.find(s => s.value === ev.status)?.label || ev.status}
-                  </span>
-                </div>
-              );
-            })}
+        <>
+          <div className="card">
+            <div style={{ padding: '0 18px' }}>
+              {upcomingOrCurrentEvents.length > 0 ? upcomingOrCurrentEvents.map(renderEventRow) : (
+                <div style={{ padding: '14px 0', fontSize: 13, color: 'var(--text-3)' }}>Sin eventos próximos o activos</div>
+              )}
+            </div>
           </div>
-        </div>
+          {pastEvents.length > 0 && (
+            <div className="card" style={{ marginTop: 14 }}>
+              <div style={{ padding: '14px 18px 4px', fontSize: 12, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase' }}>
+                Eventos pasados o cancelados
+              </div>
+              <div style={{ padding: '0 18px' }}>
+                {pastEvents.map(renderEventRow)}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

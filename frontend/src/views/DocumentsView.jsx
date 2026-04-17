@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import CatBadge, { CategorySelector, useCats } from '../components/CatBadge.jsx';
+import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const thStyle = { padding: '9px 18px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
@@ -95,9 +97,11 @@ function DetailDialog({ doc, onClose, onSaved, onDeleted }) {
 export default function DocumentsView() {
   const [docs, setDocs] = useState([]);
   const [q, setQ] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [filterCats, setFilterCats] = useState([]);
   const [sort, setSort] = useState('created_at');
   const [sortDir, setSortDir] = useState('desc');
-  const [filterCat, setFilterCat] = useState('');
   const [uploading, setUploading] = useState(false);
   const [selected, setSelected] = useState(null);
   const fileRef = useRef();
@@ -139,11 +143,18 @@ export default function DocumentsView() {
   }
 
   const usedCatIds = [...new Set(docs.flatMap(d => d.category_ids || []))];
-  const usedCats = cats.filter(c => usedCatIds.includes(c.id));
+  const dateMatches = (isoDateTime) => {
+    const value = (isoDateTime || '').slice(0, 10);
+    if (!value) return !fromDate && !toDate;
+    if (fromDate && value < fromDate) return false;
+    if (toDate && value > toDate) return false;
+    return true;
+  };
 
   const filtered = docs
     .filter(d => !q || d.name.toLowerCase().includes(q.toLowerCase()))
-    .filter(d => !filterCat || (d.category_ids || []).includes(filterCat));
+    .filter(d => dateMatches(d.created_at))
+    .filter(d => filterCats.length === 0 || filterCats.some(fc => (d.category_ids || []).includes(fc)));
 
   const visible = [...filtered].sort((a, b) => {
     let cmp = 0;
@@ -160,6 +171,12 @@ export default function DocumentsView() {
     }
     return sortDir === 'asc' ? cmp : -cmp;
   });
+  const totalDocs = docs.length;
+  const totalBytes = docs.reduce((s, d) => s + (d.size || 0), 0);
+  const withCategory = docs.filter(d => (d.category_ids || []).length > 0).length;
+  const thisMonthPrefix = new Date().toISOString().slice(0, 7);
+  const thisMonthDocs = docs.filter(d => (d.created_at || '').slice(0, 7) === thisMonthPrefix).length;
+  const categoryPct = totalDocs > 0 ? Math.round((withCategory / totalDocs) * 100) : 0;
 
   return (
     <div>
@@ -176,28 +193,32 @@ export default function DocumentsView() {
         </div>
       </div>
 
-      {/* Search */}
-      <div style={{ marginBottom: 12 }}>
-        <input type="text" placeholder="Buscar documentos…" value={q}
-          onChange={e => setQ(e.target.value)} style={{ maxWidth: 300 }} />
-      </div>
+      <ContentMetricsSummary
+        title="Resumen de documentos"
+        metrics={[
+          { label: 'Documentos', value: totalDocs, sub: 'archivos registrados' },
+          { label: 'Peso total', value: fmtSize(totalBytes), sub: 'almacenamiento estimado' },
+          { label: 'Este mes', value: thisMonthDocs, sub: 'subidos este mes', valueStyle: { color: '#2563eb' } },
+          { label: 'Categorizados', value: `${categoryPct}%`, sub: `${withCategory}/${totalDocs} con categoría`, valueStyle: { color: 'var(--accent)' } },
+        ]}
+      />
 
-      {/* Category filter */}
-      {usedCats.length > 0 && (
-        <div className="filter-row" style={{ marginBottom: 14 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Categoría:</span>
-          <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todos</span>
-          {usedCats.map(c => (
-            <span key={c.id} className={`chip ${filterCat === c.id ? 'active' : ''}`}
-              onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>{c.name}</span>
-          ))}
-        </div>
-      )}
+      <ContentSearchFilters
+        title={q}
+        onTitleChange={setQ}
+        fromDate={fromDate}
+        onFromDateChange={setFromDate}
+        toDate={toDate}
+        onToDateChange={setToDate}
+        selectedCats={filterCats}
+        onSelectedCatsChange={setFilterCats}
+        availableCatIds={usedCatIds}
+      />
 
       {visible.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📁</div>
-          {q || filterCat ? 'Sin resultados' : 'Sin documentos. Sube el primero.'}
+          {q || fromDate || toDate || filterCats.length > 0 ? 'Sin resultados' : 'Sin documentos. Sube el primero.'}
         </div>
       ) : (
         <div className="card" style={{ padding: 0 }}>

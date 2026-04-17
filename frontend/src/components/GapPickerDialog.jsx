@@ -29,7 +29,7 @@ const GROUPS = [
   { type: 'milestone',    icon: '🎯', label: 'Hitos' },
   { type: 'publication',  icon: '✍️',  label: 'Publicaciones' },
   { type: 'certification',icon: '🏆', label: 'Certificaciones' },
-  { type: 'repo',         icon: '📦', label: 'Repositorios' },
+  { type: 'repo',         icon: '📦', label: 'Proyectos' },
   { type: 'pr',           icon: '🔀', label: 'Pull Requests' },
   { type: 'event',        icon: '🎪', label: 'Eventos' },
 ];
@@ -64,7 +64,7 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
         ...normalise(ms.filter(m => m.id.startsWith('ms-')), 'milestone', '🎯', 'Hitos', it => it.target_date, null),
         ...normalise(pubs,  'publication',   '✍️',  'Publicaciones',   it => it.date,        null),
         ...normalise(certs, 'certification', '🏆', 'Certificaciones', it => it.target_date, null),
-        ...normalise(repos, 'repo',          '📦', 'Repositorios',    it => it.target_date, null),
+        ...normalise(repos, 'repo',          '📦', 'Proyectos',       it => it.target_date, null),
         ...normalise(prs,   'pr',            '🔀', 'Pull Requests',   it => it.end_date,    null),
         ...normalise(evts,  'event',         '🎪', 'Eventos',         it => it.start_date,  null),
       ]);

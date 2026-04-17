@@ -83,7 +83,7 @@ body {
 }
 
 .sidebar-nav {
-  padding: 12px 8px;
+  padding: 2px 8px;
   flex: 1;
 }
 
@@ -100,7 +100,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 3px 10px;
   border-radius: var(--radius);
   cursor: pointer;
   color: var(--text-2);
@@ -137,7 +137,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
+  margin-bottom: 5px;
 }
 
 .page-title {

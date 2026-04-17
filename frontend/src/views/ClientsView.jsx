@@ -5,6 +5,7 @@ import { statusLabel } from '../utils/categoryUtils.js';
 import CatBadge, { CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
+import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW  = { marginBottom: 14 };
@@ -14,6 +15,12 @@ const STATUS_OPTS = [
   { value: 'in_progress', label: 'En curso' },
   { value: 'completed',   label: 'Completado' },
   { value: 'blocked',     label: 'Bloqueado' },
+];
+
+const PROJECT_STATUS_OPTS = [
+  { value: 'not_started', label: 'No iniciado' },
+  { value: 'in_progress', label: 'En desarrollo' },
+  { value: 'completed', label: 'Publicado ✓' },
 ];
 
 const STATUS_ICONS = { not_started: '⚪', in_progress: '🔵', completed: '✅', blocked: '🔴' };
@@ -269,6 +276,94 @@ function MilestoneDialog({ milestone, clientId, onClose, onSaved }) {
   );
 }
 
+// ── Project dialog (create) for clients ─────────────────────────────────────
+function ProjectDialog({ clientId, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    title: '',
+    target_date: '',
+    status: 'not_started',
+    url: '',
+    notes: '',
+  });
+  const [catIds, setCatIds] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(f, v) { setForm(p => ({ ...p, [f]: v })); }
+
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await api.createRepo({
+        ...form,
+        objective_id: clientId,
+        url: form.url || null,
+        category_ids: catIds,
+        category_id: catIds[0] || null,
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog title="Nuevo proyecto" onClose={onClose}>
+      <div style={fieldW}>
+        <label style={labelSt}>Título *</label>
+        <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} autoFocus />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Fecha objetivo</label>
+          <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Estado</label>
+          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+            {PROJECT_STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>URL GitHub</label>
+        <input
+          type="url"
+          value={form.url}
+          onChange={e => set('url', e.target.value)}
+          placeholder="https://github.com/usuario/proyecto"
+          style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}
+        />
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Categorías</label>
+        <CategorySelector selected={catIds} onChange={setCatIds} />
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Notas</label>
+        <textarea
+          value={form.notes}
+          onChange={e => set('notes', e.target.value)}
+          rows={3}
+          style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6 }}
+        />
+      </div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving || !form.title.trim()}>
+          {saving ? 'Guardando…' : 'Crear proyecto'}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
 // ── Milestone row — expandable tasks, drag-drop, billed_amount ───────────────
 function ClientMilestoneRow({ m, clientId, clientColor, onReload, newTaskFor, setNewTaskFor, version }) {
   const [expanded, setExpanded] = useState(false);
@@ -416,6 +511,7 @@ function ClientCard({ client, onReload }) {
   const [expanded,    setExpanded]    = useState(false);
   const [editing,     setEditing]     = useState(false);
   const [addMs,       setAddMs]       = useState(false);
+  const [addProject,  setAddProject]  = useState(false);
   const [newTaskFor,  setNewTaskFor]  = useState(null);
   const [version,     setVersion]     = useState(0);
 
@@ -449,6 +545,11 @@ function ClientCard({ client, onReload }) {
       {addMs && (
         <div onClick={e => e.stopPropagation()}>
           <MilestoneDialog clientId={client.id} onClose={() => setAddMs(false)} onSaved={() => { setAddMs(false); onReload(); }} />
+        </div>
+      )}
+      {addProject && (
+        <div onClick={e => e.stopPropagation()}>
+          <ProjectDialog clientId={client.id} onClose={() => setAddProject(false)} onSaved={() => { setAddProject(false); onReload(); }} />
         </div>
       )}
       {newTaskFor && (
@@ -516,6 +617,9 @@ function ClientCard({ client, onReload }) {
             <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setAddMs(true); }}>
               + Hito
             </button>
+            <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setAddProject(true); }}>
+              + Proyecto
+            </button>
             <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditing(true); }}>
               ✎ Editar cliente
             </button>
@@ -562,31 +666,15 @@ export default function ClientsView() {
         />
       )}
 
-      {/* Summary card */}
-      {clients.length > 0 && (
-        <div className="stat-grid" style={{ marginBottom: 20 }}>
-          <div className="stat-card">
-            <div className="stat-label">Clientes activos</div>
-            <div className="stat-value">{clients.filter(c => c.status === 'in_progress').length}</div>
-            <div className="stat-sub">de {clients.length} total</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Total facturado</div>
-            <div className="stat-value" style={{ color: '#15803d', fontSize: 20 }}>{fmtMoney(totalBilled)}</div>
-            <div className="stat-sub">todos los clientes</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Progreso tareas</div>
-            <div className="stat-value" style={{ color: 'var(--accent)' }}>{globalPct}%</div>
-            <div className="stat-sub">{doneTasks}/{totalTasks} completadas</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Hitos totales</div>
-            <div className="stat-value">{clients.reduce((s, c) => s + (c.milestones?.length || 0), 0)}</div>
-            <div className="stat-sub">en todos los clientes</div>
-          </div>
-        </div>
-      )}
+      <ContentMetricsSummary
+        title="Resumen de clientes"
+        metrics={[
+          { label: 'Clientes activos', value: clients.filter(c => c.status === 'in_progress').length, sub: `de ${clients.length} total` },
+          { label: 'Total facturado', value: fmtMoney(totalBilled), sub: 'todos los clientes', valueStyle: { color: '#15803d', fontSize: 20 } },
+          { label: 'Progreso tareas', value: `${globalPct}%`, sub: `${doneTasks}/${totalTasks} completadas`, valueStyle: { color: 'var(--accent)' } },
+          { label: 'Hitos totales', value: clients.reduce((s, c) => s + (c.milestones?.length || 0), 0), sub: 'en todos los clientes' },
+        ]}
+      />
 
       {clients.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>

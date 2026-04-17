@@ -3,6 +3,8 @@ import { api } from '../api.js';
 import { fmtShortDate } from '../utils/dateUtils.js';
 import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
+import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
@@ -174,8 +176,10 @@ export default function PRsView() {
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [filterCat, setFilterCat] = useState('');
-  const cats = useCats();
+  const [searchTitle, setSearchTitle] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [filterCats, setFilterCats] = useState([]);
 
   async function load() {
     api.prs().then(setPrs);
@@ -185,10 +189,24 @@ export default function PRsView() {
   useEffect(() => { load(); }, []);
 
   const usedCatIds = [...new Set(prs.flatMap(p => parseCatIds(p.category_ids, p.category_id)))];
-  const usedCats = cats.filter(c => usedCatIds.includes(c.id));
-  const visible = filterCat ? prs.filter(p => parseCatIds(p.category_ids, p.category_id).includes(filterCat)) : prs;
+  const normalizedSearch = searchTitle.trim().toLowerCase();
+  const dateMatches = (pr) => {
+    const value = pr.end_date || pr.start_date;
+    if (!value) return !fromDate && !toDate;
+    if (fromDate && value < fromDate) return false;
+    if (toDate && value > toDate) return false;
+    return true;
+  };
+  const visible = prs
+    .filter(p => !normalizedSearch || (p.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(dateMatches)
+    .filter(p => filterCats.length === 0 || filterCats.some(fc => parseCatIds(p.category_ids, p.category_id).includes(fc)));
 
   const today = new Date().toISOString().slice(0, 10);
+  const totalPRs = prs.length;
+  const mergedPRs = prs.filter(p => p.status === 'merged').length;
+  const reviewPRs = prs.filter(p => p.status === 'review').length;
+  const progressPct = totalPRs > 0 ? Math.round((mergedPRs / totalPRs) * 100) : 0;
 
   return (
     <div>
@@ -207,22 +225,32 @@ export default function PRsView() {
         <DetailDialog pr={selected} objectives={objectives} onClose={() => setSelected(null)} onSaved={load} onDeleted={() => { setSelected(null); load(); }} />
       )}
 
-      {/* Filters */}
-      {usedCats.length > 0 && (
-        <div className="filter-row" style={{ marginBottom: 16 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Categoría:</span>
-          <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todos</span>
-          {usedCats.map(c => (
-            <span key={c.id} className={`chip ${filterCat === c.id ? 'active' : ''}`}
-              onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>{c.name}</span>
-          ))}
-        </div>
-      )}
+      <ContentMetricsSummary
+        title="Resumen de PRs"
+        metrics={[
+          { label: 'PRs totales', value: totalPRs, sub: 'registrados' },
+          { label: 'Merged', value: mergedPRs, sub: `de ${totalPRs} total`, valueStyle: { color: 'var(--success)' } },
+          { label: 'En review', value: reviewPRs, sub: 'pendientes de revisión', valueStyle: { color: '#92400e' } },
+          { label: 'Progreso global', value: `${progressPct}%`, sub: `${mergedPRs}/${totalPRs} merged`, valueStyle: { color: 'var(--accent)' } },
+        ]}
+      />
+
+      <ContentSearchFilters
+        title={searchTitle}
+        onTitleChange={setSearchTitle}
+        fromDate={fromDate}
+        onFromDateChange={setFromDate}
+        toDate={toDate}
+        onToDateChange={setToDate}
+        selectedCats={filterCats}
+        onSelectedCatsChange={setFilterCats}
+        availableCatIds={usedCatIds}
+      />
 
       {visible.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🔀</div>
-          {filterCat ? 'Sin PRs en esta categoría' : 'Sin pull requests'}
+          {filterCats.length > 0 || searchTitle || fromDate || toDate ? 'Sin resultados' : 'Sin pull requests'}
         </div>
       ) : (
         <div className="card">

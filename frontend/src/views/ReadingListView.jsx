@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW = { marginBottom: 14 };
@@ -331,58 +333,20 @@ function ReadList({ items, onToggle, onEdit }) {
   );
 }
 
-function FilterBar({ search, onSearch, filterCats, onFilterCats }) {
-  const cats = useCats();
-  function toggleCat(id) {
-    onFilterCats(filterCats.includes(id) ? filterCats.filter(c => c !== id) : [...filterCats, id]);
-  }
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <input
-        type="text"
-        value={search}
-        onChange={e => onSearch(e.target.value)}
-        placeholder="Buscar por título o notas…"
-        style={{ width: '100%', marginBottom: 10, fontSize: 13 }}
-      />
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {cats.map(cat => {
-          const active = filterCats.includes(cat.id);
-          return (
-            <span key={cat.id} onClick={() => toggleCat(cat.id)} style={{
-              cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
-              background: active ? cat.color + '33' : 'var(--bg)',
-              color: active ? cat.color : 'var(--text-3)',
-              border: `1px solid ${active ? cat.color : 'var(--border)'}`,
-              fontWeight: active ? 600 : 400,
-              userSelect: 'none',
-            }}>
-              {cat.name}
-            </span>
-          );
-        })}
-        {(search || filterCats.length > 0) && (
-          <span onClick={() => { onSearch(''); onFilterCats([]); }} style={{
-            cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
-            background: 'var(--bg)', color: 'var(--text-3)',
-            border: '1px solid var(--border)', userSelect: 'none',
-          }}>
-            ✕ Limpiar
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function applyFilters(items, search, filterCats) {
+function applyFilters(items, search, filterCats, fromDate, toDate) {
   let out = items;
   if (search.trim()) {
     const q = search.trim().toLowerCase();
-    out = out.filter(it =>
-      it.title.toLowerCase().includes(q) ||
-      (it.notes && it.notes.toLowerCase().includes(q))
-    );
+    out = out.filter(it => it.title.toLowerCase().includes(q));
+  }
+  if (fromDate || toDate) {
+    out = out.filter(it => {
+      const value = (it.created_at || '').slice(0, 10);
+      if (!value) return false;
+      if (fromDate && value < fromDate) return false;
+      if (toDate && value > toDate) return false;
+      return true;
+    });
   }
   if (filterCats.length > 0) {
     out = out.filter(it => {
@@ -397,6 +361,8 @@ export default function ReadingListView() {
   const [items, setItems] = useState([]);
   const [dialog, setDialog] = useState(null); // null | 'new' | item object
   const [search, setSearch] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [filterCats, setFilterCats] = useState([]);
 
   async function load() {
@@ -425,9 +391,13 @@ export default function ReadingListView() {
 
   const allPending = items.filter(it => it.status === 'pending');
   const allRead = items.filter(it => it.status !== 'pending');
-  const isFiltering = search.trim() || filterCats.length > 0;
-  const pending = isFiltering ? applyFilters(allPending, search, filterCats) : allPending;
-  const read = isFiltering ? applyFilters(allRead, search, filterCats) : allRead;
+  const usedCatIds = [...new Set(items.flatMap(it => parseCatIds(it.category_ids, it.category_id)))];
+  const isFiltering = search.trim() || filterCats.length > 0 || fromDate || toDate;
+  const pending = isFiltering ? applyFilters(allPending, search, filterCats, fromDate, toDate) : allPending;
+  const read = isFiltering ? applyFilters(allRead, search, filterCats, fromDate, toDate) : allRead;
+  const totalItems = items.length;
+  const readItems = allRead.length;
+  const readPct = totalItems > 0 ? Math.round((readItems / totalItems) * 100) : 0;
 
   return (
     <div>
@@ -448,7 +418,27 @@ export default function ReadingListView() {
         />
       )}
 
-      <FilterBar search={search} onSearch={setSearch} filterCats={filterCats} onFilterCats={setFilterCats} />
+      <ContentMetricsSummary
+        title="Resumen de lectura"
+        metrics={[
+          { label: 'Elementos totales', value: totalItems, sub: 'en la lista' },
+          { label: 'Leídos', value: readItems, sub: `de ${totalItems} total`, valueStyle: { color: 'var(--success)' } },
+          { label: 'Pendientes', value: allPending.length, sub: 'por revisar', valueStyle: { color: '#2563eb' } },
+          { label: 'Progreso global', value: `${readPct}%`, sub: `${readItems}/${totalItems} leídos`, valueStyle: { color: 'var(--accent)' } },
+        ]}
+      />
+
+      <ContentSearchFilters
+        title={search}
+        onTitleChange={setSearch}
+        fromDate={fromDate}
+        onFromDateChange={setFromDate}
+        toDate={toDate}
+        onToDateChange={setToDate}
+        selectedCats={filterCats}
+        onSelectedCatsChange={setFilterCats}
+        availableCatIds={usedCatIds}
+      />
 
       {pending.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>

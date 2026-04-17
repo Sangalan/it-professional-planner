@@ -20,7 +20,10 @@ try { db.prepare('ALTER TABLE certifications ADD COLUMN percentage_completed REA
 try { db.prepare('ALTER TABLE repos ADD COLUMN objective_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE repos ADD COLUMN category_ids TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE repos ADD COLUMN url TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE repos ADD COLUMN type TEXT DEFAULT \'personal\'').run(); } catch (_) {}
+try { db.prepare('UPDATE repos SET type = \'personal\' WHERE type IS NULL OR TRIM(type) = \'\'').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE publications ADD COLUMN objective_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE publications ADD COLUMN publication_text TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE prs ADD COLUMN category_ids TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE prs ADD COLUMN percentage_completed REAL DEFAULT 0').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE publications ADD COLUMN category_ids TEXT').run(); } catch (_) {}
@@ -135,7 +138,8 @@ function initSchema() {
       title TEXT,
       category_id TEXT,
       status TEXT DEFAULT 'pending',
-      notes TEXT
+      notes TEXT,
+      publication_text TEXT
     );
 
     CREATE TABLE IF NOT EXISTS certifications (
@@ -152,6 +156,7 @@ function initSchema() {
       title TEXT NOT NULL,
       target_date TEXT,
       category_id TEXT,
+      type TEXT DEFAULT 'personal',
       status TEXT DEFAULT 'not_started',
       notes TEXT
     );

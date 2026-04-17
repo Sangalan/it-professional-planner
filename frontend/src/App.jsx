@@ -7,6 +7,7 @@ import NowView from './views/NowView.jsx';
 import DailyList from './views/DailyList.jsx';
 import WeeklyCalendar from './views/WeeklyCalendar.jsx';
 import MonthlyCalendar from './views/MonthlyCalendar.jsx';
+import TasksView from './views/TasksView.jsx';
 import ObjectivesView from './views/ObjectivesView.jsx';
 import ClientsView from './views/ClientsView.jsx';
 import PublicationsView from './views/PublicationsView.jsx';
@@ -108,6 +109,7 @@ const navMain = [
   { path: '/today',     icon: '📋',  label: 'Hoy' },
   { path: '/week',      icon: '🗓',  label: 'Semana' },
   { path: '/month',     icon: '📅',  label: 'Mes' },
+  { path: '/tasks',     icon: '✅',  label: 'Tareas' },
   { path: '/objectives',icon: '🎯',  label: 'Objetivos' },
 ];
 
@@ -115,7 +117,7 @@ const navContent = [
   { path: '/clients',        icon: '👤', label: 'Clientes' },
   { path: '/publications',   icon: '✍️',  label: 'Publicaciones' },
   { path: '/certifications', icon: '🏆', label: 'Certificaciones' },
-  { path: '/repos',          icon: '📦', label: 'Repositorios' },
+  { path: '/repos',          icon: '📦', label: 'Proyectos' },
   { path: '/prs',            icon: '🔀', label: 'Pull Requests' },
   { path: '/events',         icon: '🎪', label: 'Eventos' },
   { path: '/reading-list',   icon: '📚', label: 'Para Leer' },
@@ -181,6 +183,7 @@ export default function App() {
             <Route path="/today"      element={<DailyList />} />
             <Route path="/week"       element={<WeeklyCalendar />} />
             <Route path="/month"      element={<MonthlyCalendar />} />
+            <Route path="/tasks"      element={<TasksView />} />
             <Route path="/objectives" element={<ObjectivesView />} />
             <Route path="/clients"    element={<ClientsView />} />
             <Route path="/publications" element={<PublicationsView />} />

@@ -9,7 +9,7 @@ const TABLE_LABELS = {
   events:         'Eventos',
   publications:   'Publicaciones',
   certifications: 'Certificaciones',
-  repos:          'Repositorios',
+  repos:          'Proyectos',
   prs:            'PRs',
   work_blocks:    'Bloques de trabajo',
 };

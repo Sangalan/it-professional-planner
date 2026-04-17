@@ -3,6 +3,8 @@ import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
 import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
+import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
@@ -175,8 +177,10 @@ export default function CertificationsView() {
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
-  const [filterCat, setFilterCat] = useState('');
-  const cats = useCats();
+  const [filterCats, setFilterCats] = useState([]);
+  const [searchTitle, setSearchTitle] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
   async function load() {
     api.certifications().then(setCerts);
@@ -186,15 +190,31 @@ export default function CertificationsView() {
   useEffect(() => { load(); }, []);
 
   const usedCatIds = [...new Set(certs.flatMap(c => parseCatIds(c.category_ids, c.category_id)))];
-  const usedCats = cats.filter(c => usedCatIds.includes(c.id));
-  const visible = filterCat ? certs.filter(c => parseCatIds(c.category_ids, c.category_id).includes(filterCat)) : certs;
+  const normalizedSearch = searchTitle.trim().toLowerCase();
+  const dateMatches = (value) => {
+    if (!value) return !fromDate && !toDate;
+    if (fromDate && value < fromDate) return false;
+    if (toDate && value > toDate) return false;
+    return true;
+  };
+  const filteredBySearch = certs
+    .filter(c => !normalizedSearch || (c.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(c => dateMatches(c.target_date))
+    .filter(c => filterCats.length === 0 || filterCats.some(fc => parseCatIds(c.category_ids, c.category_id).includes(fc)));
+  const activeCerts = filteredBySearch
+    .filter(c => c.status !== 'completed');
+  const completedCerts = filteredBySearch.filter(c => c.status === 'completed');
+  const totalCerts = certs.length;
+  const completedTotal = certs.filter(c => c.status === 'completed').length;
+  const inProgressTotal = certs.filter(c => c.status === 'in_progress').length;
+  const progressPct = totalCerts > 0 ? Math.round((completedTotal / totalCerts) * 100) : 0;
 
   return (
     <div>
       <div className="page-header">
         <div>
           <div className="page-title">Certificaciones</div>
-          <div className="page-subtitle">{visible.length} certificaciones</div>
+          <div className="page-subtitle">{activeCerts.length} activas · {completedCerts.length} aprobadas</div>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>+ Nueva</button>
       </div>
@@ -206,27 +226,38 @@ export default function CertificationsView() {
         <DetailDialog cert={selected} objectives={objectives} onClose={() => setSelected(null)} onSaved={load} onDeleted={() => { setSelected(null); load(); }} />
       )}
 
-      {/* Filters */}
-      {usedCats.length > 0 && (
-        <div className="filter-row" style={{ marginBottom: 16 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Categoría:</span>
-          <span className={`chip ${!filterCat ? 'active' : ''}`} onClick={() => setFilterCat('')}>Todos</span>
-          {usedCats.map(c => (
-            <span key={c.id} className={`chip ${filterCat === c.id ? 'active' : ''}`}
-              onClick={() => setFilterCat(filterCat === c.id ? '' : c.id)}>{c.name}</span>
-          ))}
-        </div>
-      )}
+      <ContentMetricsSummary
+        title="Resumen de certificaciones"
+        metrics={[
+          { label: 'Totales', value: totalCerts, sub: 'certificaciones registradas' },
+          { label: 'Aprobadas', value: completedTotal, sub: `de ${totalCerts} total`, valueStyle: { color: 'var(--success)' } },
+          { label: 'En curso', value: inProgressTotal, sub: 'actualmente activas', valueStyle: { color: '#2563eb' } },
+          { label: 'Progreso global', value: `${progressPct}%`, sub: `${completedTotal}/${totalCerts} completadas`, valueStyle: { color: 'var(--accent)' } },
+        ]}
+      />
 
-      {visible.length === 0 ? (
+      <ContentSearchFilters
+        title={searchTitle}
+        onTitleChange={setSearchTitle}
+        fromDate={fromDate}
+        onFromDateChange={setFromDate}
+        toDate={toDate}
+        onToDateChange={setToDate}
+        selectedCats={filterCats}
+        onSelectedCatsChange={setFilterCats}
+        availableCatIds={usedCatIds}
+      />
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 8 }}>En progreso / pendientes</div>
+      {activeCerts.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🏆</div>
-          {filterCat ? 'Sin certificaciones en esta categoría' : 'Sin certificaciones'}
+          Sin certificaciones activas con estos filtros
         </div>
       ) : (
         <div className="card">
           <div style={{ padding: '0 18px' }}>
-            {visible.map(cert => {
+            {activeCerts.map(cert => {
               const days = cert.days_remaining;
               const cls = days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok';
               const catIds = parseCatIds(cert.category_ids, cert.category_id);
@@ -261,6 +292,48 @@ export default function CertificationsView() {
                     color: cert.status === 'completed' ? '#16a34a' : cert.status === 'failed' ? '#dc2626' : cert.status === 'in_progress' ? '#2563eb' : 'var(--text-2)',
                   }}>
                     {STATUS_OPTIONS.find(s => s.value === cert.status)?.label || cert.status}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', margin: '18px 0 8px' }}>Aprobadas</div>
+      {completedCerts.length === 0 ? (
+        <div className="empty-state card" style={{ padding: 32 }}>
+          No hay certificaciones aprobadas con estos filtros
+        </div>
+      ) : (
+        <div className="card">
+          <div style={{ padding: '0 18px' }}>
+            {completedCerts.map(cert => {
+              const catIds = parseCatIds(cert.category_ids, cert.category_id);
+              const pct = cert.percentage_completed || 0;
+              return (
+                <div key={cert.id} className="task-row" style={{ cursor: 'pointer' }} onClick={() => setSelected(cert)}>
+                  <div className="task-info">
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>🏆 {cert.title}</div>
+                    <div className="task-meta">
+                      <span className="task-time">{fmtDate(cert.target_date)}</span>
+                    </div>
+                    {catIds.length > 0 && (
+                      <div className="task-meta" style={{ marginTop: 3 }}>
+                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                      </div>
+                    )}
+                    {pct > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+                        <div className="progress-bar" style={{ flex: 1, maxWidth: 140, height: 4 }}>
+                          <div className="progress-fill" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span style={{ fontSize: 11, color: 'var(--text-3)', minWidth: 28 }}>{pct}%</span>
+                      </div>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap', background: '#dcfce7', color: '#16a34a' }}>
+                    Aprobada ✓
                   </span>
                 </div>
               );
