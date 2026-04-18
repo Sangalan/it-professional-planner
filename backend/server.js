@@ -982,6 +982,8 @@ app.get('/api/work-blocks', (req, res) => {
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
 app.get('/api/dashboard', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
+  const doneTaskStatuses = new Set(['completed']);
+  const doneItemStatuses = new Set(['published', 'completed', 'merged', 'closed', 'failed', 'cancelled']);
   const todayTasks  = db.prepare('SELECT * FROM tasks WHERE date = ? ORDER BY start_time').all(today);
   const totalTasks  = db.prepare('SELECT COUNT(*) as n FROM tasks').get().n;
   const doneTasks   = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE status = 'completed'").get().n;
@@ -1046,6 +1048,56 @@ app.get('/api/dashboard', (req, res) => {
   const certTotal = db.prepare('SELECT COUNT(*) as n FROM certifications').get().n;
   const certDone  = db.prepare("SELECT COUNT(*) as n FROM certifications WHERE status = 'completed'").get().n;
 
+  function compareTaskSchedule(a, b) {
+    const aKey = `${a.date || ''} ${a.start_time || '99:99'}`;
+    const bKey = `${b.date || ''} ${b.start_time || '99:99'}`;
+    return aKey.localeCompare(bKey);
+  }
+
+  function getLastTask(tasks) {
+    if (tasks.length === 0) return null;
+    return [...tasks].sort(compareTaskSchedule).at(-1);
+  }
+
+  function getNearestPlannedItem(table, emptyLabel) {
+    const items = db.prepare(`SELECT id, title, status FROM ${table}`).all();
+    const candidates = items
+      .filter(item => !doneItemStatuses.has(item.status))
+      .map(item => {
+        const linkedTasks = db.prepare('SELECT id, title, date, start_time, status FROM tasks WHERE milestone_id = ? AND date IS NOT NULL').all(item.id);
+        const pendingTasks = linkedTasks.filter(task => !doneTaskStatuses.has(task.status));
+        if (pendingTasks.length === 0) return null;
+        const lastTask = getLastTask(linkedTasks);
+        if (!lastTask) return null;
+        return { label: item.title, date: lastTask.date };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label, 'es'));
+
+    return candidates[0] || { label: emptyLabel, date: null };
+  }
+
+  const nextExamTask = db.prepare(`
+    SELECT t.id, t.title, t.date, t.start_time
+    FROM tasks t
+    JOIN certifications c ON c.id = t.milestone_id
+    WHERE t.date IS NOT NULL
+      AND t.status != 'completed'
+      AND lower(trim(t.title)) LIKE 'examen%'
+      AND c.status != 'completed'
+    ORDER BY t.date, t.start_time
+    LIMIT 1
+  `).get() || null;
+
+  const nextSpecialMilestones = {
+    exam: nextExamTask
+      ? { label: nextExamTask.title, date: nextExamTask.date }
+      : { label: 'No planificado', date: null },
+    publication: getNearestPlannedItem('publications', 'No planificada'),
+    pr: getNearestPlannedItem('prs', 'No planificada'),
+    repo: getNearestPlannedItem('repos', 'No planificado'),
+  };
+
   const globalPct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
 
   res.json({
@@ -1061,6 +1113,7 @@ app.get('/api/dashboard', (req, res) => {
     category_stats: catStats,
     publications: { total: pubTotal, done: pubDone },
     certifications: { total: certTotal, done: certDone },
+    next_special_milestones: nextSpecialMilestones,
   });
 });
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { fmtShortDate, fmtDate, formatDuration } from '../utils/dateUtils.js';
+import { fmtShortDate, fmtDate, formatDuration, differenceInDays, parseISO } from '../utils/dateUtils.js';
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import CatBadge from '../components/CatBadge.jsx';
 import {
@@ -25,17 +25,29 @@ function ProgressCard({ label, pct, done, total, color }) {
   );
 }
 
+function formatMilestoneDate(dateStr) {
+  if (!dateStr) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = parseISO(dateStr);
+  const days = differenceInDays(target, today);
+  const suffix = days < 0 ? `${Math.abs(days)}d atrás` : days === 0 ? 'Hoy' : `${days}d`;
+  return `${fmtShortDate(dateStr)} · ${suffix}`;
+}
+
 export default function Dashboard() {
   const [data, setData] = useState(null);
+  const [loadError, setLoadError] = useState('');
   const [cats, setCats] = useState([]);
   const [events, setEvents] = useState([]);
 
   useEffect(() => {
-    api.dashboard().then(setData);
+    api.dashboard().then(setData).catch(() => setLoadError('No se pudo cargar el dashboard'));
     api.categories().then(setCats);
-    api.events().then(setEvents);
+    api.events().then(setEvents).catch(() => {});
   }, []);
 
+  if (loadError && !data) return <div className="empty-state">{loadError}</div>;
   if (!data) return <div className="empty-state">Cargando dashboard...</div>;
 
   const catMap = Object.fromEntries(cats.map(c => [c.id, c]));
@@ -60,6 +72,13 @@ export default function Dashboard() {
     }));
 
   const todayFormatted = new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const nextSpecial = data.next_special_milestones || {};
+  const upcomingMilestoneDates = [
+    nextSpecial.exam?.date,
+    nextSpecial.publication?.date,
+    nextSpecial.pr?.date,
+    nextSpecial.repo?.date,
+  ].filter(Boolean);
 
   return (
     <div>
@@ -76,13 +95,6 @@ export default function Dashboard() {
           <div className="stat-label">Progreso global</div>
           <div className="stat-value" style={{ color: 'var(--accent)' }}>{data.global_progress}%</div>
           <div className="stat-sub">{data.tasks_done} / {data.tasks_total} tareas</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Hoy completadas</div>
-          <div className="stat-value" style={{ color: 'var(--success)' }}>
-            {data.today_tasks.done}
-          </div>
-          <div className="stat-sub">de {data.today_tasks.total} previstas</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Vencidas</div>
@@ -132,30 +144,32 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Upcoming milestones */}
         <div className="card">
           <div className="card-header">
             <span className="card-title">Próximos hitos</span>
-            <a href="/objectives" style={{ fontSize: 12, color: 'var(--accent)' }}>Ver objetivos →</a>
           </div>
           <div className="card-body" style={{ padding: '8px 18px' }}>
-            {data.next_milestones.length === 0 ? (
-              <div className="empty-state">Sin hitos próximos</div>
+            {upcomingMilestoneDates.length === 0 ? (
+              <div className="empty-state">No hay ninguna tarea planificada</div>
             ) : (
-              data.next_milestones.map(m => {
-                const days = m.days_remaining;
-                const cls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
-                return (
-                  <div key={m.id} className="milestone-row">
-                    <div className="dot" style={{ background: days < 0 ? 'var(--danger)' : days <= 7 ? 'var(--warning)' : 'var(--success)' }} />
-                    <div className="milestone-title">{m.title}</div>
-                    <div className="milestone-date">{fmtShortDate(m.target_date)}</div>
-                    <div className={`milestone-days ${cls}`}>
-                      {days < 0 ? `${Math.abs(days)}d atrás` : days === 0 ? 'Hoy' : `${days}d`}
-                    </div>
-                  </div>
-                );
-              })
+              <>
+                <div className="milestone-row">
+                  <div className="milestone-title">Próximo examen</div>
+                  <div className="milestone-date">{nextSpecial.exam?.date ? formatMilestoneDate(nextSpecial.exam.date) : 'No planificado'}</div>
+                </div>
+                <div className="milestone-row">
+                  <div className="milestone-title">Próxima publicación</div>
+                  <div className="milestone-date">{nextSpecial.publication?.date ? formatMilestoneDate(nextSpecial.publication.date) : 'No planificada'}</div>
+                </div>
+                <div className="milestone-row">
+                  <div className="milestone-title">Próxima entrega PR</div>
+                  <div className="milestone-date">{nextSpecial.pr?.date ? formatMilestoneDate(nextSpecial.pr.date) : 'No planificada'}</div>
+                </div>
+                <div className="milestone-row">
+                  <div className="milestone-title">Próxima fecha para terminar Proyecto</div>
+                  <div className="milestone-date">{nextSpecial.repo?.date ? formatMilestoneDate(nextSpecial.repo.date) : 'No planificado'}</div>
+                </div>
+              </>
             )}
           </div>
         </div>

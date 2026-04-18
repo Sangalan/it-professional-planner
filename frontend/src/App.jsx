@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import { api } from './api.js';
-import { toDateStr, timeToMinutes, formatCountdown, secondsUntilTime } from './utils/dateUtils.js';
+import { toDateStr, timeToMinutes, formatCountdown, secondsUntilTime, getGapHours } from './utils/dateUtils.js';
 import Dashboard from './views/Dashboard.jsx';
 import NowView from './views/NowView.jsx';
 import DailyList from './views/DailyList.jsx';
@@ -21,6 +21,8 @@ import Search from './views/Search.jsx';
 import Settings from './views/Settings.jsx';
 import ImportExport from './views/ImportExport.jsx';
 import { CategoriesProvider } from './components/CatBadge.jsx';
+import TaskModal from './components/TaskModal.jsx';
+import GapPickerDialog from './components/GapPickerDialog.jsx';
 
 // Compute total free minutes within 9:00–20:00 by merging task intervals
 function computeFreeHours(tasks) {
@@ -75,6 +77,9 @@ function SidebarStatus() {
   const [tick, setTick] = useState(0);
   const [nowData,   setNowData]  = useState(null);
   const [freeH,     setFreeH]    = useState(null);
+  const [todayTasks, setTodayTasks] = useState([]);
+  const [editTask, setEditTask] = useState(null);
+  const [gapDialogOpen, setGapDialogOpen] = useState(false);
   const startedTaskIdsRef = useRef(new Set());
   const endedTaskIdsRef = useRef(new Set());
   const lastKnownCurrentRef = useRef(null);
@@ -91,7 +96,10 @@ function SidebarStatus() {
     function load() {
       api.tasksNow().then(setNowData).catch(() => {});
       api.tasks({ date: toDateStr(new Date()) })
-        .then(tasks => setFreeH(computeFreeHours(tasks)))
+        .then(tasks => {
+          setTodayTasks(tasks);
+          setFreeH(computeFreeHours(tasks));
+        })
         .catch(() => {});
     }
     load();
@@ -178,28 +186,92 @@ function SidebarStatus() {
   }
 
   const currentTaskLabel = nowData?.current?.title?.trim() || 'Tiempo libre';
+  const todayStr = toDateStr(new Date());
+  const gapHours = getGapHours(todayTasks);
+
+  function reloadSidebarData() {
+    api.tasksNow().then(setNowData).catch(() => {});
+    api.tasks({ date: todayStr })
+      .then(tasks => {
+        setTodayTasks(tasks);
+        setFreeH(computeFreeHours(tasks));
+      })
+      .catch(() => {});
+  }
 
   return (
-    <div style={{ marginTop: 5 }}>
-      <div style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', flexWrap: 'wrap', gap: '0 10px', alignItems: 'center' }}>
-        <span style={{ fontWeight: 700, color: 'var(--text-1)', fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
-          {timeStr}
-        </span>
-      </div>
-      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4, lineHeight: 1.4, display: 'flex', flexWrap: 'nowrap', gap: '0 8px', alignItems: 'center', whiteSpace: 'nowrap', overflow: 'hidden' }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentTaskLabel}</span>
-        {nextLabel && (
-          <span title={nextTitle} style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-3)', flexShrink: 0 }}>
-            ⏭ {nextLabel}
+    <>
+      <div style={{ marginTop: 5 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', flexWrap: 'wrap', gap: '0 10px', alignItems: 'center' }}>
+          <span style={{ fontWeight: 700, color: 'var(--text-1)', fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
+            {timeStr}
           </span>
+        </div>
+        <div
+          title={nowData?.current ? 'Editar tarea actual' : currentTaskLabel}
+          onClick={() => nowData?.current && setEditTask(nowData.current)}
+          style={{
+            fontSize: 11,
+            color: 'var(--text-2)',
+            marginTop: 4,
+            lineHeight: 1.4,
+            display: 'flex',
+            flexWrap: 'nowrap',
+            gap: '0 8px',
+            alignItems: 'center',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            cursor: nowData?.current ? 'pointer' : 'default',
+          }}
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentTaskLabel}</span>
+          {nextLabel && (
+            <span title={nextTitle} style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-3)', flexShrink: 0 }}>
+              ⏭ {nextLabel}
+            </span>
+          )}
+        </div>
+        {freeH !== null && (
+          <div
+            title={gapHours.length > 0 ? 'Abrir huecos libres de hoy' : 'No hay huecos disponibles'}
+            onClick={() => gapHours.length > 0 && setGapDialogOpen(true)}
+            style={{
+              fontSize: 11,
+              color: 'var(--text-3)',
+              marginTop: 2,
+              cursor: gapHours.length > 0 ? 'pointer' : 'default',
+            }}
+          >
+            Huecos disponibles: {freeH.toFixed(1)}h
+          </div>
         )}
       </div>
-      {freeH !== null && (
-        <div title="Tiempo libre hoy (9:00–20:00)" style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-          Huecos disponible: {freeH.toFixed(1)}h
-        </div>
+      {editTask && (
+        <TaskModal
+          initial={editTask}
+          onClose={() => setEditTask(null)}
+          onSave={() => {
+            setEditTask(null);
+            reloadSidebarData();
+          }}
+          onDeleted={() => {
+            setEditTask(null);
+            reloadSidebarData();
+          }}
+        />
       )}
-    </div>
+      {gapDialogOpen && (
+        <GapPickerDialog
+          date={todayStr}
+          gapHours={gapHours}
+          onClose={() => setGapDialogOpen(false)}
+          onCreated={() => {
+            setGapDialogOpen(false);
+            reloadSidebarData();
+          }}
+        />
+      )}
+    </>
   );
 }
 
