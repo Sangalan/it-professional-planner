@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtShortDate } from '../utils/dateUtils.js';
-import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'Pendiente' },
@@ -43,7 +45,8 @@ function CategorySelector({ selected, onChange }) {
   );
 }
 
-function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
+export function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
+  useEscapeClose(onClose);
   const isNew = !event;
   const initCatIds = parseCatIds(event?.category_ids, event?.category_id);
   const [form, setForm] = useState({
@@ -225,6 +228,8 @@ function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
 }
 
 export default function EventsView() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [events, setEvents] = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -240,6 +245,14 @@ export default function EventsView() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const intent = location.state;
+    if (!intent?.fromSearch || intent.itemKind !== 'event') return;
+    const target = events.find(e => String(e.id) === String(intent.itemId));
+    if (!target) return;
+    setSelected(target);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate, events]);
 
   const usedCatIds = [...new Set(events.flatMap(e => parseCatIds(e.category_ids, e.category_id)))];
   const normalizedSearch = searchTitle.trim().toLowerCase();
@@ -306,7 +319,7 @@ export default function EventsView() {
           </div>
           {catIds.length > 0 && (
             <div className="task-meta" style={{ marginTop: 3 }}>
-              {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+              <CategoryBadges ids={catIds} />
             </div>
           )}
           {pct > 0 && (

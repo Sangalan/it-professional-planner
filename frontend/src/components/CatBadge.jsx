@@ -5,7 +5,11 @@ const CategoriesContext = createContext([]);
 
 export function CategoriesProvider({ children }) {
   const [cats, setCats] = useState([]);
-  useEffect(() => { api.categories().then(setCats); }, []);
+  useEffect(() => {
+    api.categories().then((data) => {
+      setCats([...data].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es')));
+    });
+  }, []);
   return <CategoriesContext.Provider value={cats}>{children}</CategoriesContext.Provider>;
 }
 
@@ -62,16 +66,30 @@ export function CategoryOption({ cat, active, onClick }) {
 
 export function CategorySelector({ selected, onChange }) {
   const cats = useCats();
+  const sortedCats = [...cats].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'));
   function toggle(id) {
     onChange(selected.includes(id) ? selected.filter(c => c !== id) : [...selected, id]);
   }
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {cats.map(cat => {
+      {sortedCats.map(cat => {
         const active = selected.includes(cat.id);
         return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
       })}
     </div>
+  );
+}
+
+export function CategoryBadges({ ids = [], keyPrefix = '' }) {
+  const cats = useCats();
+  const nameById = Object.fromEntries(cats.map(c => [c.id, c.name || c.id]));
+  const sortedIds = [...new Set(ids || [])].sort((a, b) =>
+    String(nameById[a] || a).localeCompare(String(nameById[b] || b), 'es')
+  );
+  return (
+    <>
+      {sortedIds.map(cid => <CatBadge key={`${keyPrefix}${cid}`} id={cid} />)}
+    </>
   );
 }
 

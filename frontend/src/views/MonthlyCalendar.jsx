@@ -3,17 +3,60 @@ import { api } from '../api.js';
 import {
   getDaysInMonthGrid, fmtMonthYear, toDateStr,
   isToday, isSameMonth, addMonths, subMonths,
-  parseISO, getGapHours
+  parseISO, getGapHours, timeToMinutes
 } from '../utils/dateUtils.js';
 import { getCatColor } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
 import CatBadge from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const DOW = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+const WORK_START = 9 * 60;  // 09:00 in minutes
+const WORK_END   = 20 * 60; // 20:00 in minutes
+const WORK_WINDOW = (WORK_END - WORK_START) / 60; // 11h
+
+function computeWindowStats(tasks, dayCount = 1) {
+  const intervals = tasks
+    .filter(t => t.start_time && t.end_time)
+    .map(t => [
+      Math.max(timeToMinutes(t.start_time), WORK_START),
+      Math.min(timeToMinutes(t.end_time),   WORK_END),
+      t.date,
+    ])
+    .filter(([s, e]) => s < e)
+    .sort((a, b) => {
+      if ((a[2] || '') !== (b[2] || '')) return (a[2] || '').localeCompare(b[2] || '');
+      return a[0] - b[0];
+    });
+
+  let covered = 0;
+  let cursor = null;
+  let cursorDate = null;
+  for (const [s, e, date] of intervals) {
+    if (cursorDate !== date) {
+      cursorDate = date;
+      cursor = WORK_START;
+    }
+    if (s > cursor) cursor = s;
+    covered += Math.max(0, e - cursor);
+    cursor = Math.max(cursor, e);
+  }
+  const scheduledH = covered / 60;
+  const freeH = Math.max(0, dayCount * WORK_WINDOW - scheduledH);
+  return { scheduledH, freeH };
+}
+
+function sortTasksByStartTime(a, b) {
+  const aStart = a.start_time || '99:99';
+  const bStart = b.start_time || '99:99';
+  if (aStart !== bStart) return aStart.localeCompare(bStart);
+  return (a.title || '').localeCompare(b.title || '');
+}
 
 function DayDetail({ dateStr, tasks, events, getTaskColor, getMilestoneLabel, onClose, onRefresh }) {
+  useEscapeClose(onClose);
   const [localTasks, setLocalTasks] = useState(tasks);
   const [editTask, setEditTask] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -83,7 +126,7 @@ function DayDetail({ dateStr, tasks, events, getTaskColor, getMilestoneLabel, on
         {localTasks.length > 0 ? (
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: 6 }}>Tareas</div>
-            {localTasks.sort((a,b) => (a.start_time||'').localeCompare(b.start_time||'')).map(task => (
+            {[...localTasks].sort(sortTasksByStartTime).map(task => (
               <div key={task.id} style={{
                 display: 'flex', gap: 10, padding: '8px 0',
                 borderBottom: '1px solid var(--border)', alignItems: 'flex-start'
@@ -179,22 +222,49 @@ export default function MonthlyCalendar() {
 
   function getItemsForDay(d) {
     const ds = toDateStr(d);
-    const dayTasks  = tasks.filter(t => t.date === ds && (!filterCat || t.category_id === filterCat));
+    const dayTasks = tasks
+      .filter(t => t.date === ds && (!filterCat || t.category_id === filterCat))
+      .sort(sortTasksByStartTime);
     const dayEvents = events.filter(e => e.start_date <= ds && e.end_date >= ds);
     return { tasks: dayTasks, events: dayEvents };
   }
 
   const selDate = selected ? toDateStr(selected) : null;
   const selItems = selected ? getItemsForDay(selected) : null;
+  const monthTasks = useMemo(
+    () => tasks.filter(t => t.date && isSameMonth(parseISO(t.date), month)),
+    [tasks, month]
+  );
+  const daysInCurrentMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const { scheduledH, freeH } = useMemo(
+    () => computeWindowStats(monthTasks, daysInCurrentMonth),
+    [monthTasks, daysInCurrentMonth]
+  );
 
   return (
     <div>
-      <div className="page-header">
-        <div>
+      <div className="page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr) auto', columnGap: 12, alignItems: 'center' }}>
+        <div style={{ minWidth: 0 }}>
           <div className="page-title" style={{ textTransform: 'capitalize' }}>{fmtMonthYear(month)}</div>
           <div className="page-subtitle">Calendario mensual</div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+            <span style={{
+              fontSize: 12, padding: '3px 10px', borderRadius: 99,
+              background: '#dbeafe', color: '#1d4ed8', fontWeight: 600,
+            }}>
+              🕐 {scheduledH % 1 === 0 ? scheduledH : scheduledH.toFixed(1)}h programadas
+            </span>
+            <span style={{
+              fontSize: 12, padding: '3px 10px', borderRadius: 99,
+              background: freeH === 0 ? '#dcfce7' : '#fef9c3',
+              color:      freeH === 0 ? '#15803d'  : '#92400e',
+              fontWeight: 600,
+            }}>
+              ☀ {freeH % 1 === 0 ? freeH : freeH.toFixed(1)}h libres (9–20h)
+            </span>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 6, marginRight: 4 }}>
             <button
               className={`btn btn-sm ${calendarView === 'current' ? 'btn-primary' : 'btn-ghost'}`}
@@ -265,6 +335,25 @@ export default function MonthlyCalendar() {
                   ].filter(Boolean).join(' ')}
                   onClick={() => setSelected(d)}
                 >
+                  <div
+                    onClick={dayGapHours.length > 0 ? (e => { e.stopPropagation(); setGapDialog({ date: ds, gapHours: dayGapHours }); }) : undefined}
+                    title={dayGapHours.length > 0
+                      ? `${dayGapHours.length} hueco${dayGapHours.length > 1 ? 's' : ''} libre${dayGapHours.length > 1 ? 's' : ''} (9–20h)`
+                      : undefined}
+                    style={{
+                      fontSize: 9,
+                      padding: '1px 4px',
+                      borderRadius: 3,
+                      background: dayGapHours.length > 0 ? 'rgb(255 252 230)' : 'rgb(252 252 252)',
+                      color: '#92400e',
+                      fontWeight: 700,
+                      cursor: dayGapHours.length > 0 ? 'pointer' : 'default',
+                      marginBottom: 3,
+                      textAlign: 'center',
+                      minHeight: 14,
+                    }}>
+                    {dayGapHours.length > 0 ? `⚠ ${dayGapHours.length}h libres` : ''}
+                  </div>
                   <div className="cal-day">{d.getDate()}</div>
                   <div className="cal-items">
                     {allItems.map((item, i) => {
@@ -291,32 +380,10 @@ export default function MonthlyCalendar() {
                         +{dt.length + de.length - 4} más
                       </div>
                     )}
-                    {dayGapHours.length > 0 && (
-                      <div
-                        onClick={e => { e.stopPropagation(); setGapDialog({ date: ds, gapHours: dayGapHours }); }}
-                        title={`${dayGapHours.length} hueco${dayGapHours.length > 1 ? 's' : ''} libre${dayGapHours.length > 1 ? 's' : ''} (9–20h)`}
-                        style={{
-                          fontSize: 9, padding: '1px 4px', borderRadius: 3,
-                          background: '#fef08a', color: '#92400e',
-                          fontWeight: 600, cursor: 'pointer', marginTop: 1,
-                        }}>
-                        ⚠ {dayGapHours.length}h
-                      </div>
-                    )}
                   </div>
                 </div>
               );
             })}
-          </div>
-
-          {/* Legend */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12, fontSize: 11 }}>
-            {cats.map(c => (
-              <span key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-3)' }}>
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: c.color, display: 'inline-block' }} />
-                {c.name}
-              </span>
-            ))}
           </div>
 
           {/* Day detail modal */}

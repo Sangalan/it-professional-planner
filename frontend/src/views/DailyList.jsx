@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { toDateStr, fmtDate, formatDuration, getGapHours, timeToMinutes } from '../utils/dateUtils.js';
 import { getCatColor } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
-import CatBadge from '../components/CatBadge.jsx';
+import { CategoryBadges } from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
@@ -443,7 +443,11 @@ export default function DailyList() {
                       {/* Category badges */}
                       {showCats && catIds.length > 0 && (
                         <div style={{ display: 'flex', gap: 3, marginTop: 3, flexWrap: 'wrap' }}>
-                          {catIds.map(cid => {
+                          {[...catIds].sort((a, b) => {
+                            const aName = cats.find(c => c.id === a)?.name || a;
+                            const bName = cats.find(c => c.id === b)?.name || b;
+                            return String(aName).localeCompare(String(bName), 'es');
+                          }).map(cid => {
                             const cat = cats.find(c => c.id === cid);
                             return cat ? (
                               <span key={cid} style={{
@@ -510,7 +514,7 @@ function UntimeRow({ task, color, onToggle, onEdit }) {
           {task.duration_estimated > 0 && (
             <span className="task-time">({formatDuration(task.duration_estimated)})</span>
           )}
-          {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+          <CategoryBadges ids={catIds} keyPrefix={`${task.id}-`} />
           {task.priority === 1 && (
             <span className="badge" style={{ background: '#fef9c3', color: '#92400e' }}>Alta</span>
           )}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import { api } from './api.js';
 import { toDateStr, timeToMinutes, formatCountdown, secondsUntilTime } from './utils/dateUtils.js';
@@ -43,10 +43,42 @@ function computeFreeHours(tasks) {
   return Math.max(0, (workEnd - workStart - covered) / 60);
 }
 
+function playBeep(frequency = 880, duration = 0.6, type = 'sine') {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = type;
+    osc.frequency.setValueAtTime(frequency, ctx.currentTime);
+    gain.gain.setValueAtTime(0.4, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + duration);
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.type = type;
+    osc2.frequency.setValueAtTime(frequency * 1.2, ctx.currentTime + 0.2);
+    gain2.gain.setValueAtTime(0.4, ctx.currentTime + 0.2);
+    gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+    osc2.start(ctx.currentTime + 0.2);
+    osc2.stop(ctx.currentTime + 0.8);
+  } catch (_) {
+    // best effort: audio may be unavailable in some environments
+  }
+}
+
 function SidebarStatus() {
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const [nowData,   setNowData]  = useState(null);
   const [freeH,     setFreeH]    = useState(null);
+  const startedTaskIdsRef = useRef(new Set());
+  const endedTaskIdsRef = useRef(new Set());
+  const lastKnownCurrentRef = useRef(null);
+  const lastCurrentIdRef = useRef(null);
 
   // 1-second tick for clock + countdown
   useEffect(() => {
@@ -63,9 +95,70 @@ function SidebarStatus() {
         .catch(() => {});
     }
     load();
-    const iv = setInterval(load, 60000);
+    const iv = setInterval(load, 30000);
     return () => clearInterval(iv);
   }, []);
+
+  // Global sound alerts: start + end of tasks from any page.
+  useEffect(() => {
+    if (!nowData) return;
+    const current = nowData?.current || null;
+    const upcoming = nowData?.upcoming || null;
+    const previousCurrent = lastKnownCurrentRef.current;
+
+    if (current) {
+      // If we switched from one current task to another, emit "end" for previous if due.
+      if (
+        previousCurrent &&
+        previousCurrent.id !== current.id &&
+        secondsUntilTime(previousCurrent.end_time) <= 0 &&
+        !endedTaskIdsRef.current.has(previousCurrent.id)
+      ) {
+        endedTaskIdsRef.current.add(previousCurrent.id);
+        playBeep();
+      }
+
+      // Start alert when a task becomes current.
+      if (lastCurrentIdRef.current !== current.id && !startedTaskIdsRef.current.has(current.id)) {
+        startedTaskIdsRef.current.add(current.id);
+        playBeep();
+      }
+      lastCurrentIdRef.current = current.id;
+      lastKnownCurrentRef.current = current;
+
+      // End alert when current task reaches its end time.
+      const secondsLeft = secondsUntilTime(current.end_time);
+      if (secondsLeft <= 0 && !endedTaskIdsRef.current.has(current.id)) {
+        endedTaskIdsRef.current.add(current.id);
+        playBeep();
+        api.tasksNow().then(setNowData).catch(() => {});
+      }
+      return;
+    }
+
+    lastCurrentIdRef.current = null;
+
+    // If polling switched current->none, still emit end alert if due.
+    if (
+      previousCurrent &&
+      secondsUntilTime(previousCurrent.end_time) <= 0 &&
+      !endedTaskIdsRef.current.has(previousCurrent.id)
+    ) {
+      endedTaskIdsRef.current.add(previousCurrent.id);
+      playBeep();
+    }
+
+    // If there is an upcoming task and its start time is reached, emit start alert.
+    if (
+      upcoming &&
+      secondsUntilTime(upcoming.start_time) <= 0 &&
+      !startedTaskIdsRef.current.has(upcoming.id)
+    ) {
+      startedTaskIdsRef.current.add(upcoming.id);
+      playBeep();
+      api.tasksNow().then(setNowData).catch(() => {});
+    }
+  }, [nowData, tick]);
 
   const timeStr = new Date().toTimeString().slice(0, 5);
 
@@ -84,20 +177,27 @@ function SidebarStatus() {
     }
   }
 
+  const currentTaskLabel = nowData?.current?.title?.trim() || 'Tiempo libre';
+
   return (
-    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 5, display: 'flex', flexWrap: 'wrap', gap: '0 10px', alignItems: 'center' }}>
-      <span style={{ fontWeight: 700, color: 'var(--text-1)', fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
-        {timeStr}
-      </span>
-      {nextLabel && (
-        <span title={nextTitle} style={{ fontVariantNumeric: 'tabular-nums' }}>
-          ⏭ {nextLabel}
+    <div style={{ marginTop: 5 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', flexWrap: 'wrap', gap: '0 10px', alignItems: 'center' }}>
+        <span style={{ fontWeight: 700, color: 'var(--text-1)', fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
+          {timeStr}
         </span>
-      )}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4, lineHeight: 1.4, display: 'flex', flexWrap: 'nowrap', gap: '0 8px', alignItems: 'center', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentTaskLabel}</span>
+        {nextLabel && (
+          <span title={nextTitle} style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-3)', flexShrink: 0 }}>
+            ⏭ {nextLabel}
+          </span>
+        )}
+      </div>
       {freeH !== null && (
-        <span title="Tiempo libre hoy (9:00–20:00)">
-          {freeH.toFixed(1)}h libres
-        </span>
+        <div title="Tiempo libre hoy (9:00–20:00)" style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+          Huecos disponible: {freeH.toFixed(1)}h
+        </div>
       )}
     </div>
   );

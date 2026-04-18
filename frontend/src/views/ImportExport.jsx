@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { api } from '../api.js';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const TABLE_LABELS = {
   categories:     'Categorías',
@@ -26,6 +27,7 @@ export default function ImportExport() {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);     // { stats, strategy } after import
   const [error, setError] = useState('');
+  useEscapeClose(() => { if (!importing) setPending(null); }, Boolean(pending));
 
   async function handleFileChange(e) {
     const file = e.target.files?.[0];

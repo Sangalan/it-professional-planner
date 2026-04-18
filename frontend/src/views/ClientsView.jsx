@@ -2,10 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate, fmtShortDate } from '../utils/dateUtils.js';
 import { statusLabel } from '../utils/categoryUtils.js';
-import CatBadge, { CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
+import CatBadge, { CategoryBadges, CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW  = { marginBottom: 14 };
@@ -22,8 +23,21 @@ const PROJECT_STATUS_OPTS = [
   { value: 'in_progress', label: 'En desarrollo' },
   { value: 'completed', label: 'Publicado ✓' },
 ];
+const PROJECT_TYPE_OPTS = [
+  { value: 'client', label: 'Cliente' },
+  { value: 'sangalan', label: 'Sangalan' },
+  { value: 'personal', label: 'Personal' },
+];
 
 const STATUS_ICONS = { not_started: '⚪', in_progress: '🔵', completed: '✅', blocked: '🔴' };
+const MILESTONE_KIND_OPTS = [
+  { value: 'classic', label: '🏁 Hito clásico' },
+  { value: 'publication', label: '✍️ Publicación' },
+  { value: 'certification', label: '🏆 Certificación' },
+  { value: 'repo', label: '📦 Proyecto' },
+  { value: 'pr', label: '🔀 Pull Request' },
+  { value: 'event', label: '🎪 Evento' },
+];
 
 function fmtMoney(n) {
   if (!n) return '$0';
@@ -38,6 +52,7 @@ function daysLeft(dateStr) {
 
 // ── Dialog base ──────────────────────────────────────────────────────────────
 function Dialog({ title, onClose, children }) {
+  useEscapeClose(onClose);
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
@@ -65,6 +80,24 @@ function parseCatIds(raw, fallback) {
     try { const p = JSON.parse(raw); if (Array.isArray(p)) return p; } catch (_) {}
   }
   return fallback ? [fallback] : [];
+}
+
+function MilestoneTypeDialog({ onClose, onPick }) {
+  const [kind, setKind] = useState('classic');
+  return (
+    <Dialog title="Tipo de hito" onClose={onClose}>
+      <div style={fieldW}>
+        <label style={labelSt}>Selecciona el tipo</label>
+        <select value={kind} onChange={e => setKind(e.target.value)} style={{ width: '100%' }}>
+          {MILESTONE_KIND_OPTS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+        </select>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn btn-primary" onClick={() => onPick(kind)}>Continuar</button>
+      </div>
+    </Dialog>
+  );
 }
 
 // ── Client dialog (create/edit) — idéntico a ObjectiveDialog con Es cliente fijo
@@ -277,16 +310,19 @@ function MilestoneDialog({ milestone, clientId, onClose, onSaved }) {
 }
 
 // ── Project dialog (create) for clients ─────────────────────────────────────
-function ProjectDialog({ clientId, onClose, onSaved }) {
+function ProjectDialog({ clientId, project, onClose, onSaved }) {
+  const isNew = !project;
   const [form, setForm] = useState({
-    title: '',
-    target_date: '',
-    status: 'not_started',
-    url: '',
-    notes: '',
+    title: project?.title || '',
+    target_date: project?.target_date || '',
+    type: project?.type || 'client',
+    status: project?.status || 'not_started',
+    url: project?.url || '',
+    notes: project?.notes || '',
   });
-  const [catIds, setCatIds] = useState([]);
+  const [catIds, setCatIds] = useState(parseCatIds(project?.category_ids, project?.category_id));
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
 
   function set(f, v) { setForm(p => ({ ...p, [f]: v })); }
@@ -296,13 +332,23 @@ function ProjectDialog({ clientId, onClose, onSaved }) {
     setSaving(true);
     setError('');
     try {
-      await api.createRepo({
-        ...form,
-        objective_id: clientId,
-        url: form.url || null,
-        category_ids: catIds,
-        category_id: catIds[0] || null,
-      });
+      if (isNew) {
+        await api.createRepo({
+          ...form,
+          objective_id: clientId,
+          url: form.url || null,
+          category_ids: catIds,
+          category_id: catIds[0] || null,
+        });
+      } else {
+        await api.updateRepo(project.id, {
+          ...form,
+          objective_id: clientId,
+          url: form.url || null,
+          category_ids: catIds,
+          category_id: catIds[0] || null,
+        });
+      }
       onSaved();
       onClose();
     } catch (e) {
@@ -312,13 +358,30 @@ function ProjectDialog({ clientId, onClose, onSaved }) {
     }
   }
 
+  async function del() {
+    if (!project) return;
+    if (!window.confirm(`¿Eliminar proyecto "${project.title}"?`)) return;
+    setDeleting(true);
+    const r = await api.deleteRepo(project.id);
+    setDeleting(false);
+    if (r.error) { setError(r.error); return; }
+    onSaved();
+    onClose();
+  }
+
   return (
-    <Dialog title="Nuevo proyecto" onClose={onClose}>
+    <Dialog title={isNew ? 'Nuevo proyecto' : `Editar — ${project.title}`} onClose={onClose}>
       <div style={fieldW}>
         <label style={labelSt}>Título *</label>
         <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} autoFocus />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Tipo</label>
+          <select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}>
+            {PROJECT_TYPE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
         <div>
           <label style={labelSt}>Fecha objetivo</label>
           <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
@@ -354,23 +417,148 @@ function ProjectDialog({ clientId, onClose, onSaved }) {
         />
       </div>
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving || !form.title.trim()}>
-          {saving ? 'Guardando…' : 'Crear proyecto'}
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        {!isNew ? (
+          <button className="btn btn-ghost" onClick={del} disabled={deleting} style={{ color: '#dc2626', borderColor: '#dc2626' }}>
+            {deleting ? 'Eliminando…' : 'Eliminar'}
+          </button>
+        ) : <span />}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving || !form.title.trim()}>
+            {saving ? 'Guardando…' : isNew ? 'Crear proyecto' : 'Guardar'}
+          </button>
+        </div>
       </div>
     </Dialog>
   );
 }
 
-// ── Milestone row — expandable tasks, drag-drop, billed_amount ───────────────
-function ClientMilestoneRow({ m, clientId, clientColor, onReload, newTaskFor, setNewTaskFor, version }) {
+function CreatePublicationDialog({ objectiveId, onClose, onSaved }) {
+  const [form, setForm] = useState({ title: '', date: '', type: 'post', status: 'pending', notes: '', publication_text: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try { await api.createPublication({ ...form, objective_id: objectiveId }); onSaved(); onClose(); }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title="Nueva publicación" onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Fecha</label><SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}><option value="post">Post</option><option value="video">Vídeo</option><option value="article">Artículo</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="failed">Fallida</option><option value="cancelled">Cancelada</option></select></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      <div style={fieldW}><label style={labelSt}>Texto de la publicación</label><textarea value={form.publication_text} onChange={e => set('publication_text', e.target.value)} rows={4} style={{ width: '100%', resize: 'vertical' }} /></div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : 'Crear'}</button></div>
+    </Dialog>
+  );
+}
+
+function CreateCertificationDialog({ objectiveId, onClose, onSaved }) {
+  const [form, setForm] = useState({ title: '', target_date: '', status: 'not_started', notes: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try { await api.createCertification({ ...form, objective_id: objectiveId }); onSaved(); onClose(); }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title="Nueva certificación" onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Fecha objetivo</label><SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completada</option><option value="blocked">Bloqueada</option></select></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : 'Crear'}</button></div>
+    </Dialog>
+  );
+}
+
+function CreatePRDialog({ objectiveId, onClose, onSaved }) {
+  const [form, setForm] = useState({ title: '', start_date: '', end_date: '', status: 'not_started', notes: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try { await api.createPR({ ...form, objective_id: objectiveId }); onSaved(); onClose(); }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title="Nuevo Pull Request" onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Inicio</label><SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Fin</label><SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="review">En review</option><option value="merged">Merged</option><option value="closed">Cerrado</option></select></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : 'Crear'}</button></div>
+    </Dialog>
+  );
+}
+
+function CreateEventDialog({ objectiveId, onClose, onSaved }) {
+  const [form, setForm] = useState({ title: '', start_date: '', end_date: '', status: 'not_started', format: 'online', location: '', estimated_cost: '', notes: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    if (form.start_date && form.end_date && form.end_date < form.start_date) { setError('Fecha de fin no puede ser anterior a inicio'); return; }
+    setSaving(true); setError('');
+    try {
+      await api.createEvent({
+        ...form,
+        objective_id: objectiveId,
+        estimated_cost: form.estimated_cost ? Number(form.estimated_cost) : 0,
+      });
+      onSaved(); onClose();
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title="Nuevo evento" onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Inicio</label><SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Fin</label><SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="cancelled">Cancelado</option></select></div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Formato</label><select value={form.format} onChange={e => set('format', e.target.value)} style={{ width: '100%' }}><option value="online">Online</option><option value="presencial">Presencial</option><option value="hibrido">Híbrido</option></select></div>
+        <div><label style={labelSt}>Lugar</label><input type="text" value={form.location} onChange={e => set('location', e.target.value)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Coste (€)</label><input type="number" min="0" step="0.01" value={form.estimated_cost} onChange={e => set('estimated_cost', e.target.value)} style={{ width: '100%' }} /></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : 'Crear'}</button></div>
+    </Dialog>
+  );
+}
+
+// ── Client item row (milestone/project) — expandable tasks ──────────────────
+function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onReload, newTaskFor, setNewTaskFor, version }) {
   const [expanded, setExpanded] = useState(false);
   const [tasks,    setTasks]    = useState([]);
-  const [dragOver, setDragOver] = useState(false);
   const [editing,  setEditing]  = useState(false);
+  const [editingProject, setEditingProject] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
 
+  const isMilestone = kind === 'milestone';
   const days = m.days_remaining ?? daysLeft(m.target_date);
   const cls  = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
   const dayLabel = days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d restantes`;
@@ -396,24 +584,33 @@ function ClientMilestoneRow({ m, clientId, clientColor, onReload, newTaskFor, se
     onReload();
   }
 
-  async function handleDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    const taskId = e.dataTransfer.getData('taskId');
-    if (!taskId) return;
-    await api.updateTask(taskId, { milestone_id: m.id });
-    await fetchTasks();
-    onReload();
-  }
-
   return (
     <>
-      {editing && (
+      {editing && isMilestone && (
         <MilestoneDialog
           milestone={m}
           clientId={clientId}
           onClose={() => setEditing(false)}
           onSaved={() => { setEditing(false); onReload(); }}
+        />
+      )}
+      {editingProject && !isMilestone && (
+        <ProjectDialog
+          project={m}
+          clientId={clientId}
+          onClose={() => setEditingProject(false)}
+          onSaved={() => { setEditingProject(false); onReload(); }}
+        />
+      )}
+      {editingTask && (
+        <TaskModal
+          initial={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSave={async () => {
+            setEditingTask(null);
+            await fetchTasks();
+            onReload();
+          }}
         />
       )}
 
@@ -422,11 +619,10 @@ function ClientMilestoneRow({ m, clientId, clientColor, onReload, newTaskFor, se
         <span style={{ fontSize: 13 }}>{STATUS_ICONS[m.status] || '⚪'}</span>
         <div className="milestone-title" style={{ fontSize: 13, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>{m.title}</span>
-            <button
-              onClick={e => { e.stopPropagation(); setEditing(true); }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-3)', padding: '0 4px' }}
-            >✎</button>
+            <span>{isMilestone ? m.title : `📦 ${m.title}`}</span>
+            {!isMilestone && (
+              <span className="badge" style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1' }}>Proyecto</span>
+            )}
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {fmtDate(m.target_date)}{' '}{expanded ? '▲' : '▼'}
@@ -459,38 +655,42 @@ function ClientMilestoneRow({ m, clientId, clientColor, onReload, newTaskFor, se
         <div
           style={{
             marginLeft: 24, marginBottom: 6, paddingLeft: 12,
-            borderLeft: `2px solid ${dragOver ? 'var(--accent)' : 'var(--border)'}`,
-            background: dragOver ? 'var(--accent-bg, #eff6ff)' : 'transparent',
-            borderRadius: dragOver ? 6 : 0,
-            transition: 'background 0.15s, border-color 0.15s',
+            borderLeft: '2px solid var(--border)',
             minHeight: 32,
           }}
           onClick={e => e.stopPropagation()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
-          onDrop={handleDrop}
         >
+          <div style={{ display: 'flex', gap: 8, padding: '0 0 8px', borderBottom: '1px dashed var(--border)', marginBottom: 8 }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={e => { e.stopPropagation(); setNewTaskFor({ id: m.id, objective_id: clientId }); }}
+            >
+              + Tarea
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={e => {
+                e.stopPropagation();
+                if (isMilestone) setEditing(true);
+                else setEditingProject(true);
+              }}
+            >
+              ✎ Editar hito
+            </button>
+          </div>
           {tasks.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 0' }}>
-              Sin tareas para este hito ·{' '}
-              <span
-                style={{ textDecoration: 'underline', cursor: 'pointer', color: 'var(--accent)' }}
-                onClick={e => { e.stopPropagation(); setNewTaskFor({ id: m.id, objective_id: clientId }); }}
-              >
-                Añadir tarea
-              </span>
+              Sin tareas para este {isMilestone ? 'hito' : 'proyecto'}
             </div>
           ) : tasks.map(task => (
             <div
               key={task.id}
-              draggable
-              onDragStart={e => { e.stopPropagation(); e.dataTransfer.setData('taskId', task.id); e.dataTransfer.effectAllowed = 'move'; }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)', cursor: 'grab' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}
             >
               <div className={`task-check ${task.status === 'completed' ? 'checked' : ''}`} onClick={() => toggleTask(task)}>
                 {task.status === 'completed' ? '✓' : ''}
               </div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
                 <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>{task.title}</div>
                 <div className="task-meta">
                   <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>
@@ -510,19 +710,29 @@ function ClientMilestoneRow({ m, clientId, clientColor, onReload, newTaskFor, se
 function ClientCard({ client, onReload }) {
   const [expanded,    setExpanded]    = useState(false);
   const [editing,     setEditing]     = useState(false);
-  const [addMs,       setAddMs]       = useState(false);
-  const [addProject,  setAddProject]  = useState(false);
+  const [choosingMilestoneType, setChoosingMilestoneType] = useState(false);
+  const [creatingKind, setCreatingKind] = useState(null);
   const [newTaskFor,  setNewTaskFor]  = useState(null);
   const [version,     setVersion]     = useState(0);
+  const [projects,    setProjects]    = useState([]);
 
   const color = client.color || '#0ea5e9';
   const pct   = Math.round(client.percentage_completed || 0);
   const days  = client.days_remaining;
 
+  useEffect(() => {
+    if (!expanded) return;
+    api.repos({ objective_id: client.id }).then(setProjects).catch(() => setProjects([]));
+  }, [expanded, client.id, version]);
+
   // Sort milestones: incomplete by date asc, completed last
-  const sortedMs = [...(client.milestones || [])].sort((a, b) => {
-    const aDone = a.status === 'completed' ? 1 : 0;
-    const bDone = b.status === 'completed' ? 1 : 0;
+  const sortedItems = [
+    ...(client.milestones || []).map(m => ({ ...m, _kind: 'milestone' })),
+    ...(projects || []).map(p => ({ ...p, _kind: 'project' })),
+  ].sort((a, b) => {
+    const doneStatuses = ['completed', 'published', 'merged', 'closed', 'failed', 'cancelled'];
+    const aDone = doneStatuses.includes(a.status) ? 1 : 0;
+    const bDone = doneStatuses.includes(b.status) ? 1 : 0;
     if (aDone !== bDone) return aDone - bDone;
     if (!a.target_date && !b.target_date) return 0;
     if (!a.target_date) return 1;
@@ -542,14 +752,69 @@ function ClientCard({ client, onReload }) {
           <ClientDialog client={client} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); onReload(); }} />
         </div>
       )}
-      {addMs && (
+      {choosingMilestoneType && (
         <div onClick={e => e.stopPropagation()}>
-          <MilestoneDialog clientId={client.id} onClose={() => setAddMs(false)} onSaved={() => { setAddMs(false); onReload(); }} />
+          <MilestoneTypeDialog
+            onClose={() => setChoosingMilestoneType(false)}
+            onPick={(kind) => {
+              setChoosingMilestoneType(false);
+              setCreatingKind(kind);
+            }}
+          />
         </div>
       )}
-      {addProject && (
+      {creatingKind === 'classic' && (
         <div onClick={e => e.stopPropagation()}>
-          <ProjectDialog clientId={client.id} onClose={() => setAddProject(false)} onSaved={() => { setAddProject(false); onReload(); }} />
+          <MilestoneDialog clientId={client.id} onClose={() => setCreatingKind(null)} onSaved={() => { setCreatingKind(null); onReload(); }} />
+        </div>
+      )}
+      {creatingKind === 'repo' && (
+        <div onClick={e => e.stopPropagation()}>
+          <ProjectDialog
+            clientId={client.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={() => {
+              setCreatingKind(null);
+              api.repos({ objective_id: client.id }).then(setProjects).catch(() => setProjects([]));
+              onReload();
+            }}
+          />
+        </div>
+      )}
+      {creatingKind === 'publication' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreatePublicationDialog
+            objectiveId={client.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={() => { setCreatingKind(null); onReload(); }}
+          />
+        </div>
+      )}
+      {creatingKind === 'certification' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreateCertificationDialog
+            objectiveId={client.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={() => { setCreatingKind(null); onReload(); }}
+          />
+        </div>
+      )}
+      {creatingKind === 'pr' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreatePRDialog
+            objectiveId={client.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={() => { setCreatingKind(null); onReload(); }}
+          />
+        </div>
+      )}
+      {creatingKind === 'event' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreateEventDialog
+            objectiveId={client.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={() => { setCreatingKind(null); onReload(); }}
+          />
         </div>
       )}
       {newTaskFor && (
@@ -574,7 +839,7 @@ function ClientCard({ client, onReload }) {
             {client.end_date && <span className="task-time">{client.end_date}</span>}
             <span className="task-time">{client.task_count - client.done_count} tareas restantes</span>
           </div>
-          {(() => { const ids = client.category_ids?.length ? client.category_ids : (client.category_id ? [client.category_id] : []); return ids.length > 0 && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>{ids.map(id => <CatBadge key={id} id={id} />)}</div>; })()}
+          {(() => { const ids = client.category_ids?.length ? client.category_ids : (client.category_id ? [client.category_id] : []); return ids.length > 0 && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><CategoryBadges ids={ids} keyPrefix={`${client.id}-`} /></div>; })()}
         </div>
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
           <div className="obj-pct" style={{ color }}>{pct}%</div>
@@ -597,12 +862,23 @@ function ClientCard({ client, onReload }) {
       {/* Expanded: milestones */}
       {expanded && (
         <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
-          {sortedMs.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 12px' }}>Sin hitos</div>
-          ) : sortedMs.map(m => (
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: 8, padding: '0 12px 8px', borderBottom: '1px dashed var(--border)', marginBottom: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setChoosingMilestoneType(true); }}>
+              + Hito
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditing(true); }}>
+              ✎ Editar cliente
+            </button>
+          </div>
+
+          {sortedItems.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 12px' }}>Sin hitos ni proyectos</div>
+          ) : sortedItems.map(m => (
             <ClientMilestoneRow
-              key={m.id}
+              key={`${m._kind}-${m.id}`}
               m={m}
+              kind={m._kind}
               clientId={client.id}
               clientColor={color}
               onReload={() => { handleTaskMoved(); }}
@@ -611,19 +887,6 @@ function ClientCard({ client, onReload }) {
               version={version}
             />
           ))}
-
-          {/* Actions */}
-          <div style={{ display: 'flex', gap: 8, padding: '10px 12px 4px', borderTop: '1px dashed var(--border)', marginTop: 8 }}>
-            <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setAddMs(true); }}>
-              + Hito
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setAddProject(true); }}>
-              + Proyecto
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditing(true); }}>
-              ✎ Editar cliente
-            </button>
-          </div>
         </div>
       )}
     </div>

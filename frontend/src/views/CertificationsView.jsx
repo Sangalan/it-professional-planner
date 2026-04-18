@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
-import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
+import { buildCertificationStatsMap, formatCertificationStats } from '../utils/certificationMetrics.js';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
@@ -39,7 +42,8 @@ function CategorySelector({ selected, onChange }) {
   );
 }
 
-function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) {
+export function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) {
+  useEscapeClose(onClose);
   const isNew = !cert;
   const initCatIds = parseCatIds(cert?.category_ids, cert?.category_id);
   const [form, setForm] = useState({
@@ -173,8 +177,11 @@ function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) {
 }
 
 export default function CertificationsView() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [certs, setCerts] = useState([]);
   const [objectives, setObjectives] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
   const [filterCats, setFilterCats] = useState([]);
@@ -183,13 +190,29 @@ export default function CertificationsView() {
   const [toDate, setToDate] = useState('');
 
   async function load() {
-    api.certifications().then(setCerts);
-    api.objectives().then(setObjectives);
+    Promise.all([
+      api.certifications(),
+      api.objectives(),
+      api.tasks(),
+    ]).then(([loadedCerts, loadedObjectives, loadedTasks]) => {
+      setCerts(loadedCerts);
+      setObjectives(loadedObjectives);
+      setTasks(loadedTasks);
+    });
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const intent = location.state;
+    if (!intent?.fromSearch || intent.itemKind !== 'certification') return;
+    const target = certs.find(c => String(c.id) === String(intent.itemId));
+    if (!target) return;
+    setSelected(target);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate, certs]);
 
   const usedCatIds = [...new Set(certs.flatMap(c => parseCatIds(c.category_ids, c.category_id)))];
+  const certStatsById = useMemo(() => buildCertificationStatsMap(certs, tasks), [certs, tasks]);
   const normalizedSearch = searchTitle.trim().toLowerCase();
   const dateMatches = (value) => {
     if (!value) return !fromDate && !toDate;
@@ -262,10 +285,14 @@ export default function CertificationsView() {
               const cls = days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok';
               const catIds = parseCatIds(cert.category_ids, cert.category_id);
               const pct = cert.percentage_completed || 0;
+              const statsLabel = formatCertificationStats(certStatsById[cert.id]);
               return (
                 <div key={cert.id} className="task-row" style={{ cursor: 'pointer' }} onClick={() => setSelected(cert)}>
                   <div className="task-info">
-                    <div style={{ fontWeight: 500, fontSize: 13 }}>🏆 {cert.title}</div>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>
+                      🏆 {cert.title}
+                      {statsLabel && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>{statsLabel}</span>}
+                    </div>
                     <div className="task-meta">
                       <span className={`milestone-days ${cls}`}>
                         {days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}
@@ -274,7 +301,7 @@ export default function CertificationsView() {
                     </div>
                     {catIds.length > 0 && (
                       <div className="task-meta" style={{ marginTop: 3 }}>
-                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                        <CategoryBadges ids={catIds} />
                       </div>
                     )}
                     {pct > 0 && (
@@ -311,16 +338,20 @@ export default function CertificationsView() {
             {completedCerts.map(cert => {
               const catIds = parseCatIds(cert.category_ids, cert.category_id);
               const pct = cert.percentage_completed || 0;
+              const statsLabel = formatCertificationStats(certStatsById[cert.id]);
               return (
                 <div key={cert.id} className="task-row" style={{ cursor: 'pointer' }} onClick={() => setSelected(cert)}>
                   <div className="task-info">
-                    <div style={{ fontWeight: 500, fontSize: 13 }}>🏆 {cert.title}</div>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>
+                      🏆 {cert.title}
+                      {statsLabel && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-3)', fontWeight: 500 }}>{statsLabel}</span>}
+                    </div>
                     <div className="task-meta">
                       <span className="task-time">{fmtDate(cert.target_date)}</span>
                     </div>
                     {catIds.length > 0 && (
                       <div className="task-meta" style={{ marginTop: 3 }}>
-                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                        <CategoryBadges ids={catIds} />
                       </div>
                     )}
                     {pct > 0 && (

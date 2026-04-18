@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { CategorySelector } from './CatBadge.jsx';
 import SpanishDateInput from './SpanishDateInput.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 function parseCatIds(raw, fallback) {
   if (Array.isArray(raw) && raw.length) return raw;
@@ -12,20 +13,24 @@ function parseCatIds(raw, fallback) {
 }
 
 export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) {
+  useEscapeClose(onClose);
   const isEdit = !!initial.id;
+  const normalizedFixedDays = (() => {
+    const raw = initial.fixed_days;
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw); } catch (_) {}
+    }
+    return [];
+  })();
   const [form, setForm] = useState({
     title: '', description: '', date: '', start_time: '', end_time: '',
     priority: 2, objective_id: '', milestone_id: '', is_fixed: false,
-    fixed_days: [], fixed_start_date: '', fixed_end_date: '',
+    fixed_start_date: '', fixed_end_date: '',
     notes: '', label: '', status: 'pending',
     ...initial,
     category_ids: parseCatIds(initial.category_ids, initial.category_id),
-    fixed_days: (() => {
-      const raw = initial.fixed_days;
-      if (Array.isArray(raw)) return raw;
-      if (typeof raw === 'string') { try { return JSON.parse(raw); } catch (_) {} }
-      return [];
-    })(),
+    fixed_days: normalizedFixedDays,
   });
   const [objectives, setObjectives] = useState([]);
   const [allMilestones, setAllMilestones] = useState([]);
@@ -42,12 +47,14 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
       api.certifications(),
       api.repos(),
       api.prs(),
-    ]).then(([pubs, certs, repos, prs]) => {
+      api.events(),
+    ]).then(([pubs, certs, repos, prs, events]) => {
       setAllContent([
         ...pubs.map(p  => ({ id: p.id,  title: p.title  + ' ✍️',  objective_id: p.objective_id })),
         ...certs.map(c => ({ id: c.id,  title: c.title  + ' 🏆',  objective_id: c.objective_id })),
         ...repos.map(r => ({ id: r.id,  title: r.title  + ' 📦',  objective_id: r.objective_id })),
         ...prs.map(p   => ({ id: p.id,  title: p.title  + ' 🔀',  objective_id: p.objective_id })),
+        ...events.map(e => ({ id: e.id, title: e.title + ' 🎪', objective_id: e.objective_id })),
       ]);
     });
   }, []);
@@ -56,6 +63,10 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
     ...allMilestones.filter(m => m.objective_id === form.objective_id),
     ...allContent.filter(c => c.objective_id === form.objective_id),
   ];
+  const selectedMilestone = [...allMilestones, ...allContent].find(m => m.id === form.milestone_id);
+  if (selectedMilestone && !milestones.some(m => m.id === selectedMilestone.id)) {
+    milestones.push(selectedMilestone);
+  }
 
   function set(field, value) { setForm(f => ({ ...f, [field]: value })); }
 

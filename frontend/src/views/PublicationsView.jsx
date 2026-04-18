@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
-import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const TYPE_ICONS = { video: '🎬', article: '📝', post: '✍️' };
 const TYPE_LABELS = { video: 'Vídeo', article: 'Artículo', post: 'Post' };
@@ -48,7 +50,8 @@ function CategorySelector({ selected, onChange }) {
   );
 }
 
-function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
+export function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
+  useEscapeClose(onClose);
   const isNew = !pub;
   const initCatIds = parseCatIds(pub?.category_ids, pub?.category_id);
   const [form, setForm] = useState({
@@ -170,6 +173,8 @@ function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
 }
 
 export default function PublicationsView() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [pubs, setPubs] = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -185,6 +190,14 @@ export default function PublicationsView() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const intent = location.state;
+    if (!intent?.fromSearch || intent.itemKind !== 'publication') return;
+    const target = pubs.find(p => String(p.id) === String(intent.itemId));
+    if (!target) return;
+    setSelected(target);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate, pubs]);
 
   const usedCatIds = [...new Set(pubs.flatMap(p => parseCatIds(p.category_ids, p.category_id)))];
   const normalizedSearch = searchTitle.trim().toLowerCase();
@@ -289,7 +302,7 @@ export default function PublicationsView() {
                     </div>
                     {catIds.length > 0 && (
                       <div className="task-meta" style={{ marginTop: 3 }}>
-                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                        <CategoryBadges ids={catIds} />
                       </div>
                     )}
                   </div>
@@ -329,7 +342,7 @@ export default function PublicationsView() {
                     </div>
                     {catIds.length > 0 && (
                       <div className="task-meta" style={{ marginTop: 3 }}>
-                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                        <CategoryBadges ids={catIds} />
                       </div>
                     )}
                   </div>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { api } from '../api.js';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 function fmtHour(h) {
   return `${String(h).padStart(2, '0')}:00–${String(h + 1).padStart(2, '0')}:00`;
@@ -26,7 +27,7 @@ function normalise(items, type, icon, label, getDate, getObjId) {
 }
 
 const GROUPS = [
-  { type: 'milestone',    icon: '🎯', label: 'Hitos' },
+  { type: 'milestone',    icon: '🏁', label: 'Hitos' },
   { type: 'publication',  icon: '✍️',  label: 'Publicaciones' },
   { type: 'certification',icon: '🏆', label: 'Certificaciones' },
   { type: 'repo',         icon: '📦', label: 'Proyectos' },
@@ -41,12 +42,14 @@ const GROUPS = [
 //   onClose    — called on cancel / close
 //   onCreated  — called after task is created successfully
 export default function GapPickerDialog({ date, hour: initialHour, gapHours = [], onClose, onCreated }) {
+  useEscapeClose(onClose);
   const [step, setStep] = useState(initialHour != null ? 'milestone' : 'slot');
   const [selectedHour, setSelectedHour] = useState(initialHour);
   const [allItems, setAllItems] = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [search, setSearch] = useState('');
   const [activeTypes, setActiveTypes] = useState([]); // empty = all
+  const [collapsedGroups, setCollapsedGroups] = useState({});
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -90,6 +93,16 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
       .filter(g => g.items.length > 0);
   }, [filtered]);
 
+  useEffect(() => {
+    setCollapsedGroups(prev => {
+      const next = {};
+      grouped.forEach(group => {
+        next[group.type] = prev[group.type] ?? true;
+      });
+      return next;
+    });
+  }, [grouped]);
+
   function toggleType(type) {
     setActiveTypes(prev =>
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
@@ -99,21 +112,35 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
   async function pick(item) {
     if (creating) return;
     setCreating(true);
-    const startTime = `${String(selectedHour).padStart(2, '0')}:00`;
-    const endTime   = `${String(selectedHour + 1).padStart(2, '0')}:00`;
-    const obj = objMap[item.objective_id];
-    await api.createTask({
-      title: `Tarea ${item.title}`,
-      date,
-      start_time: startTime,
-      end_time: endTime,
-      milestone_id: item.id,
-      objective_id: item.objective_id || (obj?.id ?? null),
-      status: 'pending',
-    });
-    setCreating(false);
-    onCreated();
-    onClose();
+    try {
+      const startTime = `${String(selectedHour).padStart(2, '0')}:00`;
+      const endTime   = `${String(selectedHour + 1).padStart(2, '0')}:00`;
+      const obj = objMap[item.objective_id];
+      const needsCounter = ['repo', 'certification', 'pr', 'event'].includes(item.type);
+      const existing = needsCounter ? await api.tasks({ milestone_id: item.id }) : [];
+      const sequenceNumber = (existing?.length || 0) + 1;
+
+      let taskTitle = `Tarea ${item.title}`;
+      if (item.type === 'publication') taskTitle = `Redactar ${item.title}`;
+      if (item.type === 'certification') taskTitle = `Cert. ${item.title} (día ${sequenceNumber})`;
+      if (item.type === 'pr') taskTitle = `PR ${item.title} (sesión ${sequenceNumber})`;
+      if (item.type === 'event') taskTitle = `${item.title} (día ${sequenceNumber})`;
+      if (item.type === 'repo') taskTitle = `Proyecto ${item.title} (sesión ${sequenceNumber})`;
+
+      await api.createTask({
+        title: taskTitle,
+        date,
+        start_time: startTime,
+        end_time: endTime,
+        milestone_id: item.id,
+        objective_id: item.objective_id || (obj?.id ?? null),
+        status: 'pending',
+      });
+      onCreated();
+      onClose();
+    } finally {
+      setCreating(false);
+    }
   }
 
   const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('es-ES', {
@@ -226,40 +253,59 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
                 </div>
               ) : grouped.map(group => (
                 <div key={group.type}>
-                  <div style={{
-                    fontSize: 11, fontWeight: 700, color: 'var(--text-3)',
-                    textTransform: 'uppercase', letterSpacing: '0.05em',
-                    marginBottom: 6, paddingBottom: 4,
-                    borderBottom: '1px solid var(--border)',
-                  }}>
-                    {group.icon} {group.label}
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {group.items.map(item => {
-                      const obj = objMap[item.objective_id];
-                      return (
-                        <div key={item.id}
-                          onClick={() => pick(item)}
-                          style={{
-                            padding: '8px 12px', borderRadius: 8,
-                            cursor: creating ? 'wait' : 'pointer',
-                            border: '1px solid var(--border)',
-                            background: 'var(--bg)',
-                            opacity: creating ? 0.6 : 1,
-                            transition: 'background 0.1s',
-                          }}
-                          onMouseEnter={e => { if (!creating) e.currentTarget.style.background = 'var(--accent-light)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg)'; }}
-                        >
-                          <div style={{ fontWeight: 600, fontSize: 13 }}>{item.title}</div>
-                          <div style={{ display: 'flex', gap: 8, marginTop: 2, fontSize: 11, color: 'var(--text-3)' }}>
-                            {obj && <span>{obj.title}</span>}
-                            {item.date && <span>· {item.date}</span>}
+                  <button
+                    type="button"
+                    onClick={() => setCollapsedGroups(prev => ({ ...prev, [group.type]: !prev[group.type] }))}
+                    style={{
+                      width: '100%',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '0 0 6px',
+                      marginBottom: collapsedGroups[group.type] ? 0 : 6,
+                      textAlign: 'left',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: 'var(--text-3)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid var(--border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <span>{collapsedGroups[group.type] ? '▸' : '▾'} {group.icon} {group.label}</span>
+                    <span>{group.items.length}</span>
+                  </button>
+                  {!collapsedGroups[group.type] && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {group.items.map(item => {
+                        const obj = objMap[item.objective_id];
+                        return (
+                          <div key={item.id}
+                            onClick={() => pick(item)}
+                            style={{
+                              padding: '8px 12px', borderRadius: 8,
+                              cursor: creating ? 'wait' : 'pointer',
+                              border: '1px solid var(--border)',
+                              background: 'var(--bg)',
+                              opacity: creating ? 0.6 : 1,
+                              transition: 'background 0.1s',
+                            }}
+                            onMouseEnter={e => { if (!creating) e.currentTarget.style.background = 'var(--accent-light)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg)'; }}
+                          >
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{item.title}</div>
+                            <div style={{ display: 'flex', gap: 8, marginTop: 2, fontSize: 11, color: 'var(--text-3)' }}>
+                              {obj && <span>{obj.title}</span>}
+                              {item.date && <span>· {item.date}</span>}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

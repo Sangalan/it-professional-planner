@@ -2,8 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate, fmtShortDate } from '../utils/dateUtils.js';
 import { statusLabel } from '../utils/categoryUtils.js';
-import CatBadge from '../components/CatBadge.jsx';
+import CatBadge, { CategoryBadges, CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
+import SpanishDateInput from '../components/SpanishDateInput.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
+import { buildCertificationStatsMap, formatCertificationStats } from '../utils/certificationMetrics.js';
+import { DetailDialog as PublicationDetailDialog } from './PublicationsView.jsx';
+import { DetailDialog as CertificationDetailDialog } from './CertificationsView.jsx';
+import { DetailDialog as RepoDetailDialog } from './ReposView.jsx';
+import { DetailDialog as PRDetailDialog } from './PRsView.jsx';
+import { DetailDialog as EventDetailDialog } from './EventsView.jsx';
 
 const STATUS_ICONS = {
   not_started: '⚪',
@@ -12,11 +20,426 @@ const STATUS_ICONS = {
   blocked:     '🔴',
 };
 
+const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
+const fieldW = { marginBottom: 14 };
+
+function parseCatIds(raw, fallback) {
+  if (Array.isArray(raw) && raw.length) return raw;
+  if (typeof raw === 'string' && raw.startsWith('[')) {
+    try { const p = JSON.parse(raw); if (Array.isArray(p)) return p; } catch (_) {}
+  }
+  return fallback ? [fallback] : [];
+}
+
+function Dialog({ title, onClose, children }) {
+  useEscapeClose(onClose);
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 300, padding: 20,
+    }}>
+      <div style={{
+        background: 'var(--surface)', borderRadius: 12, padding: 28,
+        maxWidth: 520, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+        boxShadow: 'var(--shadow-md)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700 }}>{title}</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-3)' }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ObjectiveDialog({ obj, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    title: obj?.title || '',
+    description: obj?.description || '',
+    category_ids: parseCatIds(obj?.category_ids, obj?.category_id),
+    start_date: obj?.start_date || '',
+    end_date: obj?.end_date || '',
+    target_value: obj?.target_value || '',
+    priority: obj?.priority ?? 2,
+    status: obj?.status || 'not_started',
+    notes: obj?.notes || '',
+    color: obj?.color || '',
+    type: obj?.type || 'objective',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await api.updateObjective(obj.id, {
+        ...form,
+        priority: Number(form.priority),
+        category_ids: form.category_ids,
+        category_id: form.category_ids[0] || null,
+        color: form.color || null,
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog title={`Editar — ${obj.title}`} onClose={onClose}>
+      <div style={fieldW}>
+        <label style={labelSt}>Título *</label>
+        <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Categorías</label>
+        <CategorySelector selected={form.category_ids} onChange={ids => set('category_ids', ids)} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Inicio</label>
+          <SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Fin</label>
+          <SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Prioridad</label>
+          <select value={form.priority} onChange={e => set('priority', e.target.value)} style={{ width: '100%' }}>
+            <option value={1}>Alta ★</option>
+            <option value={2}>Normal</option>
+            <option value={3}>Baja</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelSt}>Estado</label>
+          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+            <option value="not_started">No iniciado</option>
+            <option value="in_progress">En curso</option>
+            <option value="completed">Completado</option>
+            <option value="blocked">Bloqueado</option>
+          </select>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Meta</label>
+          <input type="text" value={form.target_value} onChange={e => set('target_value', e.target.value)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Notas</label>
+          <input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} />
+        </div>
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Color de la barra de progreso</label>
+        <ColorPicker value={form.color || '#2563eb'} onChange={v => set('color', v)} />
+      </div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? 'Guardando…' : 'Guardar'}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+const MILESTONE_KIND_OPTS = [
+  { value: 'classic', label: '🏁 Hito clásico' },
+  { value: 'publication', label: '✍️ Publicación' },
+  { value: 'certification', label: '🏆 Certificación' },
+  { value: 'repo', label: '📦 Proyecto' },
+  { value: 'pr', label: '🔀 Pull Request' },
+  { value: 'event', label: '🎪 Evento' },
+];
+
+function MilestoneTypeDialog({ onClose, onPick }) {
+  const [kind, setKind] = useState('classic');
+  return (
+    <Dialog title="Tipo de hito" onClose={onClose}>
+      <div style={fieldW}>
+        <label style={labelSt}>Selecciona el tipo</label>
+        <select value={kind} onChange={e => setKind(e.target.value)} style={{ width: '100%' }}>
+          {MILESTONE_KIND_OPTS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+        </select>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn btn-primary" onClick={() => onPick(kind)}>Continuar</button>
+      </div>
+    </Dialog>
+  );
+}
+
+function CreateClassicMilestoneDialog({ objectiveId, onClose, onSaved }) {
+  const [form, setForm] = useState({ title: '', description: '', target_date: '', status: 'not_started' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try {
+      await api.createMilestone({ ...form, objective_id: objectiveId });
+      onSaved(); onClose();
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title="Nuevo hito" onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Fecha objetivo</label><SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} /></div>
+        <div>
+          <label style={labelSt}>Estado</label>
+          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+            <option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="blocked">Bloqueado</option>
+          </select>
+        </div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Descripción</label><input type="text" value={form.description} onChange={e => set('description', e.target.value)} style={{ width: '100%' }} /></div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : 'Crear'}</button></div>
+    </Dialog>
+  );
+}
+
+function CreatePublicationDialog({ objectiveId, item, onClose, onSaved }) {
+  const isNew = !item;
+  const [form, setForm] = useState({
+    title: item?.title || '',
+    date: item?.date || '',
+    type: item?.type || 'post',
+    status: item?.status || 'pending',
+    notes: item?.notes || '',
+    publication_text: item?.publication_text || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try {
+      if (isNew) await api.createPublication({ ...form, objective_id: objectiveId });
+      else await api.updatePublication(item.id, { ...form, objective_id: objectiveId });
+      onSaved(); onClose();
+    }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title={isNew ? 'Nueva publicación' : 'Editar publicación'} onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Fecha</label><SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}><option value="post">Post</option><option value="video">Vídeo</option><option value="article">Artículo</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="failed">Fallida</option><option value="cancelled">Cancelada</option></select></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      <div style={fieldW}><label style={labelSt}>Texto de la publicación</label><textarea value={form.publication_text} onChange={e => set('publication_text', e.target.value)} rows={4} style={{ width: '100%', resize: 'vertical' }} /></div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : (isNew ? 'Crear' : 'Guardar')}</button></div>
+    </Dialog>
+  );
+}
+
+function CreateCertificationDialog({ objectiveId, item, onClose, onSaved }) {
+  const isNew = !item;
+  const [form, setForm] = useState({
+    title: item?.title || '',
+    target_date: item?.target_date || '',
+    status: item?.status || 'not_started',
+    notes: item?.notes || '',
+    percentage_completed: item?.percentage_completed ?? 0,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try {
+      if (isNew) await api.createCertification({ ...form, objective_id: objectiveId });
+      else await api.updateCertification(item.id, { ...form, objective_id: objectiveId, percentage_completed: Number(form.percentage_completed) || 0 });
+      onSaved(); onClose();
+    }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title={isNew ? 'Nueva certificación' : 'Editar certificación'} onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Fecha objetivo</label><SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completada</option><option value="blocked">Bloqueada</option></select></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      {!isNew && (
+        <div style={fieldW}>
+          <label style={labelSt}>% completado</label>
+          <input type="range" min="0" max="100" step="5" value={form.percentage_completed} onChange={e => set('percentage_completed', Number(e.target.value))} style={{ width: '100%' }} />
+        </div>
+      )}
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : (isNew ? 'Crear' : 'Guardar')}</button></div>
+    </Dialog>
+  );
+}
+
+function CreateRepoDialog({ objectiveId, item, onClose, onSaved }) {
+  const isNew = !item;
+  const [form, setForm] = useState({
+    title: item?.title || '',
+    target_date: item?.target_date || '',
+    type: item?.type || 'sangalan',
+    status: item?.status || 'not_started',
+    url: item?.url || '',
+    notes: item?.notes || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try {
+      if (isNew) await api.createRepo({ ...form, objective_id: objectiveId, url: form.url || null });
+      else await api.updateRepo(item.id, { ...form, objective_id: objectiveId, url: form.url || null });
+      onSaved(); onClose();
+    }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title={isNew ? 'Nuevo proyecto' : 'Editar proyecto'} onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}><option value="client">Cliente</option><option value="sangalan">Sangalan</option><option value="personal">Personal</option></select></div>
+        <div><label style={labelSt}>Fecha objetivo</label><SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En desarrollo</option><option value="completed">Publicado ✓</option></select></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>URL GitHub</label><input type="url" value={form.url} onChange={e => set('url', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} /></div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : (isNew ? 'Crear' : 'Guardar')}</button></div>
+    </Dialog>
+  );
+}
+
+function CreatePRDialog({ objectiveId, item, onClose, onSaved }) {
+  const isNew = !item;
+  const [form, setForm] = useState({
+    title: item?.title || '',
+    start_date: item?.start_date || '',
+    end_date: item?.end_date || '',
+    status: item?.status || 'not_started',
+    notes: item?.notes || '',
+    percentage_completed: item?.percentage_completed ?? 0,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true); setError('');
+    try {
+      if (isNew) await api.createPR({ ...form, objective_id: objectiveId });
+      else await api.updatePR(item.id, { ...form, objective_id: objectiveId, percentage_completed: Number(form.percentage_completed) || 0 });
+      onSaved(); onClose();
+    }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title={isNew ? 'Nuevo Pull Request' : 'Editar Pull Request'} onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Inicio</label><SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Fin</label><SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="review">En review</option><option value="merged">Merged</option><option value="closed">Cerrado</option></select></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      {!isNew && (
+        <div style={fieldW}>
+          <label style={labelSt}>% completado</label>
+          <input type="range" min="0" max="100" step="5" value={form.percentage_completed} onChange={e => set('percentage_completed', Number(e.target.value))} style={{ width: '100%' }} />
+        </div>
+      )}
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : (isNew ? 'Crear' : 'Guardar')}</button></div>
+    </Dialog>
+  );
+}
+
+function CreateEventDialog({ objectiveId, item, onClose, onSaved }) {
+  const isNew = !item;
+  const [form, setForm] = useState({
+    title: item?.title || '',
+    start_date: item?.start_date || '',
+    end_date: item?.end_date || '',
+    status: item?.status || 'not_started',
+    format: item?.format || 'online',
+    location: item?.location || '',
+    estimated_cost: item?.estimated_cost || '',
+    notes: item?.notes || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    if (form.start_date && form.end_date && form.end_date < form.start_date) { setError('Fecha de fin no puede ser anterior a inicio'); return; }
+    setSaving(true); setError('');
+    try {
+      if (isNew) {
+        await api.createEvent({
+          ...form,
+          objective_id: objectiveId,
+          estimated_cost: form.estimated_cost ? Number(form.estimated_cost) : 0,
+        });
+      } else {
+        await api.updateEvent(item.id, {
+          ...form,
+          objective_id: objectiveId,
+          estimated_cost: form.estimated_cost ? Number(form.estimated_cost) : 0,
+        });
+      }
+      onSaved(); onClose();
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  }
+  return (
+    <Dialog title={isNew ? 'Nuevo evento' : 'Editar evento'} onClose={onClose}>
+      <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Inicio</label><SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Fin</label><SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="cancelled">Cancelado</option></select></div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div><label style={labelSt}>Formato</label><select value={form.format} onChange={e => set('format', e.target.value)} style={{ width: '100%' }}><option value="online">Online</option><option value="presencial">Presencial</option><option value="hibrido">Híbrido</option></select></div>
+        <div><label style={labelSt}>Lugar</label><input type="text" value={form.location} onChange={e => set('location', e.target.value)} style={{ width: '100%' }} /></div>
+        <div><label style={labelSt}>Coste (€)</label><input type="number" min="0" step="0.01" value={form.estimated_cost} onChange={e => set('estimated_cost', e.target.value)} style={{ width: '100%' }} /></div>
+      </div>
+      <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : (isNew ? 'Crear' : 'Guardar')}</button></div>
+    </Dialog>
+  );
+}
+
 
 function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, version }) {
   const [expanded, setExpanded] = useState(false);
   const [tasks, setTasks] = useState([]);
-  const [dragOver, setDragOver] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
 
   async function fetchTasks() {
     const data = await api.tasks({ objective_id: objId, no_milestone: '1' });
@@ -38,15 +461,6 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
     await api.updateTask(task.id, { status: ns });
     await fetchTasks();
     onUpdate();
-  }
-
-  async function handleDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    const taskId = e.dataTransfer.getData('taskId');
-    if (!taskId) return;
-    await api.updateTask(taskId, { milestone_id: null });
-    onTaskMoved();
   }
 
   const pct = orphanCount > 0 ? Math.round((orphanDone / orphanCount) * 100) : 0;
@@ -76,29 +490,17 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
         <div
           style={{
             marginLeft: 24, marginBottom: 6, paddingLeft: 12,
-            borderLeft: `2px dashed ${dragOver ? 'var(--accent)' : 'var(--border)'}`,
-            background: dragOver ? 'var(--accent-bg, #eff6ff)' : 'transparent',
-            borderRadius: dragOver ? 6 : 0,
-            transition: 'background 0.15s, border-color 0.15s',
+            borderLeft: '2px dashed var(--border)',
             minHeight: 32,
           }}
           onClick={e => e.stopPropagation()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
-          onDrop={handleDrop}
         >
           {tasks.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 0' }}>Sin tareas</div>
           ) : tasks.map(task => (
             <div
               key={task.id}
-              draggable
-              onDragStart={e => {
-                e.stopPropagation();
-                e.dataTransfer.setData('taskId', task.id);
-                e.dataTransfer.effectAllowed = 'move';
-              }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)', cursor: 'grab' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}
             >
               <div
                 className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
@@ -106,7 +508,7 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
               >
                 {task.status === 'completed' ? '✓' : ''}
               </div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
                 <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>
                   {task.title}
                 </div>
@@ -118,6 +520,17 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
               </div>
             </div>
           ))}
+          {editingTask && (
+            <TaskModal
+              initial={editingTask}
+              onClose={() => setEditingTask(null)}
+              onSave={async () => {
+                setEditingTask(null);
+                await fetchTasks();
+                onUpdate();
+              }}
+            />
+          )}
         </div>
       )}
     </>
@@ -143,11 +556,79 @@ function daysLeft(dateStr) {
   return Math.round((new Date(dateStr + 'T12:00:00') - new Date(today + 'T12:00:00')) / 86400000);
 }
 
+function EditClassicMilestoneDialog({ milestone, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    title: milestone?.title || '',
+    description: milestone?.description || '',
+    target_date: milestone?.date || milestone?.target_date || '',
+    status: milestone?.status || 'not_started',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
+
+  async function save() {
+    if (!form.title.trim()) { setError('El título es obligatorio'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await api.updateMilestone(milestone.id, {
+        title: form.title,
+        description: form.description,
+        target_date: form.target_date || null,
+        status: form.status,
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog title="Editar hito" onClose={onClose}>
+      <div style={fieldW}>
+        <label style={labelSt}>Título *</label>
+        <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div>
+          <label style={labelSt}>Fecha objetivo</label>
+          <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
+        </div>
+        <div>
+          <label style={labelSt}>Estado</label>
+          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+            <option value="not_started">No iniciado</option>
+            <option value="in_progress">En curso</option>
+            <option value="completed">Completado</option>
+            <option value="blocked">Bloqueado</option>
+          </select>
+        </div>
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Descripción</label>
+        <input type="text" value={form.description} onChange={e => set('description', e.target.value)} style={{ width: '100%' }} />
+      </div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : 'Guardar'}</button>
+      </div>
+    </Dialog>
+  );
+}
+
 // Unified row for both simple milestones and content items (pubs, certs, repos, prs, events)
-function AnyMilestoneRow({ item, onUpdate, onAddTask, onTaskMoved, version }) {
+function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, version }) {
   const [expanded, setExpanded] = useState(false);
   const [tasks, setTasks] = useState([]);
-  const [dragOver, setDragOver] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [editingMilestone, setEditingMilestone] = useState(false);
+  const [editingLinked, setEditingLinked] = useState(false);
 
   const days = item.days_remaining ?? daysLeft(item.date);
   const cls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
@@ -174,24 +655,69 @@ function AnyMilestoneRow({ item, onUpdate, onAddTask, onTaskMoved, version }) {
     onUpdate();
   }
 
-  async function handleDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    const taskId = e.dataTransfer.getData('taskId');
-    if (!taskId) return;
-    await api.updateTask(taskId, { milestone_id: item.id });
-    onTaskMoved();
-  }
-
   const pct = item.task_total > 0 ? Math.round((item.task_done / item.task_total) * 100) : null;
+  const certStatsLabel = item.type === 'certification' ? formatCertificationStats(item.certStats) : '';
 
   return (
     <>
+      {editingMilestone && isSimple && (
+        <EditClassicMilestoneDialog
+          milestone={item}
+          onClose={() => setEditingMilestone(false)}
+          onSaved={() => { setEditingMilestone(false); onUpdate(); }}
+        />
+      )}
+      {editingLinked && item.type === 'publication' && (
+        <PublicationDetailDialog
+          pub={item}
+          objectives={objectives}
+          onClose={() => setEditingLinked(false)}
+          onSaved={() => { setEditingLinked(false); onUpdate(); }}
+          onDeleted={() => { setEditingLinked(false); onUpdate(); }}
+        />
+      )}
+      {editingLinked && item.type === 'certification' && (
+        <CertificationDetailDialog
+          cert={item}
+          objectives={objectives}
+          onClose={() => setEditingLinked(false)}
+          onSaved={() => { setEditingLinked(false); onUpdate(); }}
+          onDeleted={() => { setEditingLinked(false); onUpdate(); }}
+        />
+      )}
+      {editingLinked && item.type === 'repo' && (
+        <RepoDetailDialog
+          repo={item}
+          objectives={objectives}
+          onClose={() => setEditingLinked(false)}
+          onSaved={() => { setEditingLinked(false); onUpdate(); }}
+          onDeleted={() => { setEditingLinked(false); onUpdate(); }}
+        />
+      )}
+      {editingLinked && item.type === 'pr' && (
+        <PRDetailDialog
+          pr={item}
+          objectives={objectives}
+          onClose={() => setEditingLinked(false)}
+          onSaved={() => { setEditingLinked(false); onUpdate(); }}
+          onDeleted={() => { setEditingLinked(false); onUpdate(); }}
+        />
+      )}
+      {editingLinked && item.type === 'event' && (
+        <EventDetailDialog
+          event={item}
+          objectives={objectives}
+          onClose={() => setEditingLinked(false)}
+          onSaved={() => { setEditingLinked(false); onUpdate(); }}
+          onDeleted={() => { setEditingLinked(false); onUpdate(); }}
+        />
+      )}
       <div className="milestone-row" style={{ paddingLeft: 12, cursor: 'pointer', flexWrap: 'wrap', gap: 6 }} onClick={toggleExpanded}>
         <span style={{ fontSize: 13 }}>{isSimple ? (STATUS_ICONS[item.status] || '⚪') : (LINKED_STATUS_ICONS[item.status] || '⚪')}</span>
         <div className="milestone-title" style={{ fontSize: 13 }}>
           <span>{item.title}</span>
           {item.icon && <span style={{ marginLeft: 4 }}>{item.icon}</span>}
+          {certStatsLabel && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-3)' }}>{certStatsLabel}</span>}
           <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {fmtDate(item.date)}{' '}{expanded ? '▲' : '▼'}
           </div>
@@ -219,38 +745,40 @@ function AnyMilestoneRow({ item, onUpdate, onAddTask, onTaskMoved, version }) {
         <div
           style={{
             marginLeft: 24, marginBottom: 6, paddingLeft: 12,
-            borderLeft: `2px solid ${dragOver ? 'var(--accent)' : 'var(--border)'}`,
-            background: dragOver ? 'var(--accent-bg, #eff6ff)' : 'transparent',
-            borderRadius: dragOver ? 6 : 0,
-            transition: 'background 0.15s, border-color 0.15s',
+            borderLeft: '2px solid var(--border)',
             minHeight: 32,
           }}
           onClick={e => e.stopPropagation()}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
-          onDrop={handleDrop}
         >
+          <div style={{ display: 'flex', gap: 8, padding: '0 0 8px', borderBottom: '1px dashed var(--border)', marginBottom: 8 }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={e => { e.stopPropagation(); onAddTask(item); }}
+            >
+              + Tarea
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={e => {
+                e.stopPropagation();
+                if (isSimple) setEditingMilestone(true);
+                else setEditingLinked(true);
+              }}
+            >
+              ✎ Editar hito
+            </button>
+          </div>
           {tasks.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 0' }}>
-              Sin tareas para este hito ·{' '}
-              <span
-                style={{ textDecoration: 'underline', cursor: 'pointer', color: 'var(--accent)' }}
-                onClick={e => { e.stopPropagation(); onAddTask(item); }}
-              >
-                Añadir tarea
-              </span>
-            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 0' }}>Sin tareas para este hito</div>
           ) : tasks.map(task => (
             <div
               key={task.id}
-              draggable
-              onDragStart={e => { e.stopPropagation(); e.dataTransfer.setData('taskId', task.id); e.dataTransfer.effectAllowed = 'move'; }}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)', cursor: 'grab' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}
             >
               <div className={`task-check ${task.status === 'completed' ? 'checked' : ''}`} onClick={() => toggleTask(task)}>
                 {task.status === 'completed' ? '✓' : ''}
               </div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
                 <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>{task.title}</div>
                 <div className="task-meta">
                   <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>
@@ -260,18 +788,32 @@ function AnyMilestoneRow({ item, onUpdate, onAddTask, onTaskMoved, version }) {
               </div>
             </div>
           ))}
+          {editingTask && (
+            <TaskModal
+              initial={editingTask}
+              onClose={() => setEditingTask(null)}
+              onSave={async () => {
+                setEditingTask(null);
+                await fetchTasks();
+                onUpdate();
+              }}
+            />
+          )}
         </div>
       )}
     </>
   );
 }
 
-function ObjectiveCard({ obj, onUpdate }) {
+function ObjectiveCard({ obj, objectives, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
   const [newTaskFor, setNewTaskFor] = useState(null); // milestone-like object
   const [mvVersion, setMvVersion] = useState(0);
   const [contentItems, setContentItems] = useState([]);
   const [contentLoaded, setContentLoaded] = useState(false);
+  const [editingObjective, setEditingObjective] = useState(false);
+  const [choosingMilestoneType, setChoosingMilestoneType] = useState(false);
+  const [creatingKind, setCreatingKind] = useState(null);
   const color = obj.color || '#2563eb';
 
   useEffect(() => {
@@ -282,13 +824,17 @@ function ObjectiveCard({ obj, onUpdate }) {
       api.prs({ objective_id: obj.id }),
       api.publications({ objective_id: obj.id }),
       api.events({ objective_id: obj.id }),
-    ]).then(([certs, repos, prs, pubs, evts]) => {
+      api.tasks({ objective_id: obj.id }),
+    ]).then(([certs, repos, prs, pubs, evts, objectiveTasks]) => {
+      const certStatsById = buildCertificationStatsMap(certs, objectiveTasks);
       setContentItems([
-        ...certs.map(c => ({ ...c, type: 'certification', icon: '🏆', date: c.target_date })),
+        ...certs.map(c => ({ ...c, type: 'certification', icon: '🏆', date: c.target_date, certStats: certStatsById[c.id] })),
         ...repos.map(r => ({ ...r, type: 'repo',          icon: '📦', date: r.target_date })),
         ...prs.map(p =>   ({ ...p, type: 'pr',            icon: '🔀', date: p.end_date })),
         ...pubs.map(p =>  ({ ...p, type: 'publication',   icon: '✍️',  date: p.date })),
-        ...evts.map(e =>  ({ ...e, type: 'event',         icon: '🎪', date: e.end_date || e.start_date })),
+        ...evts
+          .filter(e => e.status !== 'cancelled')
+          .map(e =>  ({ ...e, type: 'event',         icon: '🎪', date: e.end_date || e.start_date })),
       ]);
       setContentLoaded(true);
     });
@@ -318,6 +864,81 @@ function ObjectiveCard({ obj, onUpdate }) {
 
   return (
     <div className="obj-card" onClick={() => setExpanded(v => !v)}>
+      {editingObjective && (
+        <div onClick={e => e.stopPropagation()}>
+          <ObjectiveDialog
+            obj={obj}
+            onClose={() => setEditingObjective(false)}
+            onSaved={() => { setEditingObjective(false); onUpdate(); }}
+          />
+        </div>
+      )}
+      {choosingMilestoneType && (
+        <div onClick={e => e.stopPropagation()}>
+          <MilestoneTypeDialog
+            onClose={() => setChoosingMilestoneType(false)}
+            onPick={(kind) => {
+              setChoosingMilestoneType(false);
+              setCreatingKind(kind);
+            }}
+          />
+        </div>
+      )}
+      {creatingKind === 'classic' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreateClassicMilestoneDialog
+            objectiveId={obj.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={onUpdate}
+          />
+        </div>
+      )}
+      {creatingKind === 'publication' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreatePublicationDialog
+            objectiveId={obj.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={onUpdate}
+          />
+        </div>
+      )}
+      {creatingKind === 'certification' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreateCertificationDialog
+            objectiveId={obj.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={onUpdate}
+          />
+        </div>
+      )}
+      {creatingKind === 'repo' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreateRepoDialog
+            objectiveId={obj.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={onUpdate}
+          />
+        </div>
+      )}
+      {creatingKind === 'pr' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreatePRDialog
+            objectiveId={obj.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={onUpdate}
+          />
+        </div>
+      )}
+      {creatingKind === 'event' && (
+        <div onClick={e => e.stopPropagation()}>
+          <CreateEventDialog
+            objectiveId={obj.id}
+            onClose={() => setCreatingKind(null)}
+            onSaved={onUpdate}
+          />
+        </div>
+      )}
+
       <div className="obj-header">
         <div style={{ flex: 1, minWidth: 0 }}>
           {obj.target_value && (
@@ -329,7 +950,7 @@ function ObjectiveCard({ obj, onUpdate }) {
             {obj.end_date && <span className="task-time">{obj.end_date}</span>}
             <span className="task-time">{obj.task_count - obj.done_count} tareas restantes</span>
           </div>
-          {(() => { const ids = obj.category_ids?.length ? obj.category_ids : (obj.category_id ? [obj.category_id] : []); return ids.length > 0 && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>{ids.map(id => <CatBadge key={id} id={id} />)}</div>; })()}
+          {(() => { const ids = obj.category_ids?.length ? obj.category_ids : (obj.category_id ? [obj.category_id] : []); return ids.length > 0 && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><CategoryBadges ids={ids} keyPrefix={`${obj.id}-`} /></div>; })()}
         </div>
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
           <div className="obj-pct" style={{ color }}>{pct}%</div>
@@ -356,6 +977,20 @@ function ObjectiveCard({ obj, onUpdate }) {
       {/* All milestones (simple + content items) sorted by date */}
       {expanded && (
         <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', gap: 8, padding: '0 12px 8px', borderBottom: '1px dashed var(--border)', marginBottom: 8 }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={e => { e.stopPropagation(); setChoosingMilestoneType(true); }}
+            >
+              + Hito
+            </button>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={e => { e.stopPropagation(); setEditingObjective(true); }}
+            >
+              ✎ Editar Objetivo
+            </button>
+          </div>
           {!contentLoaded && (
             <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 12px' }}>Cargando hitos…</div>
           )}
@@ -366,6 +1001,7 @@ function ObjectiveCard({ obj, onUpdate }) {
             <AnyMilestoneRow
               key={item.id}
               item={item}
+              objectives={objectives}
               onUpdate={onUpdate}
               onAddTask={setNewTaskFor}
               onTaskMoved={handleTaskMoved}
@@ -393,7 +1029,31 @@ export default function ObjectivesView() {
   const [objectives, setObjectives] = useState([]);
 
   async function loadAll() {
-    api.objectives().then(setObjectives);
+    const [objectivesData, events, tasks] = await Promise.all([
+      api.objectives(),
+      api.events(),
+      api.tasks(),
+    ]);
+
+    const cancelledEventIds = new Set(
+      events.filter(e => e.status === 'cancelled').map(e => e.id)
+    );
+    const effectiveObjectives = objectivesData.map(obj => {
+      const objectiveTasks = tasks.filter(
+        t => t.objective_id === obj.id && !cancelledEventIds.has(t.milestone_id)
+      );
+      const taskCount = objectiveTasks.length;
+      const doneCount = objectiveTasks.filter(t => t.status === 'completed').length;
+      const percentageCompleted = taskCount > 0 ? Math.round((doneCount / taskCount) * 100) : 0;
+      return {
+        ...obj,
+        task_count: taskCount,
+        done_count: doneCount,
+        percentage_completed: percentageCompleted,
+      };
+    });
+
+    setObjectives(effectiveObjectives);
   }
 
   useEffect(() => { loadAll(); }, []);
@@ -434,7 +1094,7 @@ export default function ObjectivesView() {
         </div>
       </div>
 
-      {objectives.map(obj => <ObjectiveCard key={obj.id} obj={obj} onUpdate={loadAll} />)}
+      {objectives.map(obj => <ObjectiveCard key={obj.id} obj={obj} objectives={objectives} onUpdate={loadAll} />)}
     </div>
   );
 }

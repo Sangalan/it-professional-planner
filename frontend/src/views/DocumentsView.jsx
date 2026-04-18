@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
-import CatBadge, { CategorySelector, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategorySelector, useCats } from '../components/CatBadge.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const thStyle = { padding: '9px 18px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
@@ -32,6 +34,7 @@ function fmtDate(iso) {
 }
 
 function DetailDialog({ doc, onClose, onSaved, onDeleted }) {
+  useEscapeClose(onClose);
   const [name, setName] = useState(doc.name);
   const [catIds, setCatIds] = useState(Array.isArray(doc.category_ids) ? doc.category_ids : []);
   const [saving, setSaving] = useState(false);
@@ -95,6 +98,8 @@ function DetailDialog({ doc, onClose, onSaved, onDeleted }) {
 }
 
 export default function DocumentsView() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [docs, setDocs] = useState([]);
   const [q, setQ] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -112,6 +117,14 @@ export default function DocumentsView() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const intent = location.state;
+    if (!intent?.fromSearch || intent.itemKind !== 'document') return;
+    const target = docs.find(d => String(d.id) === String(intent.itemId));
+    if (!target) return;
+    setSelected(target);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate, docs]);
 
   function toggleSort(col) {
     if (sort === col) {
@@ -165,8 +178,14 @@ export default function DocumentsView() {
     } else if (sort === 'size') {
       cmp = (a.size || 0) - (b.size || 0);
     } else if (sort === 'categories') {
-      const an = (a.category_ids || []).map(id => cats.find(c => c.id === id)?.name || '').join(',');
-      const bn = (b.category_ids || []).map(id => cats.find(c => c.id === id)?.name || '').join(',');
+      const an = (a.category_ids || [])
+        .map(id => cats.find(c => c.id === id)?.name || '')
+        .sort((x, y) => x.localeCompare(y, 'es'))
+        .join(',');
+      const bn = (b.category_ids || [])
+        .map(id => cats.find(c => c.id === id)?.name || '')
+        .sort((x, y) => x.localeCompare(y, 'es'))
+        .join(',');
       cmp = an.localeCompare(bn, 'es');
     }
     return sortDir === 'asc' ? cmp : -cmp;
@@ -259,7 +278,7 @@ export default function DocumentsView() {
                   </td>
                   <td style={{ padding: '10px 18px' }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {(doc.category_ids || []).map(cid => <CatBadge key={cid} id={cid} />)}
+                      <CategoryBadges ids={doc.category_ids || []} keyPrefix={`${doc.id}-`} />
                     </div>
                   </td>
                   <td style={{ padding: '10px 18px', textAlign: 'right' }}>

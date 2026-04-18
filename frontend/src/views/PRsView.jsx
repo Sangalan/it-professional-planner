@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtShortDate } from '../utils/dateUtils.js';
-import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
@@ -40,7 +42,8 @@ function CategorySelector({ selected, onChange }) {
   );
 }
 
-function DetailDialog({ pr, objectives, onClose, onSaved, onDeleted }) {
+export function DetailDialog({ pr, objectives, onClose, onSaved, onDeleted }) {
+  useEscapeClose(onClose);
   const isNew = !pr;
   const initCatIds = parseCatIds(pr?.category_ids, pr?.category_id);
   const [form, setForm] = useState({
@@ -172,6 +175,8 @@ function DetailDialog({ pr, objectives, onClose, onSaved, onDeleted }) {
 }
 
 export default function PRsView() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [prs, setPrs] = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -187,6 +192,14 @@ export default function PRsView() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const intent = location.state;
+    if (!intent?.fromSearch || intent.itemKind !== 'pr') return;
+    const target = prs.find(p => String(p.id) === String(intent.itemId));
+    if (!target) return;
+    setSelected(target);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate, prs]);
 
   const usedCatIds = [...new Set(prs.flatMap(p => parseCatIds(p.category_ids, p.category_id)))];
   const normalizedSearch = searchTitle.trim().toLowerCase();
@@ -274,7 +287,7 @@ export default function PRsView() {
                     </div>
                     {catIds.length > 0 && (
                       <div className="task-meta" style={{ marginTop: 3 }}>
-                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                        <CategoryBadges ids={catIds} />
                       </div>
                     )}
                     {pct > 0 && (

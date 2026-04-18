@@ -12,6 +12,40 @@ import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
 // Hours to display in the week view
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00–22:00
 const SLOT_H = 56; // px per hour
+const WORK_START = 9 * 60;  // 09:00 in minutes
+const WORK_END   = 20 * 60; // 20:00 in minutes
+const WORK_WINDOW = (WORK_END - WORK_START) / 60; // 11h
+
+function computeWindowStats(tasks, dayCount = 1) {
+  const intervals = tasks
+    .filter(t => t.start_time && t.end_time)
+    .map(t => [
+      Math.max(timeToMinutes(t.start_time), WORK_START),
+      Math.min(timeToMinutes(t.end_time),   WORK_END),
+      t.date,
+    ])
+    .filter(([s, e]) => s < e)
+    .sort((a, b) => {
+      if ((a[2] || '') !== (b[2] || '')) return (a[2] || '').localeCompare(b[2] || '');
+      return a[0] - b[0];
+    });
+
+  let covered = 0;
+  let cursor = null;
+  let cursorDate = null;
+  for (const [s, e, date] of intervals) {
+    if (cursorDate !== date) {
+      cursorDate = date;
+      cursor = WORK_START;
+    }
+    if (s > cursor) cursor = s;
+    covered += Math.max(0, e - cursor);
+    cursor = Math.max(cursor, e);
+  }
+  const scheduledH = covered / 60;
+  const freeH = Math.max(0, dayCount * WORK_WINDOW - scheduledH);
+  return { scheduledH, freeH };
+}
 
 export default function WeeklyCalendar() {
   const [weekStart, setWeekStart] = useState(() => {
@@ -133,15 +167,32 @@ export default function WeeklyCalendar() {
   const todayStr = toDateStr(new Date());
 
   const weekLabel = `${days[0].getDate()} ${days[0].toLocaleDateString('es-ES', { month: 'short' })} – ${days[6].getDate()} ${days[6].toLocaleDateString('es-ES', { month: 'short', year: 'numeric' })}`;
+  const { scheduledH, freeH } = useMemo(() => computeWindowStats(tasks, 7), [tasks]);
 
   return (
     <div>
-      <div className="page-header">
-        <div>
+      <div className="page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 12, alignItems: 'start' }}>
+        <div style={{ minWidth: 0 }}>
           <div className="page-title">Semana del {weekLabel}</div>
           <div className="page-subtitle">Vista semanal por bloques horarios</div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+            <span style={{
+              fontSize: 12, padding: '3px 10px', borderRadius: 99,
+              background: '#dbeafe', color: '#1d4ed8', fontWeight: 600,
+            }}>
+              🕐 {scheduledH % 1 === 0 ? scheduledH : scheduledH.toFixed(1)}h programadas
+            </span>
+            <span style={{
+              fontSize: 12, padding: '3px 10px', borderRadius: 99,
+              background: freeH === 0 ? '#dcfce7' : '#fef9c3',
+              color:      freeH === 0 ? '#15803d'  : '#92400e',
+              fontWeight: 600,
+            }}>
+              ☀ {freeH % 1 === 0 ? freeH : freeH.toFixed(1)}h libres (9–20h)
+            </span>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 6, marginRight: 4 }}>
             <button
               className={`btn btn-sm ${calendarView === 'current' ? 'btn-primary' : 'btn-ghost'}`}

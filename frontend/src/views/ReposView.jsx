@@ -1,16 +1,24 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
-import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
   { value: 'in_progress', label: 'En desarrollo' },
   { value: 'completed',   label: 'Publicado ✓' },
 ];
+const TYPE_OPTIONS = [
+  { value: 'client', label: 'Cliente' },
+  { value: 'sangalan', label: 'Sangalan' },
+  { value: 'personal', label: 'Personal' },
+];
+const TYPE_ORDER = { client: 0, sangalan: 1, personal: 2 };
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW = { marginBottom: 14 };
@@ -21,6 +29,10 @@ function parseCatIds(raw, fallback) {
     try { const p = JSON.parse(raw); if (Array.isArray(p) && p.length) return p; } catch (_) {}
   }
   return fallback ? [fallback] : [];
+}
+
+function getRepoType(repo, objectiveById) {
+  return repo.type || (repo.objective_id && objectiveById[repo.objective_id]?.type === 'client' ? 'client' : 'personal');
 }
 
 function CategorySelector({ selected, onChange }) {
@@ -38,12 +50,14 @@ function CategorySelector({ selected, onChange }) {
   );
 }
 
-function DetailDialog({ repo, objectives, onClose, onSaved, onDeleted }) {
+export function DetailDialog({ repo, objectives, onClose, onSaved, onDeleted }) {
+  useEscapeClose(onClose);
   const isNew = !repo;
   const initCatIds = parseCatIds(repo?.category_ids, repo?.category_id);
   const [form, setForm] = useState({
     title: repo?.title || '',
     target_date: repo?.target_date || '',
+    type: repo?.type || 'personal',
     status: repo?.status || 'not_started',
     objective_id: repo?.objective_id || '',
     url: repo?.url || '',
@@ -98,7 +112,13 @@ function DetailDialog({ repo, objectives, onClose, onSaved, onDeleted }) {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={labelSt}>Tipo</label>
+            <select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}>
+              {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
           <div>
             <label style={labelSt}>Estado</label>
             <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
@@ -156,6 +176,8 @@ function DetailDialog({ repo, objectives, onClose, onSaved, onDeleted }) {
 }
 
 export default function ReposView() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [repos, setRepos] = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -164,6 +186,7 @@ export default function ReposView() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [filterCats, setFilterCats] = useState([]);
+  const [filterTypes, setFilterTypes] = useState([]);
 
   async function load() {
     api.repos().then(setRepos);
@@ -171,6 +194,16 @@ export default function ReposView() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const intent = location.state;
+    if (!intent?.fromSearch || intent.itemKind !== 'repo') return;
+    const target = repos.find(r => String(r.id) === String(intent.itemId));
+    if (!target) return;
+    setSelected(target);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate, repos]);
+
+  const objectiveById = Object.fromEntries(objectives.map(o => [o.id, o]));
 
   // Categories used by at least one repo
   const usedCatIds = [...new Set(repos.flatMap(r => parseCatIds(r.category_ids, r.category_id)))];
@@ -184,12 +217,22 @@ export default function ReposView() {
   const visible = repos
     .filter(r => !normalizedSearch || (r.title || '').toLowerCase().includes(normalizedSearch))
     .filter(r => dateMatches(r.target_date))
-    .filter(r => filterCats.length === 0 || filterCats.some(fc => parseCatIds(r.category_ids, r.category_id).includes(fc)));
+    .filter(r => filterCats.length === 0 || filterCats.some(fc => parseCatIds(r.category_ids, r.category_id).includes(fc)))
+    .filter(r => filterTypes.length === 0 || filterTypes.includes(getRepoType(r, objectiveById)))
+    .sort((a, b) => {
+      const aType = getRepoType(a, objectiveById);
+      const bType = getRepoType(b, objectiveById);
+      const orderDiff = (TYPE_ORDER[aType] ?? 99) - (TYPE_ORDER[bType] ?? 99);
+      if (orderDiff !== 0) return orderDiff;
+      const ad = a.target_date || '9999-99-99';
+      const bd = b.target_date || '9999-99-99';
+      if (ad !== bd) return ad.localeCompare(bd);
+      return (a.title || '').localeCompare(b.title || '', 'es');
+    });
   const totalRepos = repos.length;
   const completedRepos = repos.filter(r => r.status === 'completed').length;
   const inProgressRepos = repos.filter(r => r.status === 'in_progress').length;
   const progressPct = totalRepos > 0 ? Math.round((completedRepos / totalRepos) * 100) : 0;
-  const objectiveById = Object.fromEntries(objectives.map(o => [o.id, o]));
 
   return (
     <div>
@@ -228,12 +271,38 @@ export default function ReposView() {
         selectedCats={filterCats}
         onSelectedCatsChange={setFilterCats}
         availableCatIds={usedCatIds}
+        extraFilters={
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {TYPE_OPTIONS.map(type => {
+              const active = filterTypes.includes(type.value);
+              return (
+                <span
+                  key={type.value}
+                  onClick={() => setFilterTypes(prev => prev.includes(type.value) ? prev.filter(t => t !== type.value) : [...prev, type.value])}
+                  style={{
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    padding: '3px 10px',
+                    borderRadius: 10,
+                    background: active ? 'var(--accent-light)' : 'var(--bg)',
+                    color: active ? 'var(--accent)' : 'var(--text-3)',
+                    border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                    fontWeight: active ? 600 : 400,
+                    userSelect: 'none',
+                  }}
+                >
+                  {type.label}
+                </span>
+              );
+            })}
+          </div>
+        }
       />
 
       {visible.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📦</div>
-          {filterCats.length > 0 || searchTitle || fromDate || toDate ? 'Sin resultados' : 'Sin proyectos'}
+          {filterCats.length > 0 || filterTypes.length > 0 || searchTitle || fromDate || toDate ? 'Sin resultados' : 'Sin proyectos'}
         </div>
       ) : (
         <div className="card">
@@ -242,8 +311,9 @@ export default function ReposView() {
               const days = repo.days_remaining;
               const cls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
               const catIds = parseCatIds(repo.category_ids, repo.category_id);
-              const isClientProject = repo.objective_id && objectiveById[repo.objective_id]?.type === 'client';
-              const icon = isClientProject ? '👤' : '📦';
+              const effectiveType = getRepoType(repo, objectiveById);
+              const icon = effectiveType === 'client' ? '👤' : effectiveType === 'sangalan' ? '💼' : '🙂';
+              const typeLabel = TYPE_OPTIONS.find(t => t.value === effectiveType)?.label || 'Personal';
               return (
                 <div key={repo.id} className="task-row" style={{ cursor: 'pointer' }} onClick={() => setSelected(repo)}>
                   <div className="task-info">
@@ -262,10 +332,11 @@ export default function ReposView() {
                         {days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}
                       </span>
                       <span className="task-time">{fmtDate(repo.target_date)}</span>
+                      <span className="task-time">Tipo: {typeLabel}</span>
                     </div>
                     {catIds.length > 0 && (
                       <div className="task-meta" style={{ marginTop: 3 }}>
-                        {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                        <CategoryBadges ids={catIds} />
                       </div>
                     )}
                   </div>

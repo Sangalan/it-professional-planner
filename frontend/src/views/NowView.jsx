@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../api.js';
 import { formatCountdown, secondsUntilTime, secondsBetweenTimes, timeToMinutes } from '../utils/dateUtils.js';
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
+import TaskModal from '../components/TaskModal.jsx';
 
 // Web Audio API beep — no external files needed
 function playBeep(frequency = 880, duration = 0.6, type = 'sine') {
@@ -49,9 +50,7 @@ function useNowData() {
 export default function NowView() {
   const { data, refresh } = useNowData();
   const [tick, setTick] = useState(0);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const beeped = useRef(false);
-  const prevTaskId = useRef(null);
+  const [editTask, setEditTask] = useState(null);
 
   // Second-level tick
   useEffect(() => {
@@ -103,16 +102,6 @@ export default function NowView() {
       timerMode = 'active';
       timerLabel = 'tiempo restante';
     }
-
-    // Check if we just transitioned — play beep
-    if (current.id !== prevTaskId.current) {
-      prevTaskId.current = current.id;
-      beeped.current = false;
-    }
-    if (timerSeconds <= 5 && !beeped.current && soundEnabled) {
-      beeped.current = true;
-      playBeep();
-    }
   } else if (upcoming) {
     timerSeconds = secondsUntilTime(upcoming.start_time);
     timerMode = timerSeconds > 0 ? 'waiting' : 'free';
@@ -135,6 +124,11 @@ export default function NowView() {
 
   const weekday = now.toLocaleDateString('es-ES', { weekday: 'long' });
   const dateLabel = now.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' });
+  const gapHours = current && upcoming
+    ? (timeToMinutes(upcoming.start_time) - timeToMinutes(current.end_time)) / 60
+    : 0;
+  const hasGapBetweenTasks = gapHours > (5 / 60);
+  const formattedGapHours = Number.isInteger(gapHours) ? String(gapHours) : gapHours.toFixed(1);
 
   return (
     <div className="now-container">
@@ -153,13 +147,6 @@ export default function NowView() {
       <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-3)', marginBottom: 24, display: 'flex', justifyContent: 'center', gap: 12 }}>
         <span>🕐 {timeStr}</span>
         <button
-          onClick={() => setSoundEnabled(s => !s)}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 0 }}
-          title={soundEnabled ? 'Silenciar alertas' : 'Activar alertas'}
-        >
-          {soundEnabled ? '🔔' : '🔕'}
-        </button>
-        <button
           onClick={() => playBeep()}
           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-3)', padding: 0 }}
           title="Probar sonido"
@@ -170,7 +157,12 @@ export default function NowView() {
 
       {/* Current task */}
       {current ? (
-        <div className="now-task-card" style={{ borderColor: getCatColor(current.category_id) + '88', background: getCatColor(current.category_id) + '11' }}>
+        <div
+          className="now-task-card"
+          style={{ borderColor: getCatColor(current.category_id) + '88', background: getCatColor(current.category_id) + '11', cursor: 'pointer' }}
+          onClick={() => setEditTask(current)}
+          title="Editar tarea"
+        >
           <div className="now-task-label" style={{ color: getCatColor(current.category_id) }}>
             TAREA ACTIVA · {getCatLabel(current.category_id)}
           </div>
@@ -190,7 +182,8 @@ export default function NowView() {
           {/* Complete checkbox */}
           <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
             <div
-              onClick={async () => {
+              onClick={async (e) => {
+                e.stopPropagation();
                 const newStatus = current.status === 'completed' ? 'pending' : 'completed';
                 await api.updateTask(current.id, { status: newStatus, percentage_completed: newStatus === 'completed' ? 100 : current.percentage_completed });
                 refresh();
@@ -219,9 +212,15 @@ export default function NowView() {
         </div>
       )}
 
+      {hasGapBetweenTasks && (
+        <div style={{ textAlign: 'center', margin: '14px 0 10px', fontSize: 12, color: 'var(--text-3)' }}>
+          ⏸ Tiempo libre entre tareas: {formattedGapHours}h
+        </div>
+      )}
+
       {/* Next task */}
       {upcoming && (
-        <div className="now-next-card">
+        <div className="now-next-card" style={{ cursor: 'pointer' }} onClick={() => setEditTask(upcoming)} title="Editar tarea">
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: 8 }}>
             PRÓXIMA TAREA · en {formatCountdown(secondsUntilTime(upcoming.start_time))}
           </div>
@@ -238,22 +237,26 @@ export default function NowView() {
         </div>
       )}
 
+      {editTask && (
+        <TaskModal
+          initial={editTask}
+          onClose={() => setEditTask(null)}
+          onSave={() => {
+            setEditTask(null);
+            refresh();
+          }}
+          onDeleted={() => {
+            setEditTask(null);
+            refresh();
+          }}
+        />
+      )}
+
       {!current && !upcoming && (
         <div style={{ textAlign: 'center', marginTop: 24, color: 'var(--text-3)', fontSize: 13 }}>
           No hay más tareas programadas para hoy.
         </div>
       )}
-
-      {/* Free time between tasks */}
-      {current && upcoming && (() => {
-        const gap = timeToMinutes(upcoming.start_time) - timeToMinutes(current.end_time);
-        if (gap > 5) return (
-          <div style={{ textAlign: 'center', marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
-            ⏸ {gap} min libres entre tareas
-          </div>
-        );
-        return null;
-      })()}
     </div>
   );
 }

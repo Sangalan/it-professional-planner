@@ -12,6 +12,7 @@ export default function ContentSearchFilters({
   selectedCats = [],
   onSelectedCatsChange,
   availableCatIds = null,
+  extraFilters = null,
   defaultCollapsed = true,
 }) {
   const cats = useCats();
@@ -86,6 +87,12 @@ export default function ContentSearchFilters({
               );
             })}
           </div>
+
+          {extraFilters && (
+            <div style={{ marginTop: 8 }}>
+              {extraFilters}
+            </div>
+          )}
         </>
       )}
     </div>

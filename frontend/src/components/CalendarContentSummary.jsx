@@ -196,8 +196,8 @@ export default function CalendarContentSummary({ mode, date, weekDays = [], mont
         </div>
         <div className="card-body" style={{ padding: '10px 18px' }}>
           {typeRows.map(row => (
-            <div key={row.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 13, color: 'var(--text-2)', fontWeight: 500 }}>{row.icon} {row.label}</span>
+            <div key={row.key} style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+              <span style={{ fontSize: 13, color: 'var(--text-2)', fontWeight: 500, minWidth: 180 }}>{row.icon} {row.label}</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: row.total > 0 ? 'var(--accent)' : 'var(--text-3)' }}>{fmtHours(row.total)}</span>
             </div>
           ))}

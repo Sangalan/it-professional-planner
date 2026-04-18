@@ -238,11 +238,27 @@ app.get('/api/tasks', (req, res) => {
   const tasks = db.prepare(sql).all(...params);
   tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
 
-  // Expand fixed tasks when querying a date range
-  const fixed = (from && to) ? expandFixedTasks(from, to, {
-    objective_id: objective_id || null,
-    milestone_id: req.query.milestone_id || null,
-  }) : (date ? expandFixedTasks(date, date) : []);
+  let fixed = [];
+  // Expand fixed tasks when querying a date range/day.
+  // Without range/day, return fixed templates once (not expanded by day).
+  if (from && to) {
+    fixed = expandFixedTasks(from, to, {
+      objective_id: objective_id || null,
+      milestone_id: req.query.milestone_id || null,
+    });
+  } else if (date) {
+    fixed = expandFixedTasks(date, date);
+  } else {
+    let fixedSql = 'SELECT * FROM tasks WHERE is_fixed = 1';
+    const fixedParams = [];
+    if (category_id)  { fixedSql += ' AND category_id = ?'; fixedParams.push(category_id); }
+    if (status)       { fixedSql += ' AND status = ?'; fixedParams.push(status); }
+    if (objective_id) { fixedSql += ' AND objective_id = ?'; fixedParams.push(objective_id); }
+    if (req.query.milestone_id)     { fixedSql += ' AND milestone_id = ?'; fixedParams.push(req.query.milestone_id); }
+    if (req.query.no_milestone === '1') { fixedSql += ' AND (milestone_id IS NULL OR milestone_id = \'\')'; }
+    fixedSql += ' ORDER BY title, start_time';
+    fixed = db.prepare(fixedSql).all(...fixedParams).map(t => ({ ...t, is_overdue: 0 }));
+  }
 
   res.json([...tasks, ...fixed]);
 });
@@ -541,8 +557,29 @@ app.post('/api/milestones', (req, res) => {
 });
 
 app.delete('/api/milestones/:id', (req, res) => {
-  const inUse = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE milestone_id = ?').get(req.params.id).n;
-  if (inUse > 0) return res.status(409).json({ error: `Este hito tiene ${inUse} tareas asignadas` });
+  const linkedTasks = db.prepare(`
+    SELECT id, title, date, start_time, end_time, status
+    FROM tasks
+    WHERE milestone_id = ?
+    ORDER BY COALESCE(date, '9999-99-99') ASC, COALESCE(start_time, '99:99') ASC, title ASC
+  `).all(req.params.id);
+  if (linkedTasks.length > 0) {
+    return res.status(409).json({
+      error: `Este hito tiene ${linkedTasks.length} tareas asignadas`,
+      usages: [{
+        type: 'Tareas',
+        count: linkedTasks.length,
+        items: linkedTasks.map(t => ({
+          id: t.id,
+          title: t.title,
+          date: t.date || null,
+          start_time: t.start_time || null,
+          end_time: t.end_time || null,
+          status: t.status || null,
+        })),
+      }],
+    });
+  }
   db.prepare('DELETE FROM milestones WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -774,20 +811,20 @@ app.get('/api/repos', (req, res) => {
 });
 
 app.post('/api/repos', (req, res) => {
-  const { title, target_date, status, notes, objective_id, url, category_id, category_ids } = req.body;
+  const { title, target_date, type, status, notes, objective_id, url, category_id, category_ids } = req.body;
   if (!title) return res.status(400).json({ error: 'title es obligatorio' });
   const id = 'repo-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
-  db.prepare('INSERT INTO repos (id,title,target_date,status,notes,objective_id,url,category_id,category_ids) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(id, title, target_date || null, status || 'not_started', notes || null, objective_id || null, url || null, primaryCat, cats.length ? JSON.stringify(cats) : null);
+  db.prepare('INSERT INTO repos (id,title,target_date,type,status,notes,objective_id,url,category_id,category_ids) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title, target_date || null, type || 'personal', status || 'not_started', notes || null, objective_id || null, url || null, primaryCat, cats.length ? JSON.stringify(cats) : null);
   const repo = db.prepare('SELECT * FROM repos WHERE id = ?').get(id);
   repo.days_remaining = daysRemaining(repo.target_date);
   res.status(201).json(repo);
 });
 
 app.put('/api/repos/:id', (req, res) => {
-  const { status, notes, objective_id, category_id, category_ids, url } = req.body;
+  const { title, target_date, type, status, notes, objective_id, category_id, category_ids, url } = req.body;
   const cats = category_ids !== undefined
     ? (Array.isArray(category_ids) ? category_ids : (typeof category_ids === 'string' ? JSON.parse(category_ids) : []))
     : null;
@@ -797,13 +834,17 @@ app.put('/api/repos/:id', (req, res) => {
     ? 'category_id = @cat, category_ids = @cids,'
     : 'category_id = COALESCE(@cat, category_id), category_ids = COALESCE(@cids, category_ids),';
   db.prepare(`UPDATE repos SET
+    title        = COALESCE(@title, title),
+    target_date  = COALESCE(@td, target_date),
+    type         = COALESCE(@type, type),
     status       = COALESCE(@s,   status),
     notes        = COALESCE(@n,   notes),
     objective_id = COALESCE(@oid, objective_id),
     ${catClause}
     url          = COALESCE(@url, url)
     WHERE id = @id`)
-    .run({ s: status ?? null, n: notes ?? null, oid: objective_id ?? null,
+    .run({ title: title ?? null, td: target_date ?? null, type: type ?? null,
+      s: status ?? null, n: notes ?? null, oid: objective_id ?? null,
       cat: primaryCat, cids: cats !== null ? JSON.stringify(cats) : null,
       url: url ?? null, id: req.params.id });
   const repo = db.prepare('SELECT * FROM repos WHERE id = ?').get(req.params.id);
@@ -1122,8 +1163,8 @@ app.post('/api/import', (req, res) => {
     for (const r of (data.repos || [])) {
       const id = resolveId('repos', r.id);
       if (!id) { track('repos', false); continue; }
-      db.prepare('INSERT INTO repos (id,title,target_date,category_id,status,notes) VALUES (@id,@title,@target_date,@category_id,@status,@notes)')
-        .run({ ...r, id });
+      db.prepare('INSERT INTO repos (id,title,target_date,category_id,type,status,notes) VALUES (@id,@title,@target_date,@category_id,@type,@status,@notes)')
+        .run({ ...r, type: r.type || 'personal', id });
       track('repos', true);
     }
     for (const p of (data.prs || [])) {

@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
-import CatBadge, { CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
+import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW = { marginBottom: 14 };
@@ -70,6 +72,7 @@ function UrlListEditor({ urls, onChange }) {
 }
 
 function ItemDialog({ item, onClose, onSaved, onDeleted }) {
+  useEscapeClose(onClose);
   const initCatIds = parseCatIds(item?.category_ids, item?.category_id);
   const [form, setForm] = useState({
     title: item?.title || '',
@@ -255,7 +258,7 @@ function PendingList({ items, onToggle, onEdit, onReorder }) {
                 )}
                 {catIds.length > 0 && (
                   <div className="task-meta">
-                    {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                    <CategoryBadges ids={catIds} />
                   </div>
                 )}
               </div>
@@ -318,7 +321,7 @@ function ReadList({ items, onToggle, onEdit }) {
                       )}
                       {catIds.length > 0 && (
                         <div className="task-meta">
-                          {catIds.map(cid => <CatBadge key={cid} id={cid} />)}
+                          <CategoryBadges ids={catIds} />
                         </div>
                       )}
                     </div>
@@ -358,6 +361,8 @@ function applyFilters(items, search, filterCats, fromDate, toDate) {
 }
 
 export default function ReadingListView() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [dialog, setDialog] = useState(null); // null | 'new' | item object
   const [search, setSearch] = useState('');
@@ -370,6 +375,14 @@ export default function ReadingListView() {
   }
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const intent = location.state;
+    if (!intent?.fromSearch || intent.itemKind !== 'reading') return;
+    const target = items.find(i => String(i.id) === String(intent.itemId));
+    if (!target) return;
+    setDialog(target);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate, items]);
 
   async function toggleStatus(item) {
     const newStatus = item.status === 'pending' ? 'read' : 'pending';
