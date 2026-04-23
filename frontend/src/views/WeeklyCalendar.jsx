@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { api } from '../api.js';
 import {
   getWeekDays, toDateStr, isToday, addDays, parseISO,
@@ -15,6 +15,30 @@ const SLOT_H = 56; // px per hour
 const WORK_START = 9 * 60;  // 09:00 in minutes
 const WORK_END   = 20 * 60; // 20:00 in minutes
 const WORK_WINDOW = (WORK_END - WORK_START) / 60; // 11h
+const MIN_TASK_MINUTES = 15;
+const MINUTE_STEP = 15;
+const DAY_START_MIN = HOURS[0] * 60;
+const DAY_END_MIN = (HOURS[HOURS.length - 1] + 1) * 60;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function snapMinutes(minutes) {
+  return Math.round(minutes / MINUTE_STEP) * MINUTE_STEP;
+}
+
+function minutesToTimeString(totalMinutes) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function getTaskWindow(task) {
+  const start = task.start_time ? timeToMinutes(task.start_time) : DAY_START_MIN;
+  const end = task.end_time ? timeToMinutes(task.end_time) : start + 60;
+  return { start, end: Math.max(start + MIN_TASK_MINUTES, end) };
+}
 
 function computeWindowStats(tasks, dayCount = 1) {
   const intervals = tasks
@@ -68,6 +92,9 @@ export default function WeeklyCalendar() {
   const [editTask, setEditTask] = useState(null);      // task object
   const [gapDialog, setGapDialog] = useState(null);   // { date, hour }
   const [calendarView, setCalendarView] = useState('current');
+  const [taskInteraction, setTaskInteraction] = useState(null);
+  const [taskPreview, setTaskPreview] = useState(null);
+  const suppressClickRef = useRef(false);
 
   const days = useMemo(() => getWeekDays(weekStart), [weekStart]);
 
@@ -169,6 +196,90 @@ export default function WeeklyCalendar() {
   const weekLabel = `${days[0].getDate()} ${days[0].toLocaleDateString('es-ES', { month: 'short' })} – ${days[6].getDate()} ${days[6].toLocaleDateString('es-ES', { month: 'short', year: 'numeric' })}`;
   const { scheduledH, freeH } = useMemo(() => computeWindowStats(tasks, 7), [tasks]);
 
+  function reloadWeekTasks() {
+    const from = toDateStr(days[0]);
+    const to   = toDateStr(days[6]);
+    api.tasks({ from, to }).then(setTasks);
+  }
+
+  function startTaskInteraction(event, task, mode, dateStr) {
+    if (task.is_fixed || !task.start_time) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const { start, end } = getTaskWindow(task);
+    setTaskInteraction({
+      task,
+      mode,
+      dateStr,
+      pointerStartY: event.clientY,
+      initialStart: start,
+      initialEnd: end,
+    });
+    setTaskPreview({ id: task.id, date: dateStr, start, end });
+  }
+
+  function handleTaskClick(task) {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    setEditTask(task);
+  }
+
+  useEffect(() => {
+    if (!taskInteraction) return;
+
+    function updatePreview(clientY) {
+      const deltaMinutes = snapMinutes(((clientY - taskInteraction.pointerStartY) / SLOT_H) * 60);
+      const originalDuration = taskInteraction.initialEnd - taskInteraction.initialStart;
+
+      if (taskInteraction.mode === 'move') {
+        const nextStart = clamp(taskInteraction.initialStart + deltaMinutes, DAY_START_MIN, DAY_END_MIN - originalDuration);
+        const nextEnd = nextStart + originalDuration;
+        setTaskPreview({ id: taskInteraction.task.id, date: taskInteraction.dateStr, start: nextStart, end: nextEnd });
+        return;
+      }
+
+      const nextEnd = clamp(
+        taskInteraction.initialEnd + deltaMinutes,
+        taskInteraction.initialStart + MIN_TASK_MINUTES,
+        DAY_END_MIN
+      );
+      setTaskPreview({ id: taskInteraction.task.id, date: taskInteraction.dateStr, start: taskInteraction.initialStart, end: nextEnd });
+    }
+
+    function handlePointerMove(event) {
+      updatePreview(event.clientY);
+    }
+
+    async function handlePointerUp() {
+      const preview = taskPreview;
+      const changed = preview
+        && (preview.start !== taskInteraction.initialStart || preview.end !== taskInteraction.initialEnd);
+
+      if (changed) {
+        suppressClickRef.current = true;
+        await api.updateTask(taskInteraction.task.id, {
+          date: taskInteraction.dateStr,
+          start_time: minutesToTimeString(preview.start),
+          end_time: minutesToTimeString(preview.end),
+          duration_estimated: preview.end - preview.start,
+        });
+        reloadWeekTasks();
+      }
+
+      setTaskInteraction(null);
+      setTaskPreview(null);
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [taskInteraction, taskPreview, days]);
+
   return (
     <div>
       <div className="page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 12, alignItems: 'start' }}>
@@ -220,9 +331,7 @@ export default function WeeklyCalendar() {
           onClose={() => setCreateFor(null)}
           onSave={() => {
             setCreateFor(null);
-            const from = toDateStr(days[0]);
-            const to   = toDateStr(days[6]);
-            api.tasks({ from, to }).then(setTasks);
+            reloadWeekTasks();
           }}
         />
       )}
@@ -232,9 +341,7 @@ export default function WeeklyCalendar() {
           onClose={() => setEditTask(null)}
           onSave={() => {
             setEditTask(null);
-            const from = toDateStr(days[0]);
-            const to   = toDateStr(days[6]);
-            api.tasks({ from, to }).then(setTasks);
+            reloadWeekTasks();
           }}
         />
       )}
@@ -244,9 +351,7 @@ export default function WeeklyCalendar() {
           hour={gapDialog.hour}
           onClose={() => setGapDialog(null)}
           onCreated={() => {
-            const from = toDateStr(days[0]);
-            const to   = toDateStr(days[6]);
-            api.tasks({ from, to }).then(setTasks);
+            reloadWeekTasks();
           }}
         />
       )}
@@ -429,8 +534,11 @@ export default function WeeklyCalendar() {
 
                   {/* Tasks — full duration height */}
                   {dayTasks.map(task => {
-                    const startMin = timeToMinutes(task.start_time) - firstHourMin;
-                    const endMin   = task.end_time ? timeToMinutes(task.end_time) - firstHourMin : startMin + 60;
+                    const preview = taskPreview?.id === task.id ? taskPreview : null;
+                    const effectiveStart = preview?.start ?? timeToMinutes(task.start_time);
+                    const effectiveEnd = preview?.end ?? (task.end_time ? timeToMinutes(task.end_time) : effectiveStart + 60);
+                    const startMin = effectiveStart - firstHourMin;
+                    const endMin   = effectiveEnd - firstHourMin;
                     const top    = Math.max(0, (startMin / 60) * SLOT_H);
                     const height = Math.max(28, ((endMin - startMin) / 60) * SLOT_H - 2);
                     const isNow  = today && timeToMinutes(task.start_time) <= currentMinutes &&
@@ -438,8 +546,9 @@ export default function WeeklyCalendar() {
                     const taskColor = getTaskColor(task);
                     return (
                       <div key={task.id}
-                        title={`${task.title} (${task.start_time}–${task.end_time || '?'})`}
-                        onClick={() => setEditTask(task)}
+                        title={`${task.title} (${minutesToTimeString(effectiveStart)}–${minutesToTimeString(effectiveEnd)})`}
+                        onClick={() => handleTaskClick(task)}
+                        onPointerDown={e => startTaskInteraction(e, task, 'move', ds)}
                         style={{
                           position: 'absolute',
                           top, left: 2, right: 2, height,
@@ -452,15 +561,32 @@ export default function WeeklyCalendar() {
                           cursor: 'pointer',
                           zIndex: 5,
                           borderLeft: `3px solid ${taskColor}`,
+                          touchAction: 'none',
                         }}
                       >
                         <div style={{ fontSize: 9, color: 'white', fontWeight: 600, lineHeight: 1.2, overflow: 'hidden' }}>
-                          {task.start_time} {task.title}
+                          {minutesToTimeString(effectiveStart)} {task.title}
                           {task.status === 'completed' && ' ✓'}
                         </div>
                         <div style={{ fontSize: 9, color: 'rgba(255,255,255,.9)', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {getMilestoneLabel(task)}
                         </div>
+                        {!task.is_fixed && (
+                          <div
+                            onPointerDown={e => startTaskInteraction(e, task, 'resize', ds)}
+                            title="Cambiar duración"
+                            style={{
+                              position: 'absolute',
+                              left: 8,
+                              right: 8,
+                              bottom: 4,
+                              height: 7,
+                              borderRadius: 999,
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              cursor: 'ns-resize',
+                            }}
+                          />
+                        )}
                       </div>
                     );
                   })}

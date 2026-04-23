@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtShortDate } from '../utils/dateUtils.js';
-import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategorySelector } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
@@ -30,19 +30,8 @@ function fmtCost(value) {
   return `€${Number(value || 0).toLocaleString('es-ES', { maximumFractionDigits: 0 })}`;
 }
 
-function CategorySelector({ selected, onChange }) {
-  const cats = useCats();
-  function toggle(id) {
-    onChange(selected.includes(id) ? selected.filter(c => c !== id) : [...selected, id]);
-  }
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {cats.map(cat => {
-        const active = selected.includes(cat.id);
-        return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
-      })}
-    </div>
-  );
+function isOnlineEventFormat(format) {
+  return String(format || '').toLowerCase() === 'online';
 }
 
 export function DetailDialog({ event, objectives, onClose, onSaved, onDeleted }) {
@@ -87,8 +76,8 @@ export function DetailDialog({ event, objectives, onClose, onSaved, onDeleted })
       category_ids: catIds,
       category_id: catIds[0] || null,
       registered: form.registered ? 1 : 0,
-      hotel_booked: form.hotel_booked ? 1 : 0,
-      flight_booked: form.flight_booked ? 1 : 0,
+      hotel_booked: isOnlineEventFormat(form.format) ? 0 : (form.hotel_booked ? 1 : 0),
+      flight_booked: isOnlineEventFormat(form.format) ? 0 : (form.flight_booked ? 1 : 0),
     };
     if (isNew) {
       await api.createEvent(payload);
@@ -155,7 +144,13 @@ export function DetailDialog({ event, objectives, onClose, onSaved, onDeleted })
             <label style={labelSt}>Formato</label>
             <select value={form.format} onChange={e => {
               const v = e.target.value;
-              setForm(p => ({ ...p, format: v, location: v === 'Online' ? 'Online' : (p.location === 'Online' ? '' : p.location) }));
+              setForm(p => ({
+                ...p,
+                format: v,
+                location: v === 'Online' ? 'Online' : (p.location === 'Online' ? '' : p.location),
+                hotel_booked: v === 'Online' ? false : p.hotel_booked,
+                flight_booked: v === 'Online' ? false : p.flight_booked,
+              }));
             }} style={{ width: '100%' }}>
               <option value="">— Sin especificar —</option>
               <option value="Presencial">Presencial</option>
@@ -178,11 +173,13 @@ export function DetailDialog({ event, objectives, onClose, onSaved, onDeleted })
         <div style={fieldW}>
           <label style={labelSt}>Logística</label>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-            {[
-              { key: 'registered',   label: 'Registrado' },
-              { key: 'hotel_booked', label: 'Hotel' },
-              { key: 'flight_booked',label: 'Avión' },
-            ].map(({ key, label }) => (
+            {[{ key: 'registered', label: 'Registrado' }].map(({ key, label }) => (
+              <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!form[key]} onChange={e => set(key, e.target.checked)} />
+                {label}
+              </label>
+            ))}
+            {!isOnlineEventFormat(form.format) && [{ key: 'hotel_booked', label: 'Hotel' }, { key: 'flight_booked', label: 'Avión' }].map(({ key, label }) => (
               <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
                 <input type="checkbox" checked={!!form[key]} onChange={e => set(key, e.target.checked)} />
                 {label}
@@ -289,8 +286,9 @@ export default function EventsView() {
     const days = ev.days_remaining;
     const pct = ev.percentage_completed || 0;
     const daysCls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
+    const isOnline = isOnlineEventFormat(ev.format);
     const notRegistered = !ev.registered;
-    const missingLogistics = ev.registered && (!ev.hotel_booked || !ev.flight_booked);
+    const missingLogistics = ev.registered && !isOnline && (!ev.hotel_booked || !ev.flight_booked);
     const rowBg = ev.status === 'cancelled'
       ? '#e5e7eb'
       : isPast
@@ -314,8 +312,8 @@ export default function EventsView() {
             {isActive && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>Activo</span>}
             {ev.location && <span className="task-time">📍 {ev.location}</span>}
             <span style={{ fontSize: 11, color: ev.registered ? '#16a34a' : '#dc2626' }}>{ev.registered ? '✓ Reg.' : '✗ Reg.'}</span>
-            {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.hotel_booked ? '#16a34a' : '#b45309' }}>{ev.hotel_booked ? '✓ Hotel' : '✗ Hotel'}</span>}
-            {ev.format !== 'Online' && <span style={{ fontSize: 11, color: ev.flight_booked ? '#16a34a' : '#b45309' }}>{ev.flight_booked ? '✓ Avión' : '✗ Avión'}</span>}
+            {!isOnline && <span style={{ fontSize: 11, color: ev.hotel_booked ? '#16a34a' : '#b45309' }}>{ev.hotel_booked ? '✓ Hotel' : '✗ Hotel'}</span>}
+            {!isOnline && <span style={{ fontSize: 11, color: ev.flight_booked ? '#16a34a' : '#b45309' }}>{ev.flight_booked ? '✓ Avión' : '✗ Avión'}</span>}
           </div>
           {catIds.length > 0 && (
             <div className="task-meta" style={{ marginTop: 3 }}>

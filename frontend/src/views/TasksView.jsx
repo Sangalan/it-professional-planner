@@ -5,6 +5,7 @@ import { CategoryBadges } from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import { canCompleteTask } from '../utils/taskUtils.js';
 
 const TASK_STATUS_OPTIONS = [
   { value: '', label: 'Estado: Todos' },
@@ -84,6 +85,7 @@ export default function TasksView() {
   }, [tasks, searchTitle, fromDate, toDate, filterCats, statusFilter]);
 
   async function toggleTask(task) {
+    if (!canCompleteTask(task)) return;
     const newStatus = task.status === 'completed' ? 'pending' : 'completed';
     await api.updateTask(task.id, { status: newStatus, percentage_completed: newStatus === 'completed' ? 100 : task.percentage_completed });
     load();
@@ -99,11 +101,15 @@ export default function TasksView() {
     const catIds = parseCatIds(task.category_ids, task.category_id);
     return (
       <div key={task.id} className="task-row" style={{ cursor: 'pointer' }} onClick={() => setEditing(task)}>
-        <div className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
-          onClick={e => { e.stopPropagation(); toggleTask(task); }}
-          title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}>
-          {task.status === 'completed' ? '✓' : ''}
-        </div>
+        {canCompleteTask(task) ? (
+          <div className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
+            onClick={e => { e.stopPropagation(); toggleTask(task); }}
+            title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}>
+            {task.status === 'completed' ? '✓' : ''}
+          </div>
+        ) : (
+          <div style={{ width: 22, flexShrink: 0 }} />
+        )}
         <div className="task-info">
           <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>{task.title}</div>
           <div className="task-meta">

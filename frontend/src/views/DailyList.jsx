@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { api } from '../api.js';
 import { toDateStr, fmtDate, formatDuration, getGapHours, timeToMinutes } from '../utils/dateUtils.js';
 import { getCatColor } from '../utils/categoryUtils.js';
@@ -7,12 +7,37 @@ import { CategoryBadges } from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
+import { canCompleteTask } from '../utils/taskUtils.js';
 
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00–22:00
 const SLOT_H = 60; // px per hour
 const WORK_START = 9 * 60;  // 09:00 in minutes
 const WORK_END   = 20 * 60; // 20:00 in minutes
 const WORK_WINDOW = (WORK_END - WORK_START) / 60; // 11h
+const MIN_TASK_MINUTES = 15;
+const MINUTE_STEP = 15;
+const DAY_START_MIN = HOURS[0] * 60;
+const DAY_END_MIN = (HOURS[HOURS.length - 1] + 1) * 60;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function snapMinutes(minutes) {
+  return Math.round(minutes / MINUTE_STEP) * MINUTE_STEP;
+}
+
+function minutesToTimeString(totalMinutes) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function getTaskWindow(task) {
+  const start = task.start_time ? timeToMinutes(task.start_time) : DAY_START_MIN;
+  const end = task.end_time ? timeToMinutes(task.end_time) : start + 60;
+  return { start, end: Math.max(start + MIN_TASK_MINUTES, end) };
+}
 
 // Merge task intervals within 9:00–20:00 and return scheduled + free hours
 function computeWindowStats(tasks) {
@@ -56,6 +81,9 @@ export default function DailyList() {
   const [gapDialog, setGapDialog] = useState(null);
   const [calendarView, setCalendarView] = useState('current');
   const [currentTime, setCurrentTime] = useState(new Date().toTimeString().slice(0, 5));
+  const [taskInteraction, setTaskInteraction] = useState(null);
+  const [taskPreview, setTaskPreview] = useState(null);
+  const suppressClickRef = useRef(false);
 
   async function load() {
     const data = await api.tasks({ date: dateStr });
@@ -84,10 +112,88 @@ export default function DailyList() {
   }
 
   async function toggleTask(task) {
+    if (!canCompleteTask(task)) return;
     const newStatus = task.status === 'completed' ? 'pending' : 'completed';
     await api.updateTask(task.id, { status: newStatus });
     load();
   }
+
+  function startTaskInteraction(event, task, mode) {
+    if (task.is_fixed || !task.start_time) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const { start, end } = getTaskWindow(task);
+    setTaskInteraction({
+      task,
+      mode,
+      pointerStartY: event.clientY,
+      initialStart: start,
+      initialEnd: end,
+    });
+    setTaskPreview({ id: task.id, start, end });
+  }
+
+  function handleTaskClick(task) {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    setEditTask(task);
+  }
+
+  useEffect(() => {
+    if (!taskInteraction) return;
+
+    function updatePreview(clientY) {
+      const deltaMinutes = snapMinutes(((clientY - taskInteraction.pointerStartY) / SLOT_H) * 60);
+      const originalDuration = taskInteraction.initialEnd - taskInteraction.initialStart;
+
+      if (taskInteraction.mode === 'move') {
+        const nextStart = clamp(taskInteraction.initialStart + deltaMinutes, DAY_START_MIN, DAY_END_MIN - originalDuration);
+        const nextEnd = nextStart + originalDuration;
+        setTaskPreview({ id: taskInteraction.task.id, start: nextStart, end: nextEnd });
+        return;
+      }
+
+      const nextEnd = clamp(
+        taskInteraction.initialEnd + deltaMinutes,
+        taskInteraction.initialStart + MIN_TASK_MINUTES,
+        DAY_END_MIN
+      );
+      setTaskPreview({ id: taskInteraction.task.id, start: taskInteraction.initialStart, end: nextEnd });
+    }
+
+    function handlePointerMove(event) {
+      updatePreview(event.clientY);
+    }
+
+    async function handlePointerUp() {
+      const preview = taskPreview;
+      const changed = preview
+        && (preview.start !== taskInteraction.initialStart || preview.end !== taskInteraction.initialEnd);
+
+      if (changed) {
+        suppressClickRef.current = true;
+        await api.updateTask(taskInteraction.task.id, {
+          date: dateStr,
+          start_time: minutesToTimeString(preview.start),
+          end_time: minutesToTimeString(preview.end),
+          duration_estimated: preview.end - preview.start,
+        });
+        await load();
+      }
+
+      setTaskInteraction(null);
+      setTaskPreview(null);
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [taskInteraction, taskPreview, dateStr]);
 
   const isToday    = dateStr === toDateStr(new Date());
   const nowHour    = new Date().getHours();
@@ -349,10 +455,11 @@ export default function DailyList() {
 
               {/* Task blocks */}
               {timedTasks.map(task => {
-                const startMin = timeToMinutes(task.start_time) - firstHourMin;
-                const endMin   = task.end_time
-                  ? timeToMinutes(task.end_time) - firstHourMin
-                  : startMin + 60;
+                const preview = taskPreview?.id === task.id ? taskPreview : null;
+                const effectiveStart = preview?.start ?? timeToMinutes(task.start_time);
+                const effectiveEnd = preview?.end ?? (task.end_time ? timeToMinutes(task.end_time) : effectiveStart + 60);
+                const startMin = effectiveStart - firstHourMin;
+                const endMin   = effectiveEnd - firstHourMin;
                 const top    = Math.max(0, (startMin / 60) * SLOT_H);
                 const height = Math.max(22, ((endMin - startMin) / 60) * SLOT_H - 2);
                 const isNow  = isToday
@@ -371,7 +478,8 @@ export default function DailyList() {
                 return (
                   <div
                     key={task.id}
-                    onClick={() => setEditTask(task)}
+                    onClick={() => handleTaskClick(task)}
+                    onPointerDown={e => startTaskInteraction(e, task, 'move')}
                     style={{
                       position: 'absolute',
                       top, left: 6, right: 6, height,
@@ -387,26 +495,31 @@ export default function DailyList() {
                       display: 'flex',
                       alignItems: height < 44 ? 'center' : 'flex-start',
                       gap: 7,
+                      touchAction: 'none',
                     }}
                   >
                     {/* Checkbox */}
-                    <div
-                      onClick={e => { e.stopPropagation(); toggleTask(task); }}
-                      title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}
-                      style={{
-                        width: 16, height: 16, flexShrink: 0,
-                        borderRadius: 3,
-                        border: `2px solid rgba(255,255,255,${task.status === 'completed' ? 1 : 0.65})`,
-                        background: task.status === 'completed' ? 'white' : 'transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        cursor: 'pointer',
-                        color: color,
-                        fontSize: 10, fontWeight: 900,
-                        marginTop: height < 44 ? 0 : 1,
-                      }}
-                    >
-                      {task.status === 'completed' ? '✓' : ''}
-                    </div>
+                    {canCompleteTask(task) ? (
+                      <div
+                        onClick={e => { e.stopPropagation(); toggleTask(task); }}
+                        title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}
+                        style={{
+                          width: 16, height: 16, flexShrink: 0,
+                          borderRadius: 3,
+                          border: `2px solid rgba(255,255,255,${task.status === 'completed' ? 1 : 0.65})`,
+                          background: task.status === 'completed' ? 'white' : 'transparent',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer',
+                          color: color,
+                          fontSize: 10, fontWeight: 900,
+                          marginTop: height < 44 ? 0 : 1,
+                        }}
+                      >
+                        {task.status === 'completed' ? '✓' : ''}
+                      </div>
+                    ) : (
+                      <div style={{ width: 16, flexShrink: 0 }} />
+                    )}
 
                     {/* Content */}
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -427,7 +540,7 @@ export default function DailyList() {
                       {showMeta && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 10, color: 'rgba(255,255,255,.85)', fontVariantNumeric: 'tabular-nums' }}>
-                            {task.start_time}–{task.end_time}
+                            {minutesToTimeString(effectiveStart)}–{minutesToTimeString(effectiveEnd)}
                           </span>
                           {dur > 0 && (
                             <span style={{ fontSize: 10, color: 'rgba(255,255,255,.7)' }}>
@@ -473,6 +586,22 @@ export default function DailyList() {
                         </div>
                       )}
                     </div>
+                    {!task.is_fixed && (
+                      <div
+                        onPointerDown={e => startTaskInteraction(e, task, 'resize')}
+                        title="Cambiar duración"
+                        style={{
+                          position: 'absolute',
+                          left: 10,
+                          right: 10,
+                          bottom: 4,
+                          height: 8,
+                          borderRadius: 999,
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          cursor: 'ns-resize',
+                        }}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -495,13 +624,17 @@ function UntimeRow({ task, color, onToggle, onEdit }) {
       style={{ cursor: 'pointer' }}
       onClick={onEdit}
     >
-      <div
-        className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
-        onClick={e => { e.stopPropagation(); onToggle(); }}
-        title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}
-      >
-        {task.status === 'completed' ? '✓' : ''}
-      </div>
+      {canCompleteTask(task) ? (
+        <div
+          className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
+          onClick={e => { e.stopPropagation(); onToggle(); }}
+          title={task.status === 'completed' ? 'Desmarcar' : 'Completar'}
+        >
+          {task.status === 'completed' ? '✓' : ''}
+        </div>
+      ) : (
+        <div style={{ width: 22, flexShrink: 0 }} />
+      )}
       <div className="task-info">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />

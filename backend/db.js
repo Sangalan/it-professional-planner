@@ -37,8 +37,12 @@ try { db.prepare('ALTER TABLE events ADD COLUMN flight_booked INTEGER DEFAULT 0'
 try { db.prepare('ALTER TABLE tasks ADD COLUMN fixed_days TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE tasks ADD COLUMN fixed_start_date TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE tasks ADD COLUMN fixed_end_date TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN label TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN is_cloned INTEGER DEFAULT 0').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN cloned_from TEXT').run(); } catch (_) {}
 // Reset legacy is_fixed tasks that predate the recurrence system
 try { db.prepare('UPDATE tasks SET is_fixed = 0 WHERE is_fixed = 1 AND fixed_days IS NULL').run(); } catch (_) {}
+try { db.prepare("UPDATE tasks SET status = 'pending', percentage_completed = 0 WHERE is_fixed = 1 AND status = 'completed'").run(); } catch (_) {}
 // Client objectives support
 try { db.prepare('ALTER TABLE objectives ADD COLUMN type TEXT DEFAULT \'objective\'').run(); } catch (_) {}
 try { db.prepare('UPDATE objectives SET type = \'objective\' WHERE type IS NULL').run(); } catch (_) {}
@@ -94,6 +98,7 @@ function initSchema() {
       title TEXT NOT NULL,
       description TEXT,
       category_id TEXT,
+      category_ids TEXT,
       subcategory TEXT,
       date TEXT,
       start_time TEXT,
@@ -104,8 +109,13 @@ function initSchema() {
       objective_id TEXT,
       milestone_id TEXT,
       is_fixed INTEGER DEFAULT 0,
+      fixed_days TEXT,
+      fixed_start_date TEXT,
+      fixed_end_date TEXT,
       notes TEXT,
       label TEXT,
+      is_cloned INTEGER DEFAULT 0,
+      cloned_from TEXT,
       percentage_completed REAL DEFAULT 0
     );
 

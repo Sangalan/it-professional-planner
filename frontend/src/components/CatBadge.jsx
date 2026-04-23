@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 
 const CategoriesContext = createContext([]);
@@ -65,17 +65,68 @@ export function CategoryOption({ cat, active, onClick }) {
 }
 
 export function CategorySelector({ selected, onChange }) {
+  const [collapsed, setCollapsed] = useState(true);
   const cats = useCats();
   const sortedCats = [...cats].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'));
+  const selectedCats = useMemo(
+    () => sortedCats.filter(cat => selected.includes(cat.id)),
+    [sortedCats, selected]
+  );
+
   function toggle(id) {
     onChange(selected.includes(id) ? selected.filter(c => c !== id) : [...selected, id]);
   }
+
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {sortedCats.map(cat => {
-        const active = selected.includes(cat.id);
-        return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
-      })}
+    <div>
+      <button
+        type="button"
+        onClick={() => setCollapsed(prev => !prev)}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 10,
+          padding: '8px 10px',
+          background: 'var(--bg)',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          cursor: 'pointer',
+          fontSize: 13,
+          color: 'var(--text-2)',
+          marginBottom: collapsed ? 0 : 8,
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span>{collapsed ? '▸' : '▾'}</span>
+          <span>
+            {selectedCats.length === 0
+              ? 'Sin categorías seleccionadas'
+              : `${selectedCats.length} categor${selectedCats.length === 1 ? 'ía seleccionada' : 'ías seleccionadas'}`}
+          </span>
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
+          {collapsed ? 'Mostrar' : 'Ocultar'}
+        </span>
+      </button>
+
+      {collapsed && selectedCats.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          {selectedCats.map(cat => (
+            <CatBadge key={cat.id} id={cat.id} />
+          ))}
+        </div>
+      )}
+
+      {!collapsed && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {sortedCats.map(cat => {
+            const active = selected.includes(cat.id);
+            return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
+          })}
+        </div>
+      )}
     </div>
   );
 }

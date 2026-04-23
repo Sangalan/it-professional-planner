@@ -47,3 +47,4 @@
 - Read files in small chunks when they are large, especially `README.md`, `backend/server.js`, and `backend/db.js`.
 - Check for more specific `AGENTS.md` files before editing files in subdirectories.
 - If a task touches user-facing text, confirm whether the change belongs in Spanish UI copy or English documentation/code comments.
+- If the user sends exactly `message`, generate a commit message for the current changes in the project.

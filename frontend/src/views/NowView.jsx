@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { formatCountdown, secondsUntilTime, secondsBetweenTimes, timeToMinutes } from '../utils/dateUtils.js';
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
+import { canCompleteTask } from '../utils/taskUtils.js';
 
 // Web Audio API beep — no external files needed
 function playBeep(frequency = 880, duration = 0.6, type = 'sine') {
@@ -180,30 +181,36 @@ export default function NowView() {
           <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>{taskProgress}% del tiempo transcurrido</div>
 
           {/* Complete checkbox */}
-          <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div
-              onClick={async (e) => {
-                e.stopPropagation();
-                const newStatus = current.status === 'completed' ? 'pending' : 'completed';
-                await api.updateTask(current.id, { status: newStatus, percentage_completed: newStatus === 'completed' ? 100 : current.percentage_completed });
-                refresh();
-              }}
-              title={current.status === 'completed' ? 'Desmarcar como completada' : 'Marcar como completada'}
-              style={{
-                width: 22, height: 22, borderRadius: 5, cursor: 'pointer',
-                border: `2px solid ${current.status === 'completed' ? getCatColor(current.category_id) : 'var(--border-2)'}`,
-                background: current.status === 'completed' ? getCatColor(current.category_id) : 'white',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: 'white', fontSize: 13, fontWeight: 700,
-                flexShrink: 0,
-              }}
-            >
-              {current.status === 'completed' ? '✓' : ''}
+          {canCompleteTask(current) ? (
+            <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const newStatus = current.status === 'completed' ? 'pending' : 'completed';
+                  await api.updateTask(current.id, { status: newStatus, percentage_completed: newStatus === 'completed' ? 100 : current.percentage_completed });
+                  refresh();
+                }}
+                title={current.status === 'completed' ? 'Desmarcar como completada' : 'Marcar como completada'}
+                style={{
+                  width: 22, height: 22, borderRadius: 5, cursor: 'pointer',
+                  border: `2px solid ${current.status === 'completed' ? getCatColor(current.category_id) : 'var(--border-2)'}`,
+                  background: current.status === 'completed' ? getCatColor(current.category_id) : 'white',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'white', fontSize: 13, fontWeight: 700,
+                  flexShrink: 0,
+                }}
+              >
+                {current.status === 'completed' ? '✓' : ''}
+              </div>
+              <span style={{ fontSize: 13, color: 'var(--text-2)' }}>
+                {current.status === 'completed' ? 'Completada' : 'Marcar como completada'}
+              </span>
             </div>
-            <span style={{ fontSize: 13, color: 'var(--text-2)' }}>
-              {current.status === 'completed' ? 'Completada' : 'Marcar como completada'}
-            </span>
-          </div>
+          ) : (
+            <div style={{ marginTop: 14, fontSize: 13, color: 'var(--text-2)' }}>
+              Tarea fija recurrente
+            </div>
+          )}
         </div>
       ) : (
         <div className="now-free-card">

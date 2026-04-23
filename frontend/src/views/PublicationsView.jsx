@@ -2,14 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
-import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategorySelector } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
-
-const TYPE_ICONS = { video: '🎬', article: '📝', post: '✍️' };
-const TYPE_LABELS = { video: 'Vídeo', article: 'Artículo', post: 'Post' };
+import { PUBLICATION_TYPE_OPTIONS, getPublicationTypeMeta } from '../utils/publicationTypes.js';
 
 const STATUS_OPTIONS = [
   { value: 'pending',   label: 'Pendiente' },
@@ -35,28 +33,13 @@ function daysLabel(days) {
   return { text: `${days}d`, cls: days <= 7 ? 'soon' : 'ok' };
 }
 
-function CategorySelector({ selected, onChange }) {
-  const cats = useCats();
-  function toggle(id) {
-    onChange(selected.includes(id) ? selected.filter(c => c !== id) : [...selected, id]);
-  }
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {cats.map(cat => {
-        const active = selected.includes(cat.id);
-        return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
-      })}
-    </div>
-  );
-}
-
 export function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
   useEscapeClose(onClose);
   const isNew = !pub;
   const initCatIds = parseCatIds(pub?.category_ids, pub?.category_id);
   const [form, setForm] = useState({
     title: pub?.title || '',
-    type: pub?.type || 'post',
+    type: pub?.type || 'idea',
     date: pub?.date || '',
     status: pub?.status || 'pending',
     objective_id: pub?.objective_id || '',
@@ -68,14 +51,22 @@ export function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
   const [deleting, setDeleting] = useState(false);
 
   function set(f, v) { setForm(p => ({ ...p, [f]: v })); }
+  const isIdea = form.type === 'idea';
 
   async function save() {
     if (!form.title.trim()) return;
     setSaving(true);
+    const payload = {
+      ...form,
+      date: isIdea ? null : (form.date || null),
+      objective_id: isIdea ? null : (form.objective_id || null),
+      category_ids: catIds,
+      category_id: catIds[0] || null,
+    };
     if (isNew) {
-      await api.createPublication({ ...form, objective_id: form.objective_id || null, category_ids: catIds, category_id: catIds[0] || null });
+      await api.createPublication(payload);
     } else {
-      await api.updatePublication(pub.id, { ...form, objective_id: form.objective_id || null, category_ids: catIds, category_id: catIds[0] || null });
+      await api.updatePublication(pub.id, payload);
     }
     setSaving(false);
     onSaved();
@@ -109,15 +100,20 @@ export function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
           <div>
             <label style={labelSt}>Tipo</label>
             <select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}>
-              <option value="post">Post</option>
-              <option value="video">Vídeo</option>
-              <option value="article">Artículo</option>
+              {PUBLICATION_TYPE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
-          <div>
-            <label style={labelSt}>Fecha {dl && <span className={`milestone-days ${dl.cls}`} style={{ marginLeft: 6, fontSize: 11 }}>{dl.text}</span>}</label>
-            <SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} />
-          </div>
+          {!isIdea ? (
+            <div>
+              <label style={labelSt}>Fecha {dl && <span className={`milestone-days ${dl.cls}`} style={{ marginLeft: 6, fontSize: 11 }}>{dl.text}</span>}</label>
+              <SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} />
+            </div>
+          ) : (
+            <div>
+              <label style={labelSt}>Fecha</label>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '8px 0' }}>Sin fecha para ideas</div>
+            </div>
+          )}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
           <div>
@@ -126,13 +122,20 @@ export function DetailDialog({ pub, objectives, onClose, onSaved, onDeleted }) {
               {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
-          <div>
-            <label style={labelSt}>Objetivo</label>
-            <select value={form.objective_id} onChange={e => set('objective_id', e.target.value)} style={{ width: '100%' }}>
-              <option value="">Sin objetivo</option>
-              {objectives.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
-            </select>
-          </div>
+          {!isIdea ? (
+            <div>
+              <label style={labelSt}>Objetivo</label>
+              <select value={form.objective_id} onChange={e => set('objective_id', e.target.value)} style={{ width: '100%' }}>
+                <option value="">Sin objetivo</option>
+                {objectives.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
+              </select>
+            </div>
+          ) : (
+            <div>
+              <label style={labelSt}>Objetivo</label>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '8px 0' }}>Sin objetivo para ideas</div>
+            </div>
+          )}
         </div>
         <div style={fieldW}>
           <label style={labelSt}>Categorías</label>
@@ -219,6 +222,7 @@ export default function PublicationsView() {
   const totalPublished = pubs.filter(p => p.status === 'published').length;
   const totalActive = pubs.filter(p => p.status !== 'published').length;
   const progressPct = totalPubs > 0 ? Math.round((totalPublished / totalPubs) * 100) : 0;
+  const ideaCount = pubs.filter(p => p.type === 'idea').length;
   const postCount = pubs.filter(p => p.type === 'post').length;
   const articleCount = pubs.filter(p => p.type === 'article').length;
   const videoCount = pubs.filter(p => p.type === 'video').length;
@@ -260,7 +264,7 @@ export default function PublicationsView() {
           { label: 'Publicaciones activas', value: totalActive, sub: 'pendientes o borrador' },
           { label: 'Publicadas', value: totalPublished, sub: `de ${totalPubs} total`, valueStyle: { color: 'var(--success)' } },
           { label: 'Progreso global', value: `${progressPct}%`, sub: `${totalPublished}/${totalPubs} completadas`, valueStyle: { color: 'var(--accent)' } },
-          { label: 'Distribución por tipo', value: `📝 ${articleCount} · ✍️ ${postCount} · 🎬 ${videoCount}`, sub: 'artículos, posts y vídeos', valueStyle: { fontSize: 16 } },
+          { label: 'Distribución por tipo', value: `💡 ${ideaCount} · 📝 ${articleCount} · ✍️ ${postCount} · 🎬 ${videoCount}`, sub: 'ideas, artículos, posts y vídeos', valueStyle: { fontSize: 16 } },
         ]}
       />
 
@@ -279,14 +283,14 @@ export default function PublicationsView() {
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 8 }}>Por publicar</div>
       {activePubs.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>✍️</div>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>💡</div>
           Sin publicaciones pendientes con estos filtros
         </div>
       ) : (
         <div className="card">
           <div style={{ padding: '0 18px' }}>
             {activePubs.map(pub => {
-              const icon = TYPE_ICONS[pub.type] || '✍️';
+              const icon = getPublicationTypeMeta(pub.type).icon;
               const obj = objMap[pub.objective_id];
               const days = pub.days_remaining;
               const dl = daysLabel(days);
@@ -297,7 +301,7 @@ export default function PublicationsView() {
                     <div style={{ fontWeight: 500, fontSize: 13 }}>{icon} {pub.title}</div>
                     <div className="task-meta">
                       {dl && <span className={`milestone-days ${dl.cls}`}>{dl.text}</span>}
-                      <span className="task-time">{fmtDate(pub.date)}</span>
+                      <span className="task-time">{pub.date ? fmtDate(pub.date) : 'Sin fecha'}</span>
                       {obj && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>→ {obj.title}</span>}
                     </div>
                     {catIds.length > 0 && (
@@ -329,7 +333,7 @@ export default function PublicationsView() {
         <div className="card">
           <div style={{ padding: '0 18px' }}>
             {publishedPubs.map(pub => {
-              const icon = TYPE_ICONS[pub.type] || '✍️';
+              const icon = getPublicationTypeMeta(pub.type).icon;
               const obj = objMap[pub.objective_id];
               const catIds = parseCatIds(pub.category_ids, pub.category_id);
               return (
@@ -337,7 +341,7 @@ export default function PublicationsView() {
                   <div className="task-info">
                     <div style={{ fontWeight: 500, fontSize: 13 }}>{icon} {pub.title}</div>
                     <div className="task-meta">
-                      <span className="task-time">{fmtDate(pub.date)}</span>
+                      <span className="task-time">{pub.date ? fmtDate(pub.date) : 'Sin fecha'}</span>
                       {obj && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>→ {obj.title}</span>}
                     </div>
                     {catIds.length > 0 && (

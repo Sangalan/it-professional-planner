@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
-import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategorySelector } from '../components/CatBadge.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
@@ -31,21 +31,6 @@ function daysAgo(createdAt) {
   const now = new Date();
   const created = new Date(createdAt);
   return Math.floor((now - created) / 86400000);
-}
-
-function CategorySelector({ selected, onChange }) {
-  const cats = useCats();
-  function toggle(id) {
-    onChange(selected.includes(id) ? selected.filter(c => c !== id) : [...selected, id]);
-  }
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {cats.map(cat => {
-        const active = selected.includes(cat.id);
-        return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
-      })}
-    </div>
-  );
 }
 
 function UrlListEditor({ urls, onChange }) {

@@ -6,6 +6,8 @@ import TaskModal from '../components/TaskModal.jsx';
 import { CategoryBadges } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import { canCompleteTask } from '../utils/taskUtils.js';
+import { getPublicationTypeMeta } from '../utils/publicationTypes.js';
 
 const TYPE_OPTIONS = [
   { value: '', label: 'Todos los tipos' },
@@ -127,7 +129,7 @@ function SearchEditModal({ item, objectives, onClose, onSaved }) {
     notes: raw.notes || '',
     status: raw.status || '',
     objective_id: raw.objective_id || '',
-    date: raw.date || raw.target_date || '',
+    date: raw.type === 'idea' ? '' : (raw.date || raw.target_date || ''),
     start_date: raw.start_date || '',
     end_date: raw.end_date || '',
     percentage_completed: raw.percentage_completed ?? 0,
@@ -151,12 +153,13 @@ function SearchEditModal({ item, objectives, onClose, onSaved }) {
     setSaving(true);
     try {
       if (item.kind === 'publication') {
+        const publicationIsIdea = raw.type === 'idea';
         await api.updatePublication(item.id, {
           title: form.title,
-          date: form.date || null,
+          date: publicationIsIdea ? null : (form.date || null),
           status: form.status || null,
           notes: form.notes || null,
-          objective_id: form.objective_id || null,
+          objective_id: publicationIsIdea ? null : (form.objective_id || null),
         });
       } else if (item.kind === 'certification') {
         await api.updateCertification(item.id, {
@@ -254,7 +257,8 @@ function SearchEditModal({ item, objectives, onClose, onSaved }) {
     }
   }
 
-  const supportsObjective = ['publication', 'certification', 'repo', 'pr', 'event'].includes(item.kind);
+  const publicationIsIdea = item.kind === 'publication' && raw.type === 'idea';
+  const supportsObjective = ['certification', 'repo', 'pr', 'event'].includes(item.kind) || (item.kind === 'publication' && !publicationIsIdea);
   const supportsStatus = item.kind !== 'document';
 
   return (
@@ -278,7 +282,7 @@ function SearchEditModal({ item, objectives, onClose, onSaved }) {
               <SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} />
             </div>
           </div>
-        ) : item.kind !== 'document' && (
+        ) : item.kind !== 'document' && !publicationIsIdea && (
           <div style={{ marginBottom: 12 }}>
             <label style={labelSt}>Fecha</label>
             <SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} />
@@ -667,6 +671,7 @@ export default function Search() {
 
   async function toggleTask(taskItem) {
     const task = taskItem.raw;
+    if (!canCompleteTask(task)) return;
     const ns = task.status === 'completed' ? 'pending' : 'completed';
     await api.updateTask(task.id, { status: ns, percentage_completed: ns === 'completed' ? 100 : task.percentage_completed });
     doSearch();
@@ -835,16 +840,22 @@ export default function Search() {
                   title="Abrir para editar"
                 >
                   {item.kind === 'task' ? (
-                    <div
-                      className={`task-check ${item.status === 'completed' ? 'checked' : ''}`}
-                      style={{ marginTop: 1, flexShrink: 0 }}
-                      onClick={(e) => { e.stopPropagation(); toggleTask(item); }}
-                      title={item.status === 'completed' ? 'Desmarcar' : 'Completar'}
-                    >
-                      {item.status === 'completed' ? '✓' : ''}
-                    </div>
+                    canCompleteTask(item.raw) ? (
+                      <div
+                        className={`task-check ${item.status === 'completed' ? 'checked' : ''}`}
+                        style={{ marginTop: 1, flexShrink: 0 }}
+                        onClick={(e) => { e.stopPropagation(); toggleTask(item); }}
+                        title={item.status === 'completed' ? 'Desmarcar' : 'Completar'}
+                      >
+                        {item.status === 'completed' ? '✓' : ''}
+                      </div>
+                    ) : (
+                      <div style={{ width: 22, flexShrink: 0 }} />
+                    )
                   ) : (
-                    <div style={{ width: 22, textAlign: 'center', flexShrink: 0, marginTop: 2 }}>{TYPE_META[item.kind].icon}</div>
+                    <div style={{ width: 22, textAlign: 'center', flexShrink: 0, marginTop: 2 }}>
+                      {item.kind === 'publication' ? getPublicationTypeMeta(item.raw?.type).icon : TYPE_META[item.kind].icon}
+                    </div>
                   )}
 
                   <div style={{ flex: 1, minWidth: 0 }}>

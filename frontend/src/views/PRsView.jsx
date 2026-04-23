@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtShortDate } from '../utils/dateUtils.js';
-import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategorySelector } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
@@ -25,21 +25,6 @@ function parseCatIds(raw, fallback) {
     try { const p = JSON.parse(raw); if (Array.isArray(p) && p.length) return p; } catch (_) {}
   }
   return fallback ? [fallback] : [];
-}
-
-function CategorySelector({ selected, onChange }) {
-  const cats = useCats();
-  function toggle(id) {
-    onChange(selected.includes(id) ? selected.filter(c => c !== id) : [...selected, id]);
-  }
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {cats.map(cat => {
-        const active = selected.includes(cat.id);
-        return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
-      })}
-    </div>
-  );
 }
 
 export function DetailDialog({ pr, objectives, onClose, onSaved, onDeleted }) {

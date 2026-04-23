@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtDate } from '../utils/dateUtils.js';
-import { CategoryBadges, CategoryOption, useCats } from '../components/CatBadge.jsx';
+import { CategoryBadges, CategorySelector } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
@@ -27,19 +27,13 @@ function parseCatIds(raw, fallback) {
   return fallback ? [fallback] : [];
 }
 
-function CategorySelector({ selected, onChange }) {
-  const cats = useCats();
-  function toggle(id) {
-    onChange(selected.includes(id) ? selected.filter(c => c !== id) : [...selected, id]);
-  }
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {cats.map(cat => {
-        const active = selected.includes(cat.id);
-        return <CategoryOption key={cat.id} cat={cat} active={active} onClick={() => toggle(cat.id)} />;
-      })}
-    </div>
-  );
+function getDaysRemaining(dateStr) {
+  if (!dateStr) return null;
+  const target = new Date(`${dateStr}T12:00:00`);
+  if (Number.isNaN(target.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.ceil((target - today) / 86400000);
 }
 
 export function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) {
@@ -52,7 +46,6 @@ export function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) 
     status: cert?.status || 'not_started',
     objective_id: cert?.objective_id || '',
     notes: cert?.notes || '',
-    percentage_completed: cert?.percentage_completed ?? 0,
   });
   const [catIds, setCatIds] = useState(initCatIds);
   const [saving, setSaving] = useState(false);
@@ -64,16 +57,16 @@ export function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) 
     if (!form.title.trim()) return;
     setSaving(true);
     if (isNew) {
-      await api.createCertification({ ...form, objective_id: form.objective_id || null, category_ids: catIds, category_id: catIds[0] || null, percentage_completed: Number(form.percentage_completed) });
+      await api.createCertification({ ...form, objective_id: form.objective_id || null, category_ids: catIds, category_id: catIds[0] || null });
     } else {
-      await api.updateCertification(cert.id, { ...form, objective_id: form.objective_id || null, category_ids: catIds, category_id: catIds[0] || null, percentage_completed: Number(form.percentage_completed) });
+      await api.updateCertification(cert.id, { ...form, objective_id: form.objective_id || null, category_ids: catIds, category_id: catIds[0] || null });
     }
     setSaving(false);
     onSaved();
     onClose();
   }
 
-  const days = cert?.days_remaining;
+  const days = getDaysRemaining(form.target_date);
   const cls = days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok';
 
   return (
@@ -92,27 +85,23 @@ export function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) 
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-3)', lineHeight: 1 }}>✕</button>
         </div>
 
-        {isNew ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, marginBottom: 14 }}>
-            <div>
-              <label style={labelSt}>Título *</label>
-              <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
-            </div>
-            <div>
-              <label style={labelSt}>Fecha objetivo</label>
-              <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
-            </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={labelSt}>Título *</label>
+            <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
           </div>
-        ) : (
-          <>
-            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{cert.title}</div>
-            <div className="task-meta" style={{ marginBottom: 16 }}>
-              <span className="task-time">{fmtDate(cert.target_date)}</span>
-              {days != null && <span className={`milestone-days ${cls}`}>
-                {days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}
-              </span>}
-            </div>
-          </>
+          <div>
+            <label style={labelSt}>Fecha objetivo</label>
+            <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
+          </div>
+        </div>
+        {!isNew && (
+          <div className="task-meta" style={{ marginBottom: 16 }}>
+            <span className="task-time">{fmtDate(form.target_date)}</span>
+            {days != null && <span className={`milestone-days ${cls}`}>
+              {days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}
+            </span>}
+          </div>
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
@@ -128,17 +117,6 @@ export function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) 
               <option value="">Sin objetivo</option>
               {objectives.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
             </select>
-          </div>
-        </div>
-
-        <div style={fieldW}>
-          <label style={labelSt}>% completado</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <input type="range" min="0" max="100" step="5"
-              value={form.percentage_completed}
-              onChange={e => set('percentage_completed', Number(e.target.value))}
-              style={{ flex: 1 }} />
-            <span style={{ fontSize: 13, fontWeight: 600, minWidth: 36, color: 'var(--accent)' }}>{form.percentage_completed}%</span>
           </div>
         </div>
 

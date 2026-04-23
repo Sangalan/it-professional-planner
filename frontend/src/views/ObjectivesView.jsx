@@ -12,6 +12,8 @@ import { DetailDialog as CertificationDetailDialog } from './CertificationsView.
 import { DetailDialog as RepoDetailDialog } from './ReposView.jsx';
 import { DetailDialog as PRDetailDialog } from './PRsView.jsx';
 import { DetailDialog as EventDetailDialog } from './EventsView.jsx';
+import { canCompleteTask, isFixedTask } from '../utils/taskUtils.js';
+import { PUBLICATION_TYPE_OPTIONS } from '../utils/publicationTypes.js';
 
 const STATUS_ICONS = {
   not_started: '⚪',
@@ -220,7 +222,7 @@ function CreatePublicationDialog({ objectiveId, item, onClose, onSaved }) {
   const [form, setForm] = useState({
     title: item?.title || '',
     date: item?.date || '',
-    type: item?.type || 'post',
+    type: item?.type || 'idea',
     status: item?.status || 'pending',
     notes: item?.notes || '',
     publication_text: item?.publication_text || '',
@@ -232,8 +234,14 @@ function CreatePublicationDialog({ objectiveId, item, onClose, onSaved }) {
     if (!form.title.trim()) { setError('El título es obligatorio'); return; }
     setSaving(true); setError('');
     try {
-      if (isNew) await api.createPublication({ ...form, objective_id: objectiveId });
-      else await api.updatePublication(item.id, { ...form, objective_id: objectiveId });
+      const isIdea = form.type === 'idea';
+      const payload = {
+        ...form,
+        date: isIdea ? null : (form.date || null),
+        objective_id: isIdea ? null : objectiveId,
+      };
+      if (isNew) await api.createPublication(payload);
+      else await api.updatePublication(item.id, payload);
       onSaved(); onClose();
     }
     catch (e) { setError(e.message); } finally { setSaving(false); }
@@ -242,8 +250,15 @@ function CreatePublicationDialog({ objectiveId, item, onClose, onSaved }) {
     <Dialog title={isNew ? 'Nueva publicación' : 'Editar publicación'} onClose={onClose}>
       <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-        <div><label style={labelSt}>Fecha</label><SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}><option value="post">Post</option><option value="video">Vídeo</option><option value="article">Artículo</option></select></div>
+        {form.type === 'idea' ? (
+          <div>
+            <label style={labelSt}>Fecha</label>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '8px 0' }}>Sin fecha para ideas</div>
+          </div>
+        ) : (
+          <div><label style={labelSt}>Fecha</label><SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} /></div>
+        )}
+        <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}>{PUBLICATION_TYPE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>
         <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="failed">Fallida</option><option value="cancelled">Cancelada</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
@@ -457,6 +472,7 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
   }
 
   async function toggleTask(task) {
+    if (!canCompleteTask(task)) return;
     const ns = task.status === 'completed' ? 'pending' : 'completed';
     await api.updateTask(task.id, { status: ns });
     await fetchTasks();
@@ -502,12 +518,16 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
               key={task.id}
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}
             >
-              <div
-                className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
-                onClick={() => toggleTask(task)}
-              >
-                {task.status === 'completed' ? '✓' : ''}
-              </div>
+              {canCompleteTask(task) ? (
+                <div
+                  className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
+                  onClick={() => toggleTask(task)}
+                >
+                  {task.status === 'completed' ? '✓' : ''}
+                </div>
+              ) : (
+                <div style={{ width: 22, flexShrink: 0 }} />
+              )}
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
                 <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>
                   {task.title}
@@ -649,6 +669,7 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
   }
 
   async function toggleTask(task) {
+    if (!canCompleteTask(task)) return;
     const ns = task.status === 'completed' ? 'pending' : 'completed';
     await api.updateTask(task.id, { status: ns });
     await fetchTasks();
@@ -775,9 +796,13 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
               key={task.id}
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}
             >
-              <div className={`task-check ${task.status === 'completed' ? 'checked' : ''}`} onClick={() => toggleTask(task)}>
-                {task.status === 'completed' ? '✓' : ''}
-              </div>
+              {canCompleteTask(task) ? (
+                <div className={`task-check ${task.status === 'completed' ? 'checked' : ''}`} onClick={() => toggleTask(task)}>
+                  {task.status === 'completed' ? '✓' : ''}
+                </div>
+              ) : (
+                <div style={{ width: 22, flexShrink: 0 }} />
+              )}
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
                 <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>{task.title}</div>
                 <div className="task-meta">
@@ -811,13 +836,16 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
   const [mvVersion, setMvVersion] = useState(0);
   const [contentItems, setContentItems] = useState([]);
   const [contentLoaded, setContentLoaded] = useState(false);
+  const [contentRefreshKey, setContentRefreshKey] = useState(0);
   const [editingObjective, setEditingObjective] = useState(false);
   const [choosingMilestoneType, setChoosingMilestoneType] = useState(false);
   const [creatingKind, setCreatingKind] = useState(null);
   const color = obj.color || '#2563eb';
 
   useEffect(() => {
-    if (!expanded || contentLoaded) return;
+    if (!expanded) return;
+    let cancelled = false;
+    setContentLoaded(false);
     Promise.all([
       api.certifications({ objective_id: obj.id }),
       api.repos({ objective_id: obj.id }),
@@ -826,6 +854,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
       api.events({ objective_id: obj.id }),
       api.tasks({ objective_id: obj.id }),
     ]).then(([certs, repos, prs, pubs, evts, objectiveTasks]) => {
+      if (cancelled) return;
       const certStatsById = buildCertificationStatsMap(certs, objectiveTasks);
       setContentItems([
         ...certs.map(c => ({ ...c, type: 'certification', icon: '🏆', date: c.target_date, certStats: certStatsById[c.id] })),
@@ -838,7 +867,13 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
       ]);
       setContentLoaded(true);
     });
-  }, [expanded]);
+    return () => { cancelled = true; };
+  }, [expanded, obj.id, contentRefreshKey]);
+
+  function handleUpdateAndRefresh() {
+    setContentRefreshKey(v => v + 1);
+    onUpdate();
+  }
 
   function handleTaskMoved() {
     setMvVersion(v => v + 1);
@@ -869,7 +904,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <ObjectiveDialog
             obj={obj}
             onClose={() => setEditingObjective(false)}
-            onSaved={() => { setEditingObjective(false); onUpdate(); }}
+            onSaved={() => { setEditingObjective(false); handleUpdateAndRefresh(); }}
           />
         </div>
       )}
@@ -889,7 +924,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <CreateClassicMilestoneDialog
             objectiveId={obj.id}
             onClose={() => setCreatingKind(null)}
-            onSaved={onUpdate}
+            onSaved={handleUpdateAndRefresh}
           />
         </div>
       )}
@@ -898,7 +933,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <CreatePublicationDialog
             objectiveId={obj.id}
             onClose={() => setCreatingKind(null)}
-            onSaved={onUpdate}
+            onSaved={handleUpdateAndRefresh}
           />
         </div>
       )}
@@ -907,7 +942,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <CreateCertificationDialog
             objectiveId={obj.id}
             onClose={() => setCreatingKind(null)}
-            onSaved={onUpdate}
+            onSaved={handleUpdateAndRefresh}
           />
         </div>
       )}
@@ -916,7 +951,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <CreateRepoDialog
             objectiveId={obj.id}
             onClose={() => setCreatingKind(null)}
-            onSaved={onUpdate}
+            onSaved={handleUpdateAndRefresh}
           />
         </div>
       )}
@@ -925,7 +960,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <CreatePRDialog
             objectiveId={obj.id}
             onClose={() => setCreatingKind(null)}
-            onSaved={onUpdate}
+            onSaved={handleUpdateAndRefresh}
           />
         </div>
       )}
@@ -934,7 +969,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <CreateEventDialog
             objectiveId={obj.id}
             onClose={() => setCreatingKind(null)}
-            onSaved={onUpdate}
+            onSaved={handleUpdateAndRefresh}
           />
         </div>
       )}
@@ -969,7 +1004,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <TaskModal
             initial={{ objective_id: obj.id, milestone_id: newTaskFor.id }}
             onClose={() => setNewTaskFor(null)}
-            onSave={() => { setNewTaskFor(null); onUpdate(); }}
+            onSave={() => { setNewTaskFor(null); handleUpdateAndRefresh(); }}
           />
         </div>
       )}
@@ -1002,7 +1037,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
               key={item.id}
               item={item}
               objectives={objectives}
-              onUpdate={onUpdate}
+              onUpdate={handleUpdateAndRefresh}
               onAddTask={setNewTaskFor}
               onTaskMoved={handleTaskMoved}
               version={mvVersion}
@@ -1013,7 +1048,7 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
               objId={obj.id}
               orphanCount={obj.orphan_count}
               orphanDone={obj.orphan_done}
-              onUpdate={onUpdate}
+              onUpdate={handleUpdateAndRefresh}
               onTaskMoved={handleTaskMoved}
               version={mvVersion}
             />
@@ -1040,7 +1075,7 @@ export default function ObjectivesView() {
     );
     const effectiveObjectives = objectivesData.map(obj => {
       const objectiveTasks = tasks.filter(
-        t => t.objective_id === obj.id && !cancelledEventIds.has(t.milestone_id)
+        t => t.objective_id === obj.id && !isFixedTask(t) && !cancelledEventIds.has(t.milestone_id)
       );
       const taskCount = objectiveTasks.length;
       const doneCount = objectiveTasks.filter(t => t.status === 'completed').length;

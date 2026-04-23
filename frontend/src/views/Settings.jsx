@@ -10,6 +10,7 @@ import { DetailDialog as CertificationDetailDialog } from './CertificationsView.
 import { DetailDialog as RepoDetailDialog } from './ReposView.jsx';
 import { DetailDialog as PRDetailDialog } from './PRsView.jsx';
 import { DetailDialog as EventDetailDialog } from './EventsView.jsx';
+import { PUBLICATION_TYPE_OPTIONS, getPublicationTypeMeta } from '../utils/publicationTypes.js';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const rowBorder = { padding: '10px 0', borderBottom: '1px solid var(--border)' };
@@ -466,7 +467,7 @@ function LinkedMilestoneDialog({ item, objectives, onClose, onSaved }) {
     date: raw.date || raw.target_date || item?.date || '',
     start_date: raw.start_date || '',
     end_date: raw.end_date || '',
-    publication_type: raw.type || 'post',
+    publication_type: raw.type || 'idea',
     publication_text: raw.publication_text || '',
     percentage_completed: Number(raw.percentage_completed || 0),
     repo_type: raw.type || 'personal',
@@ -479,6 +480,7 @@ function LinkedMilestoneDialog({ item, objectives, onClose, onSaved }) {
   const [error, setError] = useState('');
 
   function set(f, v) { setForm(p => ({ ...p, [f]: v })); }
+  const publicationIsIdea = typeKey === 'publication' && form.publication_type === 'idea';
 
   function statusOptions() {
     if (typeKey === 'publication') return [
@@ -511,11 +513,11 @@ function LinkedMilestoneDialog({ item, objectives, onClose, onSaved }) {
       if (typeKey === 'publication') {
         await api.updatePublication(item.id, {
           title: form.title,
-          objective_id: form.objective_id || null,
+          objective_id: publicationIsIdea ? null : (form.objective_id || null),
           status: form.status,
           notes: form.notes || null,
-          date: form.date || null,
-          type: form.publication_type || 'post',
+          date: publicationIsIdea ? null : (form.date || null),
+          type: form.publication_type || 'idea',
           publication_text: form.publication_text || null,
         });
       } else if (typeKey === 'certification') {
@@ -571,19 +573,26 @@ function LinkedMilestoneDialog({ item, objectives, onClose, onSaved }) {
           <label style={labelSt}>Título *</label>
           <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
         </div>
-        <div>
-          <label style={labelSt}>Objetivo</label>
-          <select value={form.objective_id} onChange={e => set('objective_id', e.target.value)} style={{ width: '100%' }}>
-            <option value="">Sin objetivo</option>
-            {objectives.map(o => <option key={o.id} value={o.id}>{o.type === 'client' ? '👤 ' : ''}{o.title}</option>)}
-          </select>
-        </div>
+        {!publicationIsIdea ? (
+          <div>
+            <label style={labelSt}>Objetivo</label>
+            <select value={form.objective_id} onChange={e => set('objective_id', e.target.value)} style={{ width: '100%' }}>
+              <option value="">Sin objetivo</option>
+              {objectives.map(o => <option key={o.id} value={o.id}>{o.type === 'client' ? '👤 ' : ''}{o.title}</option>)}
+            </select>
+          </div>
+        ) : (
+          <div>
+            <label style={labelSt}>Objetivo</label>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '8px 0' }}>Sin objetivo para ideas</div>
+          </div>
+        )}
       </div>
 
-      {(typeKey === 'publication' || typeKey === 'repo') && (
+      {typeKey === 'repo' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
           <div>
-            <label style={labelSt}>{typeKey === 'publication' ? 'Fecha' : 'Fecha objetivo'}</label>
+            <label style={labelSt}>Fecha objetivo</label>
             <SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} />
           </div>
           <div>
@@ -592,6 +601,31 @@ function LinkedMilestoneDialog({ item, objectives, onClose, onSaved }) {
               {statusOptions().map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
+        </div>
+      )}
+
+      {typeKey === 'publication' && !publicationIsIdea && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={labelSt}>Fecha</label>
+            <SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} />
+          </div>
+          <div>
+            <label style={labelSt}>Estado</label>
+            <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+              {statusOptions().map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {typeKey === 'publication' && publicationIsIdea && (
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelSt}>Estado</label>
+          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+            {statusOptions().map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>Las ideas no usan fecha ni objetivo.</div>
         </div>
       )}
 
@@ -634,9 +668,7 @@ function LinkedMilestoneDialog({ item, objectives, onClose, onSaved }) {
           <div style={fieldW}>
             <label style={labelSt}>Tipo</label>
             <select value={form.publication_type} onChange={e => set('publication_type', e.target.value)} style={{ width: '100%' }}>
-              <option value="post">Post</option>
-              <option value="video">Vídeo</option>
-              <option value="article">Artículo</option>
+              {PUBLICATION_TYPE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
           <div style={fieldW}>
@@ -849,7 +881,7 @@ export default function Settings() {
         kind: 'specialized',
         typeKey: 'publication',
         typeLabel: 'Publicación',
-        icon: '✍️',
+        icon: getPublicationTypeMeta(p.type).icon,
         task_count: taskCountByMilestone[p.id] || 0,
         raw: p,
       })),

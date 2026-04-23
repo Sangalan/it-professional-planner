@@ -35,6 +35,25 @@ function formatMilestoneDate(dateStr) {
   return `${fmtShortDate(dateStr)} · ${suffix}`;
 }
 
+function MilestoneSummaryRow({ heading, item, emptyText }) {
+  const hasDate = !!item?.date;
+  const name = item?.label || emptyText;
+
+  return (
+    <div className="milestone-row">
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="milestone-title">{heading}</div>
+        <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {name}
+        </div>
+      </div>
+      <div className="milestone-date">
+        {hasDate ? formatMilestoneDate(item.date) : emptyText}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -153,22 +172,10 @@ export default function Dashboard() {
               <div className="empty-state">No hay ninguna tarea planificada</div>
             ) : (
               <>
-                <div className="milestone-row">
-                  <div className="milestone-title">Próximo examen</div>
-                  <div className="milestone-date">{nextSpecial.exam?.date ? formatMilestoneDate(nextSpecial.exam.date) : 'No planificado'}</div>
-                </div>
-                <div className="milestone-row">
-                  <div className="milestone-title">Próxima publicación</div>
-                  <div className="milestone-date">{nextSpecial.publication?.date ? formatMilestoneDate(nextSpecial.publication.date) : 'No planificada'}</div>
-                </div>
-                <div className="milestone-row">
-                  <div className="milestone-title">Próxima entrega PR</div>
-                  <div className="milestone-date">{nextSpecial.pr?.date ? formatMilestoneDate(nextSpecial.pr.date) : 'No planificada'}</div>
-                </div>
-                <div className="milestone-row">
-                  <div className="milestone-title">Próxima fecha para terminar Proyecto</div>
-                  <div className="milestone-date">{nextSpecial.repo?.date ? formatMilestoneDate(nextSpecial.repo.date) : 'No planificado'}</div>
-                </div>
+                <MilestoneSummaryRow heading="Próximo examen" item={nextSpecial.exam} emptyText="No planificado" />
+                <MilestoneSummaryRow heading="Próxima publicación" item={nextSpecial.publication} emptyText="No planificada" />
+                <MilestoneSummaryRow heading="Próxima entrega PR" item={nextSpecial.pr} emptyText="No planificada" />
+                <MilestoneSummaryRow heading="Próxima fecha para terminar Proyecto" item={nextSpecial.repo} emptyText="No planificado" />
               </>
             )}
           </div>

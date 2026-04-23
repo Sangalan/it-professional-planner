@@ -7,6 +7,8 @@ import TaskModal from '../components/TaskModal.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import { canCompleteTask } from '../utils/taskUtils.js';
+import { PUBLICATION_TYPE_OPTIONS } from '../utils/publicationTypes.js';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW  = { marginBottom: 14 };
@@ -435,22 +437,37 @@ function ProjectDialog({ clientId, project, onClose, onSaved }) {
 }
 
 function CreatePublicationDialog({ objectiveId, onClose, onSaved }) {
-  const [form, setForm] = useState({ title: '', date: '', type: 'post', status: 'pending', notes: '', publication_text: '' });
+  const [form, setForm] = useState({ title: '', date: '', type: 'idea', status: 'pending', notes: '', publication_text: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
   async function save() {
     if (!form.title.trim()) { setError('El título es obligatorio'); return; }
     setSaving(true); setError('');
-    try { await api.createPublication({ ...form, objective_id: objectiveId }); onSaved(); onClose(); }
+    try {
+      const isIdea = form.type === 'idea';
+      await api.createPublication({
+        ...form,
+        date: isIdea ? null : (form.date || null),
+        objective_id: isIdea ? null : objectiveId,
+      });
+      onSaved(); onClose();
+    }
     catch (e) { setError(e.message); } finally { setSaving(false); }
   }
   return (
     <Dialog title="Nueva publicación" onClose={onClose}>
       <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-        <div><label style={labelSt}>Fecha</label><SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}><option value="post">Post</option><option value="video">Vídeo</option><option value="article">Artículo</option></select></div>
+        {form.type === 'idea' ? (
+          <div>
+            <label style={labelSt}>Fecha</label>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '8px 0' }}>Sin fecha para ideas</div>
+          </div>
+        ) : (
+          <div><label style={labelSt}>Fecha</label><SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} /></div>
+        )}
+        <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}>{PUBLICATION_TYPE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>
         <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="failed">Fallida</option><option value="cancelled">Cancelada</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
@@ -578,6 +595,7 @@ function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onRe
   }
 
   async function toggleTask(task) {
+    if (!canCompleteTask(task)) return;
     const ns = task.status === 'completed' ? 'pending' : 'completed';
     await api.updateTask(task.id, { status: ns });
     await fetchTasks();
@@ -687,9 +705,13 @@ function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onRe
               key={task.id}
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}
             >
-              <div className={`task-check ${task.status === 'completed' ? 'checked' : ''}`} onClick={() => toggleTask(task)}>
-                {task.status === 'completed' ? '✓' : ''}
-              </div>
+              {canCompleteTask(task) ? (
+                <div className={`task-check ${task.status === 'completed' ? 'checked' : ''}`} onClick={() => toggleTask(task)}>
+                  {task.status === 'completed' ? '✓' : ''}
+                </div>
+              ) : (
+                <div style={{ width: 22, flexShrink: 0 }} />
+              )}
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
                 <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>{task.title}</div>
                 <div className="task-meta">

@@ -11,6 +11,7 @@ import CatBadge from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import { canCompleteTask } from '../utils/taskUtils.js';
 
 const DOW = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const WORK_START = 9 * 60;  // 09:00 in minutes
@@ -62,6 +63,7 @@ function DayDetail({ dateStr, tasks, events, getTaskColor, getMilestoneLabel, on
   const [showCreate, setShowCreate] = useState(false);
 
   async function toggle(task) {
+    if (!canCompleteTask(task)) return;
     const ns = task.status === 'completed' ? 'pending' : 'completed';
     await api.updateTask(task.id, { status: ns, percentage_completed: ns === 'completed' ? 100 : task.percentage_completed });
     setLocalTasks(lt => lt.map(t => t.id === task.id ? { ...t, status: ns } : t));
@@ -131,13 +133,17 @@ function DayDetail({ dateStr, tasks, events, getTaskColor, getMilestoneLabel, on
                 display: 'flex', gap: 10, padding: '8px 0',
                 borderBottom: '1px solid var(--border)', alignItems: 'flex-start'
               }}>
-                <div
-                  className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
-                  style={{ marginTop: 1 }}
-                  onClick={() => toggle(task)}
-                >
-                  {task.status === 'completed' ? '✓' : ''}
-                </div>
+                {canCompleteTask(task) ? (
+                  <div
+                    className={`task-check ${task.status === 'completed' ? 'checked' : ''}`}
+                    style={{ marginTop: 1 }}
+                    onClick={() => toggle(task)}
+                  >
+                    {task.status === 'completed' ? '✓' : ''}
+                  </div>
+                ) : (
+                  <div style={{ width: 22, flexShrink: 0 }} />
+                )}
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: getTaskColor(task), marginTop: 5, flexShrink: 0 }} />
                 <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditTask(task)}>
                   <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>{task.title}</div>

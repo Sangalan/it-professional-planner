@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { api } from '../api.js';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import { getPublicationTypeMeta } from '../utils/publicationTypes.js';
 
 function fmtHour(h) {
   return `${String(h).padStart(2, '0')}:00–${String(h + 1).padStart(2, '0')}:00`;
@@ -65,7 +66,7 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
       setObjectives(objs);
       setAllItems([
         ...normalise(ms.filter(m => m.id.startsWith('ms-')), 'milestone', '🎯', 'Hitos', it => it.target_date, null),
-        ...normalise(pubs,  'publication',   '✍️',  'Publicaciones',   it => it.date,        null),
+        ...normalise(pubs,  'publication',   '✍️',  'Publicaciones',   it => it.date,        null).map(it => ({ ...it, icon: getPublicationTypeMeta(it.raw?.type).icon })),
         ...normalise(certs, 'certification', '🏆', 'Certificaciones', it => it.target_date, null),
         ...normalise(repos, 'repo',          '📦', 'Proyectos',       it => it.target_date, null),
         ...normalise(prs,   'pr',            '🔀', 'Pull Requests',   it => it.end_date,    null),
