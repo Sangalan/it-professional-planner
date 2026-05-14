@@ -3,6 +3,8 @@ import { api } from '../api.js';
 import { fmtShortDate, fmtDate, formatDuration, differenceInDays, parseISO } from '../utils/dateUtils.js';
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import CatBadge from '../components/CatBadge.jsx';
+import TaskModal from '../components/TaskModal.jsx';
+import { DetailDialog as EventDetailDialog } from './EventsView.jsx';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   PieChart, Pie, Legend, CartesianGrid
@@ -59,11 +61,23 @@ export default function Dashboard() {
   const [loadError, setLoadError] = useState('');
   const [cats, setCats] = useState([]);
   const [events, setEvents] = useState([]);
+  const [editingTask, setEditingTask] = useState(null);
+  const [editingEvent, setEditingEvent] = useState(null);
+
+  async function loadDashboardData() {
+    try {
+      const dashboardData = await api.dashboard();
+      setData(dashboardData);
+      setLoadError('');
+    } catch (_) {
+      setLoadError('No se pudo cargar el dashboard');
+    }
+    try { setCats(await api.categories()); } catch (_) {}
+    try { setEvents(await api.events()); } catch (_) {}
+  }
 
   useEffect(() => {
-    api.dashboard().then(setData).catch(() => setLoadError('No se pudo cargar el dashboard'));
-    api.categories().then(setCats);
-    api.events().then(setEvents).catch(() => {});
+    loadDashboardData();
   }, []);
 
   if (loadError && !data) return <div className="empty-state">{loadError}</div>;
@@ -103,7 +117,7 @@ export default function Dashboard() {
     <div>
       <div className="page-header">
         <div>
-          <div className="page-title">Dashboard</div>
+          <div className="page-title">Panel</div>
           <div className="page-subtitle" style={{ textTransform: 'capitalize' }}>{todayFormatted}</div>
         </div>
       </div>
@@ -146,7 +160,12 @@ export default function Dashboard() {
               <div className="empty-state">Sin tareas para hoy</div>
             ) : (
               data.today_tasks.tasks.slice(0, 8).map(task => (
-                <div key={task.id} className="task-row">
+                <div
+                  key={task.id}
+                  className="task-row"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setEditingTask(task)}
+                >
                   <div className="task-check checked" style={{ opacity: task.status === 'completed' ? 1 : 0.3 }}>
                     {task.status === 'completed' ? '✓' : ''}
                   </div>
@@ -261,7 +280,12 @@ export default function Dashboard() {
           </div>
           <div className="card-body" style={{ padding: '8px 18px' }}>
             {data.overdue_tasks.slice(0, 6).map(task => (
-              <div key={task.id} className="task-row">
+              <div
+                key={task.id}
+                className="task-row"
+                style={{ cursor: 'pointer' }}
+                onClick={() => setEditingTask(task)}
+              >
                 <div className="task-info">
                   <div className="task-title">{task.title}</div>
                   <div className="task-meta">
@@ -281,7 +305,12 @@ export default function Dashboard() {
           <div className="card-header"><span className="card-title">Próximos eventos (7 días)</span></div>
           <div className="card-body" style={{ padding: '8px 18px' }}>
             {data.next_events.map(ev => (
-              <div key={ev.id} className="task-row">
+              <div
+                key={ev.id}
+                className="task-row"
+                style={{ cursor: 'pointer' }}
+                onClick={() => setEditingEvent(ev)}
+              >
                 <div className="dot" style={{ background: getCatColor(ev.category_id), marginTop: 4 }} />
                 <div className="task-info">
                   <div className="task-title">{ev.title}</div>
@@ -314,7 +343,12 @@ export default function Dashboard() {
                 if (ev.format !== 'Online' && !ev.hotel_booked) missing.push({ label: 'Hotel', urgent: false });
                 if (ev.format !== 'Online' && !ev.flight_booked) missing.push({ label: 'Avión', urgent: false });
                 return (
-                  <div key={ev.id} className="task-row" style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div
+                    key={ev.id}
+                    className="task-row"
+                    style={{ cursor: 'pointer', padding: '8px 0', borderBottom: '1px solid var(--border)' }}
+                    onClick={() => setEditingEvent(ev)}
+                  >
                     <div className="dot" style={{ background: getCatColor(ev.category_id), marginTop: 4 }} />
                     <div className="task-info">
                       <div style={{ fontWeight: 500, fontSize: 13 }}>{ev.title}</div>
@@ -338,6 +372,36 @@ export default function Dashboard() {
           </div>
         );
       })()}
+
+      {editingTask && (
+        <TaskModal
+          initial={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSave={() => {
+            setEditingTask(null);
+            loadDashboardData();
+          }}
+          onDeleted={() => {
+            setEditingTask(null);
+            loadDashboardData();
+          }}
+        />
+      )}
+
+      {editingEvent && (
+        <EventDetailDialog
+          event={editingEvent}
+          objectives={data.objectives || []}
+          onClose={() => setEditingEvent(null)}
+          onSaved={() => {
+            loadDashboardData();
+          }}
+          onDeleted={() => {
+            setEditingEvent(null);
+            loadDashboardData();
+          }}
+        />
+      )}
     </div>
   );
 }

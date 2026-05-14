@@ -10,6 +10,11 @@ initSchema();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use((req, _res, next) => {
+  const raw = req.header('x-user-id') || req.query.user_id || 'pepito';
+  req.userId = String(raw || 'pepito').trim() || 'pepito';
+  next();
+});
 
 const uploadsDir = path.join(__dirname, 'data', 'uploads');
 app.use('/uploads', express.static(uploadsDir));
@@ -24,6 +29,71 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+const DEFAULT_CONTENT_SECTIONS = {
+  clients: true,
+  publications: true,
+  certifications: true,
+  repos: true,
+  prs: true,
+  events: true,
+  reading_list: true,
+  documents: true,
+};
+
+function parseContentSections(raw) {
+  if (!raw) return { ...DEFAULT_CONTENT_SECTIONS };
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return { ...DEFAULT_CONTENT_SECTIONS, ...(parsed || {}) };
+  } catch (_) {
+    return { ...DEFAULT_CONTENT_SECTIONS };
+  }
+}
+
+function getUserContentSections(userId) {
+  const row = db.prepare('SELECT content_sections FROM users WHERE id = ?').get(userId);
+  return parseContentSections(row?.content_sections || null);
+}
+
+function isSectionEnabled(userId, section) {
+  return !!getUserContentSections(userId)[section];
+}
+
+function getHiddenTaskRefs(userId) {
+  const sections = getUserContentSections(userId);
+  const hiddenMilestoneIds = [];
+  const pushIds = (table) => {
+    const ids = db.prepare(`SELECT id FROM ${table} WHERE user_id = ?`).all(userId).map(r => r.id);
+    hiddenMilestoneIds.push(...ids);
+  };
+  if (!sections.publications) pushIds('publications');
+  if (!sections.certifications) pushIds('certifications');
+  if (!sections.repos) pushIds('repos');
+  if (!sections.prs) pushIds('prs');
+  if (!sections.events) pushIds('events');
+
+  const hiddenObjectiveIds = !sections.clients
+    ? db.prepare("SELECT id FROM objectives WHERE user_id = ? AND type = 'client'").all(userId).map(r => r.id)
+    : [];
+
+  return { hiddenMilestoneIds, hiddenObjectiveIds };
+}
+
+function applyTaskVisibility(sql, params, refs) {
+  if (refs.hiddenMilestoneIds.length) {
+    sql += ` AND (milestone_id IS NULL OR milestone_id NOT IN (${refs.hiddenMilestoneIds.map(() => '?').join(',')}))`;
+    params.push(...refs.hiddenMilestoneIds);
+  }
+  if (refs.hiddenObjectiveIds.length) {
+    sql += ` AND (objective_id IS NULL OR objective_id NOT IN (${refs.hiddenObjectiveIds.map(() => '?').join(',')}))`;
+    params.push(...refs.hiddenObjectiveIds);
+  }
+  return { sql, params };
+}
+
+function ensureUser(userId) {
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+}
 
 function computeTaskProgress(objectiveId) {
   if (!objectiveId) return 0;
@@ -43,9 +113,10 @@ function computeGlobalTaskProgress() {
 // Expand fixed-recurrence tasks into virtual instances within [from, to]
 function expandFixedTasks(from, to, filters = {}) {
   let sql = `SELECT * FROM tasks WHERE is_fixed = 1 AND fixed_days IS NOT NULL
+    AND user_id = ?
     AND (fixed_end_date IS NULL OR fixed_end_date >= ?)
     AND (fixed_start_date IS NULL OR fixed_start_date <= ?)`;
-  const params = [from, to];
+  const params = [filters.user_id || 'pepito', from, to];
   if (filters.objective_id) { sql += ' AND objective_id = ?'; params.push(filters.objective_id); }
   if (filters.milestone_id) { sql += ' AND milestone_id = ?'; params.push(filters.milestone_id); }
 
@@ -154,8 +225,8 @@ function filterFixedInstancesWithClones(instances, clones) {
 }
 
 function findClonedTasksForRange(from, to, filters = {}) {
-  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND is_cloned = 1 AND cloned_from IS NOT NULL AND date BETWEEN ? AND ?';
-  const params = [from, to];
+  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND is_cloned = 1 AND cloned_from IS NOT NULL AND date BETWEEN ? AND ? AND user_id = ?';
+  const params = [from, to, filters.user_id || 'pepito'];
   if (filters.objective_id) { sql += ' AND objective_id = ?'; params.push(filters.objective_id); }
   if (filters.milestone_id) { sql += ' AND milestone_id = ?'; params.push(filters.milestone_id); }
   if (filters.category_id) { sql += ' AND category_id = ?'; params.push(filters.category_id); }
@@ -163,27 +234,52 @@ function findClonedTasksForRange(from, to, filters = {}) {
   return db.prepare(sql).all(...params);
 }
 
+// ── USERS ───────────────────────────────────────────────────────────────────
+app.get('/api/users', (req, res) => {
+  res.json(db.prepare('SELECT * FROM users ORDER BY name COLLATE NOCASE ASC').all());
+});
+
+app.post('/api/users', (req, res) => {
+  const { name, color, content_sections } = req.body;
+  if (!name || !color) return res.status(400).json({ error: 'name y color son obligatorios' });
+  const base = String(name).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'user';
+  let id = base;
+  let n = 2;
+  while (db.prepare('SELECT id FROM users WHERE id = ?').get(id)) id = `${base}-${n++}`;
+  db.prepare('INSERT INTO users (id, name, color, content_sections) VALUES (?, ?, ?, ?)').run(id, String(name).trim(), color, JSON.stringify(parseContentSections(content_sections)));
+  res.status(201).json(db.prepare('SELECT * FROM users WHERE id = ?').get(id));
+});
+
+app.put('/api/users/:id', (req, res) => {
+  const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!current) return res.status(404).json({ error: 'Not found' });
+  const { name, color, content_sections } = req.body;
+  db.prepare('UPDATE users SET name = COALESCE(?, name), color = COALESCE(?, color), content_sections = COALESCE(?, content_sections) WHERE id = ?')
+    .run(name ?? null, color ?? null, content_sections !== undefined ? JSON.stringify(parseContentSections(content_sections)) : null, req.params.id);
+  res.json(db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id));
+});
+
 // ── CATEGORIES ──────────────────────────────────────────────────────────────
 app.get('/api/categories', (req, res) => {
-  res.json(db.prepare('SELECT * FROM categories ORDER BY name COLLATE NOCASE ASC').all());
+  res.json(db.prepare('SELECT * FROM categories WHERE user_id = ? ORDER BY name COLLATE NOCASE ASC').all(req.userId));
 });
 
 app.post('/api/categories', (req, res) => {
   const { id, name, color, text_color } = req.body;
   if (!id || !name || !color) return res.status(400).json({ error: 'id, name y color son obligatorios' });
-  if (db.prepare('SELECT id FROM categories WHERE id = ?').get(id))
+  if (db.prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?').get(id, req.userId))
     return res.status(409).json({ error: 'Ya existe una categoría con ese id' });
-  db.prepare('INSERT INTO categories (id, name, color, text_color) VALUES (?, ?, ?, ?)').run(id, name, color, text_color ?? null);
-  res.status(201).json(db.prepare('SELECT * FROM categories WHERE id = ?').get(id));
+  db.prepare('INSERT INTO categories (id, name, color, text_color, user_id) VALUES (?, ?, ?, ?, ?)').run(id, name, color, text_color ?? null, req.userId);
+  res.status(201).json(db.prepare('SELECT * FROM categories WHERE id = ? AND user_id = ?').get(id, req.userId));
 });
 
 app.put('/api/categories/:id', (req, res) => {
   const { name, color, text_color } = req.body;
-  const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
+  const cat = db.prepare('SELECT * FROM categories WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   if (!cat) return res.status(404).json({ error: 'Not found' });
   db.prepare('UPDATE categories SET name = COALESCE(?, name), color = COALESCE(?, color), text_color = ? WHERE id = ?')
     .run(name ?? null, color ?? null, text_color ?? null, req.params.id);
-  res.json(db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id));
+  res.json(db.prepare('SELECT * FROM categories WHERE id = ? AND user_id = ?').get(req.params.id, req.userId));
 });
 
 app.delete('/api/categories/:id', (req, res) => {
@@ -217,7 +313,8 @@ app.delete('/api/categories/:id', (req, res) => {
       params.push(`%${id}%`);
     }
     const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' OR ')}` : '';
-    const rows = db.prepare(`SELECT ${cols.join(', ')} FROM ${ref.table} ${whereSql}`).all(...params);
+    const userWhere = whereSql ? `${whereSql} AND user_id = ?` : 'WHERE user_id = ?';
+    const rows = db.prepare(`SELECT ${cols.join(', ')} FROM ${ref.table} ${userWhere}`).all(...params, req.userId);
     const matched = rows.filter(r => {
       const ids = parseCategoryIds(
         ref.hasCategoryIds ? r.category_ids : null,
@@ -243,15 +340,16 @@ app.delete('/api/categories/:id', (req, res) => {
       })),
     });
   }
-  db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+  db.prepare('DELETE FROM categories WHERE id = ? AND user_id = ?').run(id, req.userId);
   res.json({ ok: true });
 });
 
 // ── TASKS ────────────────────────────────────────────────────────────────────
 app.get('/api/tasks/search', (req, res) => {
   const { q, from, to, category_id, status, objective_id } = req.query;
-  let sql = 'SELECT * FROM tasks WHERE 1=1';
-  const params = [];
+  const refs = getHiddenTaskRefs(req.userId);
+  let sql = 'SELECT * FROM tasks WHERE user_id = ?';
+  let params = [req.userId];
 
   if (q)            { sql += ' AND title LIKE ?';       params.push(`%${q}%`); }
   if (from)         { sql += ' AND date >= ?';           params.push(from); }
@@ -260,6 +358,7 @@ app.get('/api/tasks/search', (req, res) => {
   if (status)       { sql += ' AND status = ?';         params.push(status); }
   if (objective_id) { sql += ' AND objective_id = ?';   params.push(objective_id); }
 
+  ({ sql, params } = applyTaskVisibility(sql, params, refs));
   sql += ' ORDER BY date, start_time LIMIT 200';
   const tasks = db.prepare(sql).all(...params);
   tasks.forEach(t => { t.is_overdue = t.is_fixed ? 0 : (isOverdue(t.date, t.status) ? 1 : 0); });
@@ -268,9 +367,10 @@ app.get('/api/tasks/search', (req, res) => {
 
 app.get('/api/tasks', (req, res) => {
   const { date, category_id, status, from, to, objective_id } = req.query;
+  const refs = getHiddenTaskRefs(req.userId);
   // Non-fixed tasks
-  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0';
-  const params = [];
+  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND user_id = ?';
+  let params = [req.userId];
 
   if (date)         { sql += ' AND date = ?';           params.push(date); }
   if (from)         { sql += ' AND date >= ?';           params.push(from); }
@@ -281,6 +381,7 @@ app.get('/api/tasks', (req, res) => {
   if (req.query.milestone_id)     { sql += ' AND milestone_id = ?';                    params.push(req.query.milestone_id); }
   if (req.query.no_milestone === '1') { sql += ' AND (milestone_id IS NULL OR milestone_id = \'\')'; }
 
+  ({ sql, params } = applyTaskVisibility(sql, params, refs));
   sql += ' ORDER BY date, start_time';
   const tasks = db.prepare(sql).all(...params);
   tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
@@ -290,22 +391,23 @@ app.get('/api/tasks', (req, res) => {
   // Without range/day, return fixed templates once (not expanded by day).
   if (from && to) {
     const sharedFilters = {
+      user_id: req.userId,
       objective_id: objective_id || null,
       milestone_id: req.query.milestone_id || null,
       category_id: category_id || null,
     };
     fixed = filterFixedInstancesWithClones(
       expandFixedTasks(from, to, sharedFilters),
-      findClonedTasksForRange(from, to, sharedFilters)
+      findClonedTasksForRange(from, to, { ...sharedFilters, user_id: req.userId })
     );
   } else if (date) {
     fixed = filterFixedInstancesWithClones(
-      expandFixedTasks(date, date),
-      findClonedTasksForRange(date, date, { category_id: category_id || null })
+      expandFixedTasks(date, date, { user_id: req.userId }),
+      findClonedTasksForRange(date, date, { category_id: category_id || null, user_id: req.userId })
     );
   } else {
-    let fixedSql = 'SELECT * FROM tasks WHERE is_fixed = 1';
-    const fixedParams = [];
+    let fixedSql = 'SELECT * FROM tasks WHERE is_fixed = 1 AND user_id = ?';
+    const fixedParams = [req.userId];
     if (category_id)  { fixedSql += ' AND category_id = ?'; fixedParams.push(category_id); }
     if (status)       { fixedSql += ' AND status = ?'; fixedParams.push(status); }
     if (objective_id) { fixedSql += ' AND objective_id = ?'; fixedParams.push(objective_id); }
@@ -320,11 +422,16 @@ app.get('/api/tasks', (req, res) => {
 
 app.get('/api/tasks/today', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  const tasks = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? ORDER BY start_time').all(today);
+  const refs = getHiddenTaskRefs(req.userId);
+  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND user_id = ?';
+  let params = [today, req.userId];
+  ({ sql, params } = applyTaskVisibility(sql, params, refs));
+  sql += ' ORDER BY start_time';
+  const tasks = db.prepare(sql).all(...params);
   tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
   const fixed = filterFixedInstancesWithClones(
-    expandFixedTasks(today, today),
-    findClonedTasksForRange(today, today)
+    expandFixedTasks(today, today, { user_id: req.userId }),
+    findClonedTasksForRange(today, today, { user_id: req.userId })
   );
   res.json([...tasks, ...fixed].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '')));
 });
@@ -339,11 +446,16 @@ app.get('/api/tasks/week', (req, res) => {
 
   const from = monday.toISOString().slice(0, 10);
   const to = sunday.toISOString().slice(0, 10);
-  const tasks = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND date BETWEEN ? AND ? ORDER BY date, start_time').all(from, to);
+  const refs = getHiddenTaskRefs(req.userId);
+  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND date BETWEEN ? AND ? AND user_id = ?';
+  let params = [from, to, req.userId];
+  ({ sql, params } = applyTaskVisibility(sql, params, refs));
+  sql += ' ORDER BY date, start_time';
+  const tasks = db.prepare(sql).all(...params);
   tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
   const fixed = filterFixedInstancesWithClones(
-    expandFixedTasks(from, to),
-    findClonedTasksForRange(from, to)
+    expandFixedTasks(from, to, { user_id: req.userId }),
+    findClonedTasksForRange(from, to, { user_id: req.userId })
   );
   res.json([...tasks, ...fixed]);
 });
@@ -351,10 +463,15 @@ app.get('/api/tasks/week', (req, res) => {
 app.get('/api/tasks/now', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const timeStr = new Date().toTimeString().slice(0, 5);
-  const regular = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND start_time IS NOT NULL ORDER BY start_time').all(today);
+  const refs = getHiddenTaskRefs(req.userId);
+  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND start_time IS NOT NULL AND user_id = ?';
+  let params = [today, req.userId];
+  ({ sql, params } = applyTaskVisibility(sql, params, refs));
+  sql += ' ORDER BY start_time';
+  const regular = db.prepare(sql).all(...params);
   const fixed = filterFixedInstancesWithClones(
-    expandFixedTasks(today, today),
-    findClonedTasksForRange(today, today)
+    expandFixedTasks(today, today, { user_id: req.userId }),
+    findClonedTasksForRange(today, today, { user_id: req.userId })
   ).filter(t => t.start_time);
   const tasks = [...regular, ...fixed].sort((a, b) => a.start_time.localeCompare(b.start_time));
 
@@ -365,7 +482,7 @@ app.get('/api/tasks/now', (req, res) => {
 });
 
 app.get('/api/tasks/:id', (req, res) => {
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   if (!task) return res.status(404).json({ error: 'Not found' });
   task.is_overdue = isOverdue(task.date, task.status) ? 1 : 0;
   res.json(task);
@@ -404,8 +521,8 @@ app.post('/api/tasks', (req, res) => {
   db.prepare(`INSERT INTO tasks
     (id,title,description,category_id,category_ids,subcategory,date,start_time,end_time,
      duration_estimated,status,priority,objective_id,milestone_id,is_fixed,
-     fixed_days,fixed_start_date,fixed_end_date,notes,label,is_cloned,cloned_from,percentage_completed)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+     fixed_days,fixed_start_date,fixed_end_date,notes,label,is_cloned,cloned_from,percentage_completed,user_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, title, description || '', primaryCat, JSON.stringify(cats), '',
       effectiveDate, start_time || null, end_time || null,
       duration_estimated ?? timeDiff(start_time, end_time),
@@ -414,11 +531,11 @@ app.post('/api/tasks', (req, res) => {
       isFixed && fixed_days ? JSON.stringify(fixed_days) : null,
       isFixed ? (fixed_start_date || null) : null,
       isFixed ? (fixed_end_date || null) : null,
-      notes || '', label || '', isCloned ? 1 : 0, clonedFrom || null, 0);
+      notes || '', label || '', isCloned ? 1 : 0, clonedFrom || null, 0, req.userId);
 
   recomputeForTask(milestone_id || null, null);
   const global_progress = recomputeAllObjectivesAndGlobalProgress();
-  const createdTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  const createdTask = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.userId);
   res.status(201).json({ ...createdTask, global_progress });
 });
 
@@ -430,7 +547,7 @@ app.put('/api/tasks/:id', (req, res) => {
 
   const cats = category_ids !== undefined ? parseCategoryIds(category_ids, category_id) : null;
   const primaryCat = cats ? (cats[0] || null) : (category_id ?? null);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   if (!task) return res.status(404).json({ error: 'Not found' });
   const nextIsFixed = is_fixed !== undefined ? (is_fixed ? 1 : 0) : task.is_fixed;
   const nextStatus = normalizeTaskStatus(
@@ -500,18 +617,18 @@ app.put('/api/tasks/:id', (req, res) => {
   }
 
   // Recompute milestone + objective (both old and new ids in case they changed)
-  const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  const updatedTask = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   const milestoneIds = [...new Set([task.milestone_id, updatedTask.milestone_id].filter(Boolean))];
   for (const mid of milestoneIds) recomputeForTask(mid, null);
   const global_progress = recomputeAllObjectivesAndGlobalProgress();
-  const resultTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  const resultTask = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   res.json({ ...resultTask, global_progress });
 });
 
 app.delete('/api/tasks/:id', (req, res) => {
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   if (!task) return res.status(404).json({ error: 'Not found' });
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   recomputeForTask(task.milestone_id, null);
   const global_progress = recomputeAllObjectivesAndGlobalProgress();
   res.json({ ok: true, global_progress });
@@ -520,26 +637,28 @@ app.delete('/api/tasks/:id', (req, res) => {
 // ── OBJECTIVES ───────────────────────────────────────────────────────────────
 app.get('/api/objectives', (req, res) => {
   const { type } = req.query;
-  let sql = 'SELECT * FROM objectives';
-  if (type) sql += ` WHERE type = '${type.replace(/'/g, '')}'`;
+  let sql = 'SELECT * FROM objectives WHERE user_id = ?';
+  const params = [req.userId];
+  if (!isSectionEnabled(req.userId, 'clients')) sql += " AND type != 'client'";
+  if (type) { sql += ' AND type = ?'; params.push(type); }
   sql += ' ORDER BY priority, start_date';
-  const objectives = db.prepare(sql).all();
+  const objectives = db.prepare(sql).all(...params);
   for (const obj of objectives) {
     try { obj.category_ids = obj.category_ids ? JSON.parse(obj.category_ids) : (obj.category_id ? [obj.category_id] : []); } catch (_) { obj.category_ids = obj.category_id ? [obj.category_id] : []; }
     obj.milestones = db.prepare(`
-      SELECT * FROM milestones WHERE objective_id = ?
+      SELECT * FROM milestones WHERE objective_id = ? AND user_id = ?
       ORDER BY
         CASE WHEN status = 'completed' THEN 1 ELSE 0 END ASC,
         target_date ASC NULLS LAST
-    `).all(obj.id);
-    obj.task_count = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND is_fixed = 0').get(obj.id).n;
-    obj.done_count = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND status = 'completed'").get(obj.id).n;
-    const orphanRows = db.prepare("SELECT status FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND (milestone_id IS NULL OR milestone_id = '')").all(obj.id);
+    `).all(obj.id, req.userId);
+    obj.task_count = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND user_id = ?').get(obj.id, req.userId).n;
+    obj.done_count = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND status = 'completed' AND user_id = ?").get(obj.id, req.userId).n;
+    const orphanRows = db.prepare("SELECT status FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND (milestone_id IS NULL OR milestone_id = '') AND user_id = ?").all(obj.id, req.userId);
     obj.orphan_count = orphanRows.length;
     obj.orphan_done  = orphanRows.filter(t => t.status === 'completed').length;
     for (const m of obj.milestones) {
       m.days_remaining = daysRemaining(m.target_date);
-      const mTasks = db.prepare('SELECT status FROM tasks WHERE milestone_id = ? AND is_fixed = 0').all(m.id);
+      const mTasks = db.prepare('SELECT status FROM tasks WHERE milestone_id = ? AND is_fixed = 0 AND user_id = ?').all(m.id, req.userId);
       m.task_total = mTasks.length;
       m.task_done  = mTasks.filter(t => t.status === 'completed').length;
       m.percentage_completed = m.task_total > 0
@@ -563,21 +682,21 @@ app.post('/api/objectives', (req, res) => {
   const id = 'obj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const catIds = Array.isArray(category_ids) ? category_ids : (category_id ? [category_id] : []);
   const primaryCat = catIds[0] || category_id || null;
-  db.prepare(`INSERT INTO objectives (id,title,description,category_id,category_ids,start_date,end_date,target_value,progress_mode,percentage_completed,status,priority,notes,color,type)
-    VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO objectives (id,title,description,category_id,category_ids,start_date,end_date,target_value,progress_mode,percentage_completed,status,priority,notes,color,type,user_id)
+    VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?)`)
     .run(id, title, description || '', primaryCat, catIds.length ? JSON.stringify(catIds) : null,
       start_date || null, end_date || null,
       target_value || null, progress_mode || 'task_based', status || 'not_started', priority ?? 2, notes || '', color || null,
-      type || 'objective');
-  res.status(201).json(db.prepare('SELECT * FROM objectives WHERE id = ?').get(id));
+      type || 'objective', req.userId);
+  res.status(201).json(db.prepare('SELECT * FROM objectives WHERE id = ? AND user_id = ?').get(id, req.userId));
 });
 
 app.delete('/api/objectives/:id', (req, res) => {
-  const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ?').get(req.params.id).n;
+  const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND user_id = ?').get(req.params.id, req.userId).n;
   if (tasks > 0) return res.status(409).json({ error: `Este objetivo tiene ${tasks} tareas asignadas` });
-  const milestones = db.prepare('SELECT COUNT(*) as n FROM milestones WHERE objective_id = ?').get(req.params.id).n;
+  const milestones = db.prepare('SELECT COUNT(*) as n FROM milestones WHERE objective_id = ? AND user_id = ?').get(req.params.id, req.userId).n;
   if (milestones > 0) return res.status(409).json({ error: `Este objetivo tiene ${milestones} hitos asociados. Elimínalos primero.` });
-  db.prepare('DELETE FROM objectives WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM objectives WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
@@ -615,12 +734,12 @@ app.put('/api/objectives/:id', (req, res) => {
       catIdsJson: catIds !== undefined ? JSON.stringify(catIds) : null,
       id: req.params.id,
     });
-  res.json(db.prepare('SELECT * FROM objectives WHERE id = ?').get(req.params.id));
+  res.json(db.prepare('SELECT * FROM objectives WHERE id = ? AND user_id = ?').get(req.params.id, req.userId));
 });
 
 // ── MILESTONES ───────────────────────────────────────────────────────────────
 app.get('/api/milestones', (req, res) => {
-  const ms = db.prepare('SELECT * FROM milestones ORDER BY target_date').all();
+  const ms = db.prepare('SELECT * FROM milestones WHERE user_id = ? ORDER BY target_date').all(req.userId);
   ms.forEach(m => { m.days_remaining = daysRemaining(m.target_date); });
   res.json(ms);
 });
@@ -629,9 +748,9 @@ app.post('/api/milestones', (req, res) => {
   const { objective_id, title, description, target_date, weight, status, billed_amount } = req.body;
   if (!title || !objective_id) return res.status(400).json({ error: 'title y objective_id son obligatorios' });
   const id = 'ms-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-  db.prepare('INSERT INTO milestones (id,objective_id,title,description,target_date,percentage_completed,status,weight,billed_amount) VALUES (?,?,?,?,?,0,?,?,?)')
-    .run(id, objective_id, title, description || '', target_date || null, status || 'not_started', weight ?? 10, billed_amount ?? 0);
-  res.status(201).json(db.prepare('SELECT * FROM milestones WHERE id = ?').get(id));
+  db.prepare('INSERT INTO milestones (id,objective_id,title,description,target_date,percentage_completed,status,weight,billed_amount,user_id) VALUES (?,?,?,?,?,0,?,?,?,?)')
+    .run(id, objective_id, title, description || '', target_date || null, status || 'not_started', weight ?? 10, billed_amount ?? 0, req.userId);
+  res.status(201).json(db.prepare('SELECT * FROM milestones WHERE id = ? AND user_id = ?').get(id, req.userId));
 });
 
 app.delete('/api/milestones/:id', (req, res) => {
@@ -658,7 +777,7 @@ app.delete('/api/milestones/:id', (req, res) => {
       }],
     });
   }
-  db.prepare('DELETE FROM milestones WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM milestones WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
@@ -682,20 +801,21 @@ app.put('/api/milestones/:id', (req, res) => {
       billed_amount: billed_amount !== undefined ? Number(billed_amount) : null,
       status: savedStatus, pct, id: req.params.id,
     });
-  res.json(db.prepare('SELECT * FROM milestones WHERE id = ?').get(req.params.id));
+  res.json(db.prepare('SELECT * FROM milestones WHERE id = ? AND user_id = ?').get(req.params.id, req.userId));
 });
 
 // ── EVENTS ───────────────────────────────────────────────────────────────────
 app.get('/api/events', (req, res) => {
+  if (!isSectionEnabled(req.userId, 'events')) return res.json([]);
   const { from, to, objective_id } = req.query;
-  let sql = 'SELECT * FROM events WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM events WHERE user_id = ?';
+  const params = [req.userId];
   if (from)         { sql += ' AND end_date >= ?';    params.push(from); }
   if (to)           { sql += ' AND start_date <= ?';  params.push(to); }
   if (objective_id) { sql += ' AND objective_id = ?'; params.push(objective_id); }
   sql += ' ORDER BY start_date';
   const rows = db.prepare(sql).all(...params);
-  rows.forEach(e => { e.days_remaining = daysRemaining(e.end_date || e.start_date); });
+  rows.forEach(e => { e.days_remaining = daysRemaining(e.start_date || e.end_date); });
   res.json(rows);
 });
 
@@ -706,10 +826,10 @@ app.post('/api/events', (req, res) => {
   const id = 'evt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
-  db.prepare('INSERT INTO events (id,title,start_date,end_date,location,format,estimated_cost,status,notes,objective_id,category_id,category_ids,percentage_completed,registered,hotel_booked,flight_booked) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, title, start_date||null, end_date||null, location||null, format||null, estimated_cost||0, status||'not_started', notes||null, objective_id||null, primaryCat, cats.length ? JSON.stringify(cats) : null, percentage_completed||0, registered?1:0, hotel_booked?1:0, flight_booked?1:0);
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(id);
-  ev.days_remaining = daysRemaining(ev.end_date || ev.start_date);
+  db.prepare('INSERT INTO events (id,title,start_date,end_date,location,format,estimated_cost,status,notes,objective_id,category_id,category_ids,percentage_completed,registered,hotel_booked,flight_booked,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title, start_date||null, end_date||null, location||null, format||null, estimated_cost||0, status||'not_started', notes||null, objective_id||null, primaryCat, cats.length ? JSON.stringify(cats) : null, percentage_completed||0, registered?1:0, hotel_booked?1:0, flight_booked?1:0, req.userId);
+  const ev = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ?').get(id, req.userId);
+  ev.days_remaining = daysRemaining(ev.start_date || ev.end_date);
   res.status(201).json(ev);
 });
 
@@ -747,23 +867,24 @@ app.put('/api/events/:id', (req, res) => {
       htl: hotel_booked !== undefined ? (hotel_booked ? 1 : 0) : null,
       flt: flight_booked !== undefined ? (flight_booked ? 1 : 0) : null,
       id: req.params.id });
-  const ev = db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
-  ev.days_remaining = daysRemaining(ev.end_date || ev.start_date);
+  const ev = db.prepare('SELECT * FROM events WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  ev.days_remaining = daysRemaining(ev.start_date || ev.end_date);
   res.json(ev);
 });
 
 app.delete('/api/events/:id', (req, res) => {
   const linked = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE milestone_id = ?').get(req.params.id).n;
   if (linked > 0) return res.status(409).json({ error: `Este evento tiene ${linked} tareas asociadas` });
-  db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM events WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
 // ── PUBLICATIONS ─────────────────────────────────────────────────────────────
 app.get('/api/publications', (req, res) => {
+  if (!isSectionEnabled(req.userId, 'publications')) return res.json([]);
   const { from, to, objective_id } = req.query;
-  let sql = 'SELECT * FROM publications WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM publications WHERE user_id = ?';
+  const params = [req.userId];
   if (from)        { sql += ' AND date >= ?';        params.push(from); }
   if (to)          { sql += ' AND date <= ?';        params.push(to); }
   if (objective_id){ sql += ' AND objective_id = ?'; params.push(objective_id); }
@@ -782,9 +903,9 @@ app.post('/api/publications', (req, res) => {
   const publicationType = type || 'idea';
   const publicationDate = publicationType === 'idea' ? null : (date || null);
   const publicationObjectiveId = publicationType === 'idea' ? null : (objective_id || null);
-  db.prepare('INSERT INTO publications (id,title,type,date,status,notes,publication_text,objective_id,category_id,category_ids) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .run(id, title, publicationType, publicationDate, status || 'pending', notes || null, publication_text || null, publicationObjectiveId, primaryCat, cats.length ? JSON.stringify(cats) : null);
-  const pub = db.prepare('SELECT * FROM publications WHERE id = ?').get(id);
+  db.prepare('INSERT INTO publications (id,title,type,date,status,notes,publication_text,objective_id,category_id,category_ids,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title, publicationType, publicationDate, status || 'pending', notes || null, publication_text || null, publicationObjectiveId, primaryCat, cats.length ? JSON.stringify(cats) : null, req.userId);
+  const pub = db.prepare('SELECT * FROM publications WHERE id = ? AND user_id = ?').get(id, req.userId);
   pub.days_remaining = daysRemaining(pub.date);
   res.status(201).json(pub);
 });
@@ -816,7 +937,7 @@ app.put('/api/publications/:id', (req, res) => {
       cat: primaryCat, cids: cats ? JSON.stringify(cats) : null,
       id: req.params.id,
     });
-  const pub = db.prepare('SELECT * FROM publications WHERE id = ?').get(req.params.id);
+  const pub = db.prepare('SELECT * FROM publications WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   pub.days_remaining = daysRemaining(pub.date);
   res.json(pub);
 });
@@ -824,15 +945,16 @@ app.put('/api/publications/:id', (req, res) => {
 app.delete('/api/publications/:id', (req, res) => {
   const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE milestone_id = ?').get(req.params.id).n;
   if (tasks > 0) return res.status(409).json({ error: `Esta publicación tiene ${tasks} tareas asociadas` });
-  db.prepare('DELETE FROM publications WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM publications WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
 // ── CERTIFICATIONS ───────────────────────────────────────────────────────────
 app.get('/api/certifications', (req, res) => {
+  if (!isSectionEnabled(req.userId, 'certifications')) return res.json([]);
   const { objective_id } = req.query;
-  let sql = 'SELECT * FROM certifications WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM certifications WHERE user_id = ?';
+  const params = [req.userId];
   if (objective_id) { sql += ' AND objective_id = ?'; params.push(objective_id); }
   sql += ' ORDER BY target_date';
   const certs = db.prepare(sql).all(...params);
@@ -846,9 +968,9 @@ app.post('/api/certifications', (req, res) => {
   const id = 'cert-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
-  db.prepare('INSERT INTO certifications (id,title,target_date,status,notes,objective_id,category_id,category_ids) VALUES (?,?,?,?,?,?,?,?)')
-    .run(id, title, target_date || null, status || 'not_started', notes || null, objective_id || null, primaryCat, cats.length ? JSON.stringify(cats) : null);
-  const cert = db.prepare('SELECT * FROM certifications WHERE id = ?').get(id);
+  db.prepare('INSERT INTO certifications (id,title,target_date,status,notes,objective_id,category_id,category_ids,user_id) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(id, title, target_date || null, status || 'not_started', notes || null, objective_id || null, primaryCat, cats.length ? JSON.stringify(cats) : null, req.userId);
+  const cert = db.prepare('SELECT * FROM certifications WHERE id = ? AND user_id = ?').get(id, req.userId);
   cert.days_remaining = daysRemaining(cert.target_date);
   res.status(201).json(cert);
 });
@@ -873,7 +995,7 @@ app.put('/api/certifications/:id', (req, res) => {
       s: status ?? null, n: notes ?? null, oid: objective_id ?? null,
       cat: primaryCat, cids: cats ? JSON.stringify(cats) : null,
       pct: percentage_completed ?? null, id: req.params.id });
-  const cert = db.prepare('SELECT * FROM certifications WHERE id = ?').get(req.params.id);
+  const cert = db.prepare('SELECT * FROM certifications WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   cert.days_remaining = daysRemaining(cert.target_date);
   res.json(cert);
 });
@@ -881,15 +1003,16 @@ app.put('/api/certifications/:id', (req, res) => {
 app.delete('/api/certifications/:id', (req, res) => {
   const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE milestone_id = ?').get(req.params.id).n;
   if (tasks > 0) return res.status(409).json({ error: `Esta certificación tiene ${tasks} tareas asociadas` });
-  db.prepare('DELETE FROM certifications WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM certifications WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
 // ── REPOS ─────────────────────────────────────────────────────────────────────
 app.get('/api/repos', (req, res) => {
+  if (!isSectionEnabled(req.userId, 'repos')) return res.json([]);
   const { objective_id } = req.query;
-  let sql = 'SELECT * FROM repos WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM repos WHERE user_id = ?';
+  const params = [req.userId];
   if (objective_id) { sql += ' AND objective_id = ?'; params.push(objective_id); }
   sql += ' ORDER BY target_date';
   const rows = db.prepare(sql).all(...params);
@@ -903,9 +1026,9 @@ app.post('/api/repos', (req, res) => {
   const id = 'repo-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
-  db.prepare('INSERT INTO repos (id,title,target_date,type,status,notes,objective_id,url,category_id,category_ids) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .run(id, title, target_date || null, type || 'personal', status || 'not_started', notes || null, objective_id || null, url || null, primaryCat, cats.length ? JSON.stringify(cats) : null);
-  const repo = db.prepare('SELECT * FROM repos WHERE id = ?').get(id);
+  db.prepare('INSERT INTO repos (id,title,target_date,type,status,notes,objective_id,url,category_id,category_ids,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title, target_date || null, type || 'personal', status || 'not_started', notes || null, objective_id || null, url || null, primaryCat, cats.length ? JSON.stringify(cats) : null, req.userId);
+  const repo = db.prepare('SELECT * FROM repos WHERE id = ? AND user_id = ?').get(id, req.userId);
   repo.days_remaining = daysRemaining(repo.target_date);
   res.status(201).json(repo);
 });
@@ -934,7 +1057,7 @@ app.put('/api/repos/:id', (req, res) => {
       s: status ?? null, n: notes ?? null, oid: objective_id ?? null,
       cat: primaryCat, cids: cats !== null ? JSON.stringify(cats) : null,
       url: url ?? null, id: req.params.id });
-  const repo = db.prepare('SELECT * FROM repos WHERE id = ?').get(req.params.id);
+  const repo = db.prepare('SELECT * FROM repos WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   repo.days_remaining = daysRemaining(repo.target_date);
   res.json(repo);
 });
@@ -942,15 +1065,16 @@ app.put('/api/repos/:id', (req, res) => {
 app.delete('/api/repos/:id', (req, res) => {
   const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE milestone_id = ?').get(req.params.id).n;
   if (tasks > 0) return res.status(409).json({ error: `Este proyecto tiene ${tasks} tareas asociadas` });
-  db.prepare('DELETE FROM repos WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM repos WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
 // ── PRs ──────────────────────────────────────────────────────────────────────
 app.get('/api/prs', (req, res) => {
+  if (!isSectionEnabled(req.userId, 'prs')) return res.json([]);
   const { objective_id } = req.query;
-  let sql = 'SELECT * FROM prs WHERE 1=1';
-  const params = [];
+  let sql = 'SELECT * FROM prs WHERE user_id = ?';
+  const params = [req.userId];
   if (objective_id) { sql += ' AND objective_id = ?'; params.push(objective_id); }
   sql += ' ORDER BY start_date';
   const rows = db.prepare(sql).all(...params);
@@ -965,9 +1089,9 @@ app.post('/api/prs', (req, res) => {
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
   const normalizedNotes = notes ?? notas ?? null;
-  db.prepare('INSERT INTO prs (id,title,start_date,end_date,status,notes,objective_id,category_id,category_ids) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(id, title, start_date || null, end_date || null, status || 'not_started', normalizedNotes, objective_id || null, primaryCat, cats.length ? JSON.stringify(cats) : null);
-  const pr = db.prepare('SELECT * FROM prs WHERE id = ?').get(id);
+  db.prepare('INSERT INTO prs (id,title,start_date,end_date,status,notes,objective_id,category_id,category_ids,user_id) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title, start_date || null, end_date || null, status || 'not_started', normalizedNotes, objective_id || null, primaryCat, cats.length ? JSON.stringify(cats) : null, req.userId);
+  const pr = db.prepare('SELECT * FROM prs WHERE id = ? AND user_id = ?').get(id, req.userId);
   pr.days_remaining = daysRemaining(pr.end_date);
   res.status(201).json(pr);
 });
@@ -1005,7 +1129,7 @@ app.put('/api/prs/:id', (req, res) => {
       s: status ?? null, n: normalizedNotes, oid: objective_id ?? null,
       cat: primaryCat, cids: cats ? JSON.stringify(cats) : null,
       pct: percentage_completed ?? null, id: req.params.id });
-  const pr = db.prepare('SELECT * FROM prs WHERE id = ?').get(req.params.id);
+  const pr = db.prepare('SELECT * FROM prs WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   pr.days_remaining = daysRemaining(pr.end_date);
   res.json(pr);
 });
@@ -1013,13 +1137,14 @@ app.put('/api/prs/:id', (req, res) => {
 app.delete('/api/prs/:id', (req, res) => {
   const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE milestone_id = ?').get(req.params.id).n;
   if (tasks > 0) return res.status(409).json({ error: `Este PR tiene ${tasks} tareas asociadas` });
-  db.prepare('DELETE FROM prs WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM prs WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
 // ── READING LIST ─────────────────────────────────────────────────────────────
 app.get('/api/reading-list', (req, res) => {
-  const rows = db.prepare('SELECT * FROM reading_list ORDER BY sort_order ASC, created_at DESC').all();
+  if (!isSectionEnabled(req.userId, 'reading_list')) return res.json([]);
+  const rows = db.prepare('SELECT * FROM reading_list WHERE user_id = ? ORDER BY sort_order ASC, created_at DESC').all(req.userId);
   res.json(rows);
 });
 
@@ -1027,24 +1152,24 @@ app.post('/api/reading-list', (req, res) => {
   const { title, urls, category_ids, category_id, notes } = req.body;
   if (!title) return res.status(400).json({ error: 'title es obligatorio' });
   const id = 'rl-' + Date.now();
-  const minOrder = db.prepare('SELECT MIN(sort_order) as m FROM reading_list').get().m ?? 0;
+  const minOrder = db.prepare('SELECT MIN(sort_order) as m FROM reading_list WHERE user_id = ?').get(req.userId).m ?? 0;
   const sortOrder = minOrder - 1;
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
   const urlsJson = Array.isArray(urls) ? JSON.stringify(urls) : (urls || null);
-  db.prepare(`INSERT INTO reading_list (id, title, urls, category_ids, category_id, notes, status, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
-    .run(id, title, urlsJson, cats.length ? JSON.stringify(cats) : null, primaryCat, notes || null, sortOrder);
-  res.json(db.prepare('SELECT * FROM reading_list WHERE id = ?').get(id));
+  db.prepare(`INSERT INTO reading_list (id, title, urls, category_ids, category_id, notes, status, sort_order, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
+    .run(id, title, urlsJson, cats.length ? JSON.stringify(cats) : null, primaryCat, notes || null, sortOrder, req.userId);
+  res.json(db.prepare('SELECT * FROM reading_list WHERE id = ? AND user_id = ?').get(id, req.userId));
 });
 
 // IMPORTANT: /reorder must be before /:id to avoid route conflict
 app.post('/api/reading-list/reorder', (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids debe ser un array' });
-  const update = db.prepare('UPDATE reading_list SET sort_order = ? WHERE id = ?');
+  const update = db.prepare('UPDATE reading_list SET sort_order = ? WHERE id = ? AND user_id = ?');
   const tx = db.transaction(() => {
-    ids.forEach((id, i) => update.run(i, id));
+    ids.forEach((id, i) => update.run(i, id, req.userId));
   });
   tx();
   res.json({ ok: true });
@@ -1070,43 +1195,51 @@ app.put('/api/reading-list/:id', (req, res) => {
       cids: cats ? JSON.stringify(cats) : null, cat: primaryCat,
       notes: notes ?? null, status: status ?? null, id: req.params.id,
     });
-  res.json(db.prepare('SELECT * FROM reading_list WHERE id = ?').get(req.params.id));
+  res.json(db.prepare('SELECT * FROM reading_list WHERE id = ? AND user_id = ?').get(req.params.id, req.userId));
 });
 
 app.delete('/api/reading-list/:id', (req, res) => {
-  db.prepare('DELETE FROM reading_list WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM reading_list WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 
 // ── WORK BLOCKS ───────────────────────────────────────────────────────────────
 app.get('/api/work-blocks', (req, res) => {
-  res.json(db.prepare('SELECT * FROM work_blocks ORDER BY start_time').all());
+  res.json(db.prepare('SELECT * FROM work_blocks WHERE user_id = ? ORDER BY start_time').all(req.userId));
 });
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
 app.get('/api/dashboard', (req, res) => {
+  const userId = req.userId;
+  const refs = getHiddenTaskRefs(userId);
   const today = new Date().toISOString().slice(0, 10);
   const doneTaskStatuses = new Set(['completed']);
   const doneItemStatuses = new Set(['published', 'completed', 'merged', 'closed', 'failed', 'cancelled']);
-  const todayTasks  = db.prepare('SELECT * FROM tasks WHERE date = ? ORDER BY start_time').all(today);
-  const totalTasks  = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE is_fixed = 0').get().n;
-  const doneTasks   = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE is_fixed = 0 AND status = 'completed'").get().n;
-  const overdueTasks= db.prepare(`SELECT * FROM tasks WHERE is_fixed = 0 AND date < ? AND status != 'completed' ORDER BY date`).all(today);
+  const hiddenMilestones = new Set(refs.hiddenMilestoneIds);
+  const hiddenObjectives = new Set(refs.hiddenObjectiveIds);
+  const isVisibleTask = (t) =>
+    (!t.milestone_id || !hiddenMilestones.has(t.milestone_id)) &&
+    (!t.objective_id || !hiddenObjectives.has(t.objective_id));
+  const todayTasks  = db.prepare('SELECT * FROM tasks WHERE date = ? AND user_id = ? ORDER BY start_time').all(today, userId).filter(isVisibleTask);
+  const allNonFixedTasks = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND user_id = ?').all(userId).filter(isVisibleTask);
+  const totalTasks  = allNonFixedTasks.length;
+  const doneTasks   = allNonFixedTasks.filter(t => t.status === 'completed').length;
+  const overdueTasks= db.prepare(`SELECT * FROM tasks WHERE is_fixed = 0 AND date < ? AND status != 'completed' AND user_id = ? ORDER BY date`).all(today, userId).filter(isVisibleTask);
 
   const nextMilestones = db.prepare(`SELECT m.*, o.title as obj_title FROM milestones m
     JOIN objectives o ON m.objective_id = o.id
-    WHERE m.status != 'completed' AND m.target_date >= ?
-    ORDER BY m.target_date LIMIT 5`).all(today);
+    WHERE m.status != 'completed' AND m.target_date >= ? AND m.user_id = ? AND o.user_id = ?
+    ORDER BY m.target_date LIMIT 5`).all(today, userId, userId);
   nextMilestones.forEach(m => { m.days_remaining = daysRemaining(m.target_date); });
 
   // Next 7 days events
   const nextDate = new Date();
   nextDate.setDate(nextDate.getDate() + 7);
   const nextWeek = nextDate.toISOString().slice(0, 10);
-  const nextEvents = db.prepare('SELECT * FROM events WHERE start_date BETWEEN ? AND ? ORDER BY start_date').all(today, nextWeek);
+  const nextEvents = db.prepare('SELECT * FROM events WHERE start_date BETWEEN ? AND ? AND user_id = ? ORDER BY start_date').all(today, nextWeek, userId);
 
   // Progress by objective (filled after objHoursMap is ready below)
-  const objectives = db.prepare('SELECT * FROM objectives ORDER BY priority').all();
+  const objectives = db.prepare(`SELECT * FROM objectives WHERE user_id = ? ${isSectionEnabled(userId, 'clients') ? '' : "AND type != 'client'"} ORDER BY priority`).all(userId);
 
   // Tasks by category (last 30 days)
   const thirtyAgo = new Date();
@@ -1115,8 +1248,8 @@ app.get('/api/dashboard', (req, res) => {
     SELECT category_id,
       COUNT(*) as total,
       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as done
-    FROM tasks WHERE date >= ? GROUP BY category_id
-  `).all(thirtyAgo.toISOString().slice(0, 10));
+    FROM tasks WHERE date >= ? AND user_id = ? GROUP BY category_id
+  `).all(thirtyAgo.toISOString().slice(0, 10), userId);
 
   // Hours per objective (completed tasks, all time)
   const objHoursRows = db.prepare(`
@@ -1131,49 +1264,53 @@ app.get('/api/dashboard', (req, res) => {
         END
       ) / 60.0 as hours
     FROM tasks
-    WHERE status = 'completed' AND objective_id IS NOT NULL
+    WHERE status = 'completed' AND objective_id IS NOT NULL AND user_id = ?
     GROUP BY objective_id
-  `).all();
+  `).all(userId);
   const objHoursMap = {};
   for (const row of objHoursRows) objHoursMap[row.objective_id] = row.hours;
 
   for (const obj of objectives) {
-    obj.task_count = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND is_fixed = 0').get(obj.id).n;
-    obj.done_count = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND status = 'completed'").get(obj.id).n;
+    const objectiveTasks = db.prepare('SELECT * FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND user_id = ?').all(obj.id, userId).filter(isVisibleTask);
+    obj.task_count = objectiveTasks.length;
+    obj.done_count = objectiveTasks.filter(t => t.status === 'completed').length;
     obj.days_remaining = daysRemaining(obj.end_date);
     obj.hours_completed = Math.round((objHoursMap[obj.id] || 0) * 10) / 10;
   }
 
   // Publications progress
-  const pubTotal = db.prepare('SELECT COUNT(*) as n FROM publications').get().n;
-  const pubDone  = db.prepare("SELECT COUNT(*) as n FROM publications WHERE status = 'published'").get().n;
+  const pubTotal = isSectionEnabled(userId, 'publications')
+    ? db.prepare('SELECT COUNT(*) as n FROM publications WHERE user_id = ?').get(userId).n
+    : 0;
+  const pubDone  = isSectionEnabled(userId, 'publications')
+    ? db.prepare("SELECT COUNT(*) as n FROM publications WHERE status = 'published' AND user_id = ?").get(userId).n
+    : 0;
 
   // Certifications progress
-  const certTotal = db.prepare('SELECT COUNT(*) as n FROM certifications').get().n;
-  const certDone  = db.prepare("SELECT COUNT(*) as n FROM certifications WHERE status = 'completed'").get().n;
-
-  function compareTaskSchedule(a, b) {
-    const aKey = `${a.date || ''} ${a.start_time || '99:99'}`;
-    const bKey = `${b.date || ''} ${b.start_time || '99:99'}`;
-    return aKey.localeCompare(bKey);
-  }
-
-  function getLastTask(tasks) {
-    if (tasks.length === 0) return null;
-    return [...tasks].sort(compareTaskSchedule).at(-1);
-  }
+  const certTotal = isSectionEnabled(userId, 'certifications')
+    ? db.prepare('SELECT COUNT(*) as n FROM certifications WHERE user_id = ?').get(userId).n
+    : 0;
+  const certDone  = isSectionEnabled(userId, 'certifications')
+    ? db.prepare("SELECT COUNT(*) as n FROM certifications WHERE status = 'completed' AND user_id = ?").get(userId).n
+    : 0;
 
   function getNearestPlannedItem(table, emptyLabel) {
-    const items = db.prepare(`SELECT id, title, status FROM ${table}`).all();
+    const items = db.prepare(`SELECT id, title, status FROM ${table} WHERE user_id = ?`).all(userId);
     const candidates = items
       .filter(item => !doneItemStatuses.has(item.status))
       .map(item => {
-        const linkedTasks = db.prepare('SELECT id, title, date, start_time, status FROM tasks WHERE milestone_id = ? AND date IS NOT NULL').all(item.id);
-        const pendingTasks = linkedTasks.filter(task => !doneTaskStatuses.has(task.status));
-        if (pendingTasks.length === 0) return null;
-        const lastTask = getLastTask(linkedTasks);
-        if (!lastTask) return null;
-        return { label: item.title, date: lastTask.date };
+        const nextTask = db.prepare(`
+          SELECT id, title, date, start_time, status
+          FROM tasks
+          WHERE milestone_id = ?
+            AND date IS NOT NULL
+            AND status != 'completed'
+            AND date >= ?
+          ORDER BY date, start_time
+          LIMIT 1
+        `).get(item.id, today);
+        if (!nextTask) return null;
+        return { label: item.title, date: nextTask.date };
       })
       .filter(Boolean)
       .sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label, 'es'));
@@ -1187,11 +1324,14 @@ app.get('/api/dashboard', (req, res) => {
     JOIN certifications c ON c.id = t.milestone_id
     WHERE t.date IS NOT NULL
       AND t.status != 'completed'
+      AND t.date >= ?
       AND lower(trim(t.title)) LIKE 'examen%'
       AND c.status != 'completed'
+      AND t.user_id = ?
+      AND c.user_id = ?
     ORDER BY t.date, t.start_time
     LIMIT 1
-  `).get() || null;
+  `).get(today, userId, userId) || null;
 
   const nextSpecialMilestones = {
     exam: nextExamTask
@@ -1202,7 +1342,7 @@ app.get('/api/dashboard', (req, res) => {
     repo: getNearestPlannedItem('repos', 'No planificado'),
   };
 
-  const globalPct = computeGlobalTaskProgress();
+  const globalPct = totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100);
 
   res.json({
     today,
@@ -1224,19 +1364,38 @@ app.get('/api/dashboard', (req, res) => {
 
 // ── EXPORT / IMPORT ──────────────────────────────────────────────────────────
 app.get('/api/export', (req, res) => {
+  const scope = req.query.scope === 'selected' ? 'selected' : 'all';
+  const selectedUserIds = []
+    .concat(req.query.user_ids || [])
+    .flatMap(v => String(v).split(','))
+    .map(v => v.trim())
+    .filter(Boolean);
+  const selectedUsers = scope === 'selected'
+    ? (selectedUserIds.length
+      ? db.prepare(`SELECT * FROM users WHERE id IN (${selectedUserIds.map(() => '?').join(',')})`).all(...selectedUserIds)
+      : [])
+    : db.prepare('SELECT * FROM users ORDER BY name COLLATE NOCASE ASC').all();
+  const exportUserIds = selectedUsers.map(u => u.id);
+  const hasUserFilter = exportUserIds.length > 0;
+  const inClause = hasUserFilter ? ` WHERE user_id IN (${exportUserIds.map(() => '?').join(',')})` : ' WHERE 1=0';
+  const selectByUsers = (table) => db.prepare(`SELECT * FROM ${table}${inClause}`).all(...exportUserIds);
+
   const data = {
     exported_at: new Date().toISOString(),
     version: 1,
-    categories:     db.prepare('SELECT * FROM categories').all(),
-    objectives:     db.prepare('SELECT * FROM objectives').all(),
-    milestones:     db.prepare('SELECT * FROM milestones').all(),
-    tasks:          db.prepare('SELECT * FROM tasks').all(),
-    events:         db.prepare('SELECT * FROM events').all(),
-    publications:   db.prepare('SELECT * FROM publications').all(),
-    certifications: db.prepare('SELECT * FROM certifications').all(),
-    repos:          db.prepare('SELECT * FROM repos').all(),
-    prs:            db.prepare('SELECT * FROM prs').all(),
-    work_blocks:    db.prepare('SELECT * FROM work_blocks').all(),
+    users:          selectedUsers,
+    categories:     selectByUsers('categories'),
+    objectives:     selectByUsers('objectives'),
+    milestones:     selectByUsers('milestones'),
+    tasks:          selectByUsers('tasks'),
+    events:         selectByUsers('events'),
+    publications:   selectByUsers('publications'),
+    certifications: selectByUsers('certifications'),
+    repos:          selectByUsers('repos'),
+    prs:            selectByUsers('prs'),
+    work_blocks:    selectByUsers('work_blocks'),
+    reading_list:   selectByUsers('reading_list'),
+    documents:      selectByUsers('documents'),
   };
   const filename = `planner-export-${new Date().toISOString().slice(0, 10)}.json`;
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -1351,11 +1510,12 @@ app.post('/api/import', (req, res) => {
 // ── Documents ────────────────────────────────────────────────────────────────
 
 app.get('/api/documents', (req, res) => {
+  if (!isSectionEnabled(req.userId, 'documents')) return res.json([]);
   const { q, sort = 'created_at' } = req.query;
   const col = sort === 'name' ? 'name' : 'created_at';
-  let sql = `SELECT * FROM documents`;
-  const params = [];
-  if (q) { sql += ` WHERE name LIKE ?`; params.push(`%${q}%`); }
+  let sql = `SELECT * FROM documents WHERE user_id = ?`;
+  const params = [req.userId];
+  if (q) { sql += ` AND name LIKE ?`; params.push(`%${q}%`); }
   sql += ` ORDER BY ${col} DESC`;
   const rows = db.prepare(sql).all(...params).map(d => ({
     ...d,
@@ -1369,26 +1529,26 @@ app.post('/api/documents', upload.single('file'), (req, res) => {
   const id = require('crypto').randomUUID();
   const name = req.body.name || req.file.originalname;
   const catIds = req.body.category_ids ? JSON.stringify(JSON.parse(req.body.category_ids)) : '[]';
-  db.prepare(`INSERT INTO documents (id, name, filename, mime_type, size, category_ids) VALUES (?,?,?,?,?,?)`)
-    .run(id, name, req.file.filename, req.file.mimetype, req.file.size, catIds);
-  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(id);
+  db.prepare(`INSERT INTO documents (id, name, filename, mime_type, size, category_ids, user_id) VALUES (?,?,?,?,?,?,?)`)
+    .run(id, name, req.file.filename, req.file.mimetype, req.file.size, catIds, req.userId);
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?').get(id, req.userId);
   res.json({ ...doc, category_ids: JSON.parse(doc.category_ids || '[]') });
 });
 
 app.put('/api/documents/:id', (req, res) => {
   const { name, category_ids } = req.body;
-  db.prepare('UPDATE documents SET name = ?, category_ids = ? WHERE id = ?')
-    .run(name, JSON.stringify(category_ids || []), req.params.id);
-  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  db.prepare('UPDATE documents SET name = ?, category_ids = ? WHERE id = ? AND user_id = ?')
+    .run(name, JSON.stringify(category_ids || []), req.params.id, req.userId);
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   res.json({ ...doc, category_ids: JSON.parse(doc.category_ids || '[]') });
 });
 
 app.delete('/api/documents/:id', (req, res) => {
-  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   if (!doc) return res.json({ ok: true });
   const filePath = path.join(uploadsDir, doc.filename);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM documents WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
 

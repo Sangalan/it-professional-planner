@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
-import { api } from './api.js';
+import { api, getActiveUserId, setActiveUserId } from './api.js';
 import { toDateStr, timeToMinutes, formatCountdown, secondsUntilTime, getGapHours } from './utils/dateUtils.js';
 import Dashboard from './views/Dashboard.jsx';
 import NowView from './views/NowView.jsx';
@@ -276,7 +276,7 @@ function SidebarStatus() {
 }
 
 const navMain = [
-  { path: '/',          icon: '📊', label: 'Dashboard' },
+  { path: '/',          icon: '📊', label: 'Panel' },
   { path: '/now',       icon: '⏱',  label: 'Ahora mismo' },
   { path: '/today',     icon: '📋',  label: 'Hoy' },
   { path: '/week',      icon: '🗓',  label: 'Semana' },
@@ -302,7 +302,54 @@ const navTools = [
   { path: '/import-export', icon: '💾', label: 'Importar/Exportar' },
 ];
 
+function SectionGuard({ enabled, sectionLabel, children }) {
+  if (enabled) return children;
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-title">Sección deshabilitada</div>
+          <div className="page-subtitle">Esta sección está desactivada para el usuario actual</div>
+        </div>
+      </div>
+      <div className="card" style={{ maxWidth: 760 }}>
+        <div className="card-body">
+          <p style={{ fontSize: 14, color: 'var(--text-2)' }}>
+            <strong>{sectionLabel}</strong> no está disponible para este usuario.
+            Puedes habilitarla en Configuración → Usuarios.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const [users, setUsers] = useState([]);
+  const [activeUserId, setActiveUserState] = useState(getActiveUserId());
+  const activeUser = users.find(u => u.id === activeUserId) || null;
+  const sections = activeUser?.content_sections || {
+    clients: true, publications: true, certifications: true, repos: true, prs: true, events: true, reading_list: true, documents: true,
+  };
+
+  useEffect(() => {
+    api.users().then(setUsers).catch(() => {});
+    const onChanged = (e) => {
+      setActiveUserState(e.detail || getActiveUserId());
+      api.users().then(setUsers).catch(() => {});
+    };
+    window.addEventListener('active-user-changed', onChanged);
+    return () => window.removeEventListener('active-user-changed', onChanged);
+  }, []);
+
+  function switchUser() {
+    if (!users.length) return;
+    const idx = users.findIndex(u => u.id === activeUserId);
+    const next = users[(idx + 1) % users.length];
+    if (!next) return;
+    setActiveUserId(next.id);
+  }
+
   return (
     <CategoriesProvider>
       <div className="app-shell">
@@ -325,7 +372,17 @@ export default function App() {
               </NavLink>
             ))}
             <div className="nav-section">Contenido</div>
-            {navContent.map(item => (
+            {navContent.filter(item => {
+              if (item.path === '/clients') return sections.clients;
+              if (item.path === '/publications') return sections.publications;
+              if (item.path === '/certifications') return sections.certifications;
+              if (item.path === '/repos') return sections.repos;
+              if (item.path === '/prs') return sections.prs;
+              if (item.path === '/events') return sections.events;
+              if (item.path === '/reading-list') return sections.reading_list;
+              if (item.path === '/documents') return sections.documents;
+              return true;
+            }).map(item => (
               <NavLink
                 key={item.path}
                 to={item.path}
@@ -349,7 +406,26 @@ export default function App() {
           </nav>
         </aside>
         <main className="main-content">
-          <Routes>
+          <div style={{ position: 'fixed', top: 12, right: 18, zIndex: 120 }}>
+            <button
+              onClick={switchUser}
+              title={activeUser ? `Usuario activo: ${activeUser.name}. Clic para cambiar.` : 'Cambiar usuario'}
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: '50%',
+                border: '2px solid #fff',
+                boxShadow: 'var(--shadow-md)',
+                background: activeUser?.color || 'var(--accent)',
+                color: '#fff',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              {(activeUser?.name || 'U').trim().charAt(0).toUpperCase()}
+            </button>
+          </div>
+          <Routes key={activeUserId}>
             <Route path="/"           element={<Dashboard />} />
             <Route path="/now"        element={<NowView />} />
             <Route path="/today"      element={<DailyList />} />
@@ -357,14 +433,14 @@ export default function App() {
             <Route path="/month"      element={<MonthlyCalendar />} />
             <Route path="/tasks"      element={<TasksView />} />
             <Route path="/objectives" element={<ObjectivesView />} />
-            <Route path="/clients"    element={<ClientsView />} />
-            <Route path="/publications" element={<PublicationsView />} />
-            <Route path="/certifications" element={<CertificationsView />} />
-            <Route path="/repos"          element={<ReposView />} />
-            <Route path="/prs"            element={<PRsView />} />
-            <Route path="/reading-list"   element={<ReadingListView />} />
-            <Route path="/documents"      element={<DocumentsView />} />
-            <Route path="/events"         element={<EventsView />} />
+            <Route path="/clients" element={<SectionGuard enabled={sections.clients} sectionLabel="Clientes"><ClientsView /></SectionGuard>} />
+            <Route path="/publications" element={<SectionGuard enabled={sections.publications} sectionLabel="Publicaciones"><PublicationsView /></SectionGuard>} />
+            <Route path="/certifications" element={<SectionGuard enabled={sections.certifications} sectionLabel="Certificaciones"><CertificationsView /></SectionGuard>} />
+            <Route path="/repos" element={<SectionGuard enabled={sections.repos} sectionLabel="Proyectos"><ReposView /></SectionGuard>} />
+            <Route path="/prs" element={<SectionGuard enabled={sections.prs} sectionLabel="Pull Requests"><PRsView /></SectionGuard>} />
+            <Route path="/reading-list" element={<SectionGuard enabled={sections.reading_list} sectionLabel="Para Leer"><ReadingListView /></SectionGuard>} />
+            <Route path="/documents" element={<SectionGuard enabled={sections.documents} sectionLabel="Documentos"><DocumentsView /></SectionGuard>} />
+            <Route path="/events" element={<SectionGuard enabled={sections.events} sectionLabel="Eventos"><EventsView /></SectionGuard>} />
             <Route path="/search"     element={<Search />} />
             <Route path="/import-export" element={<ImportExport />} />
             <Route path="/settings"      element={<Settings />} />

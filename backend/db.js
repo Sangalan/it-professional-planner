@@ -51,6 +51,19 @@ try { db.prepare('ALTER TABLE objectives ADD COLUMN category_ids TEXT').run(); }
 
 try { db.prepare('ALTER TABLE documents ADD COLUMN category_ids TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE categories ADD COLUMN text_color TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE categories ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE objectives ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE milestones ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE work_blocks ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE events ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE publications ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE certifications ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE repos ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE prs ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE documents ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE reading_list ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE users ADD COLUMN content_sections TEXT').run(); } catch (_) {}
 
 // Documents uploads directory
 const uploadsDir = path.join(dataDir, 'uploads');
@@ -61,10 +74,18 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 function initSchema() {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL,
+      content_sections TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      color TEXT NOT NULL
+      color TEXT NOT NULL,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS objectives (
@@ -79,7 +100,8 @@ function initSchema() {
       percentage_completed REAL DEFAULT 0,
       status TEXT DEFAULT 'not_started',
       priority INTEGER DEFAULT 2,
-      notes TEXT
+      notes TEXT,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS milestones (
@@ -90,7 +112,8 @@ function initSchema() {
       target_date TEXT,
       percentage_completed REAL DEFAULT 0,
       status TEXT DEFAULT 'not_started',
-      weight INTEGER DEFAULT 10
+      weight INTEGER DEFAULT 10,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
@@ -116,7 +139,8 @@ function initSchema() {
       label TEXT,
       is_cloned INTEGER DEFAULT 0,
       cloned_from TEXT,
-      percentage_completed REAL DEFAULT 0
+      percentage_completed REAL DEFAULT 0,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS work_blocks (
@@ -126,7 +150,8 @@ function initSchema() {
       start_time TEXT,
       end_time TEXT,
       category_id TEXT,
-      weekday INTEGER
+      weekday INTEGER,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS events (
@@ -138,7 +163,8 @@ function initSchema() {
       format TEXT,
       estimated_cost REAL DEFAULT 0,
       category_id TEXT,
-      notes TEXT
+      notes TEXT,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS publications (
@@ -149,7 +175,8 @@ function initSchema() {
       category_id TEXT,
       status TEXT DEFAULT 'pending',
       notes TEXT,
-      publication_text TEXT
+      publication_text TEXT,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS certifications (
@@ -158,7 +185,8 @@ function initSchema() {
       target_date TEXT,
       category_id TEXT,
       status TEXT DEFAULT 'not_started',
-      notes TEXT
+      notes TEXT,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS repos (
@@ -168,7 +196,8 @@ function initSchema() {
       category_id TEXT,
       type TEXT DEFAULT 'personal',
       status TEXT DEFAULT 'not_started',
-      notes TEXT
+      notes TEXT,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS prs (
@@ -179,7 +208,8 @@ function initSchema() {
       category_id TEXT,
       objective_id TEXT,
       status TEXT DEFAULT 'not_started',
-      notes TEXT
+      notes TEXT,
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS documents (
@@ -188,7 +218,8 @@ function initSchema() {
       filename TEXT NOT NULL,
       mime_type TEXT,
       size INTEGER,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      user_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS reading_list (
@@ -200,9 +231,33 @@ function initSchema() {
       notes TEXT,
       status TEXT DEFAULT 'pending',
       sort_order REAL DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      user_id TEXT
     );
   `);
+
+  const defaultSections = JSON.stringify({
+    clients: true,
+    publications: true,
+    certifications: true,
+    repos: true,
+    prs: true,
+    events: true,
+    reading_list: true,
+    documents: true,
+  });
+  db.prepare('INSERT OR IGNORE INTO users (id, name, color, content_sections) VALUES (?, ?, ?, ?)').run('pepito', 'Pepito', '#2563eb', defaultSections);
+  db.prepare('UPDATE users SET content_sections = ? WHERE content_sections IS NULL OR TRIM(content_sections) = \'\'').run(defaultSections);
+
+  const scopedTables = [
+    'categories', 'objectives', 'milestones', 'tasks', 'work_blocks',
+    'events', 'publications', 'certifications', 'repos', 'prs', 'documents', 'reading_list',
+  ];
+  for (const table of scopedTables) {
+    try {
+      db.prepare(`UPDATE ${table} SET user_id = 'pepito' WHERE user_id IS NULL OR TRIM(user_id) = ''`).run();
+    } catch (_) {}
+  }
 }
 
 module.exports = { db, initSchema };

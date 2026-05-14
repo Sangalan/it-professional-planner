@@ -373,78 +373,76 @@ export default function WeeklyCalendar() {
 
           <div style={{ overflowX: 'auto' }}>
             <div style={{ minWidth: 700 }}>
-              {/* Header row */}
               <div style={{
-                display: 'grid',
-                gridTemplateColumns: `52px repeat(7, 1fr)`,
                 background: 'var(--border)',
-                gap: 1,
-                borderRadius: '8px 8px 0 0',
-                overflow: 'hidden',
                 border: '1px solid var(--border)',
-                borderBottom: 'none',
+                borderRadius: 8,
+                overflow: 'hidden',
               }}>
-                <div style={{ background: 'var(--surface)', padding: '8px 4px' }} />
-                {days.map(d => {
-                  const ds = toDateStr(d);
-                  const today = isToday(d);
-                  return (
-                    <div key={ds} style={{
-                      background: today ? 'var(--accent-light)' : 'var(--surface)',
-                      padding: '8px 6px', textAlign: 'center',
-                    }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase' }}>
-                        {fmtDayOfWeek(d)}
-                      </div>
-                      <div style={{
-                        fontSize: 20, fontWeight: 700,
-                        color: today ? 'var(--accent)' : 'var(--text-2)'
+                {/* Header row */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: `52px repeat(7, minmax(0, 1fr))`,
+                  background: 'var(--border)',
+                  gap: 1,
+                  borderBottom: '1px solid var(--border)',
+                }}>
+                  <div style={{ background: 'var(--surface)', padding: '8px 4px' }} />
+                  {days.map(d => {
+                    const ds = toDateStr(d);
+                    const today = isToday(d);
+                    return (
+                      <div key={ds} style={{
+                        background: today ? 'var(--accent-light)' : 'var(--surface)',
+                        padding: '8px 6px', textAlign: 'center',
                       }}>
-                        {d.getDate()}
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase' }}>
+                          {fmtDayOfWeek(d)}
+                        </div>
+                        <div style={{
+                          fontSize: 20, fontWeight: 700,
+                          color: today ? 'var(--accent)' : 'var(--text-2)'
+                        }}>
+                          {d.getDate()}
+                        </div>
+                        {(eventsByDate[ds] || []).map(ev => (
+                          <div key={ev.id} title={ev.title} style={{
+                            fontSize: 9, padding: '1px 4px', borderRadius: 3,
+                            background: getCatColor(ev.category_id) + 'cc',
+                            color: 'white', marginTop: 2,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                          }}>
+                            {ev.title}
+                          </div>
+                        ))}
+                        {(tasksByDate[ds] || []).filter(t => !t.start_time).map(t => (
+                          <div key={t.id} title={t.title} onClick={e => { e.stopPropagation(); setEditTask(t); }} style={{
+                            fontSize: 9, padding: '1px 4px', borderRadius: 3,
+                            background: getTaskColor(t) + (t.status === 'completed' ? '55' : 'aa'),
+                            color: 'white', marginTop: 2,
+                            overflow: 'hidden',
+                            cursor: 'pointer',
+                          }}>
+                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {t.title}{t.status === 'completed' ? ' ✓' : ''}
+                            </div>
+                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.92 }}>
+                              {getMilestoneLabel(t)}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      {/* All-day events */}
-                      {(eventsByDate[ds] || []).map(ev => (
-                        <div key={ev.id} title={ev.title} style={{
-                          fontSize: 9, padding: '1px 4px', borderRadius: 3,
-                          background: getCatColor(ev.category_id) + 'cc',
-                          color: 'white', marginTop: 2,
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                        }}>
-                          {ev.title}
-                        </div>
-                      ))}
-                      {/* All-day tasks (no start_time) */}
-                      {(tasksByDate[ds] || []).filter(t => !t.start_time).map(t => (
-                        <div key={t.id} title={t.title} onClick={e => { e.stopPropagation(); setEditTask(t); }} style={{
-                          fontSize: 9, padding: '1px 4px', borderRadius: 3,
-                          background: getTaskColor(t) + (t.status === 'completed' ? '55' : 'aa'),
-                          color: 'white', marginTop: 2,
-                          overflow: 'hidden',
-                          cursor: 'pointer',
-                        }}>
-                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {t.title}{t.status === 'completed' ? ' ✓' : ''}
-                          </div>
-                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.92 }}>
-                            {getMilestoneLabel(t)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
 
-              {/* Time grid */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: `52px repeat(7, 1fr)`,
-                background: 'var(--border)',
-                gap: 1,
-                border: '1px solid var(--border)',
-                borderRadius: '0 0 8px 8px',
-                overflow: 'hidden',
-              }}>
+                {/* Time grid */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: `52px repeat(7, minmax(0, 1fr))`,
+                  background: 'var(--border)',
+                  gap: 1,
+                }}>
             {/* Time labels column */}
             <div style={{ background: 'var(--surface)' }}>
               {HOURS.map(hour => (
@@ -593,6 +591,7 @@ export default function WeeklyCalendar() {
                 </div>
               );
             })}
+                </div>
               </div>
             </div>
           </div>

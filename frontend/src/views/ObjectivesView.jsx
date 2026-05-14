@@ -651,8 +651,11 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
   const [editingLinked, setEditingLinked] = useState(false);
 
   const days = item.days_remaining ?? daysLeft(item.date);
-  const cls = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
-  const dayLabel = days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d restantes`;
+  const isCompletedCertification = item.type === 'certification' && item.status === 'completed';
+  const cls = isCompletedCertification ? 'ok' : (days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok');
+  const dayLabel = isCompletedCertification
+    ? 'Aprobada'
+    : (days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d restantes`);
   const isSimple = item.type === 'milestone';
 
   async function fetchTasks() {

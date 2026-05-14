@@ -67,7 +67,11 @@ export function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) 
   }
 
   const days = getDaysRemaining(form.target_date);
-  const cls = days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok';
+  const isCompleted = form.status === 'completed';
+  const cls = isCompleted ? 'ok' : (days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok');
+  const daysLabel = isCompleted
+    ? 'Aprobada'
+    : (days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`);
 
   return (
     <div style={{
@@ -99,7 +103,7 @@ export function DetailDialog({ cert, objectives, onClose, onSaved, onDeleted }) 
           <div className="task-meta" style={{ marginBottom: 16 }}>
             <span className="task-time">{fmtDate(form.target_date)}</span>
             {days != null && <span className={`milestone-days ${cls}`}>
-              {days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}
+              {daysLabel}
             </span>}
           </div>
         )}

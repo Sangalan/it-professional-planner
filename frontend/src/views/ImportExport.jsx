@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import useEscapeClose from '../hooks/useEscapeClose.js';
 
@@ -23,11 +23,21 @@ function summarize(data) {
 
 export default function ImportExport() {
   const fileRef = useRef(null);
+  const [users, setUsers] = useState([]);
+  const [exportMode, setExportMode] = useState('all');
+  const [selectedUserIds, setSelectedUserIds] = useState([]);
   const [pending, setPending] = useState(null);   // parsed JSON waiting for strategy choice
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);     // { stats, strategy } after import
   const [error, setError] = useState('');
   useEscapeClose(() => { if (!importing) setPending(null); }, Boolean(pending));
+
+  useEffect(() => {
+    api.users().then((rows) => {
+      setUsers(rows || []);
+      setSelectedUserIds((rows || []).map(u => u.id));
+    }).catch(() => {});
+  }, []);
 
   async function handleFileChange(e) {
     const file = e.target.files?.[0];
@@ -61,10 +71,21 @@ export default function ImportExport() {
   }
 
   function handleExport() {
+    const params = new URLSearchParams();
+    if (exportMode === 'selected') {
+      params.set('scope', 'selected');
+      for (const id of selectedUserIds) params.append('user_ids', id);
+    } else {
+      params.set('scope', 'all');
+    }
     const a = document.createElement('a');
-    a.href = '/api/export';
+    a.href = `/api/export?${params.toString()}`;
     a.download = `planner-export-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
+  }
+
+  function toggleUserSelection(userId) {
+    setSelectedUserIds(prev => prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]);
   }
 
   return (
@@ -162,9 +183,46 @@ export default function ImportExport() {
         <div className="card-header"><span className="card-title">Exportar datos</span></div>
         <div style={{ padding: '16px 18px' }}>
           <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 16 }}>
-            Descarga una copia completa de todos tus datos en formato JSON.
+            Descarga una copia JSON de todos los usuarios o solo de usuarios concretos.
           </p>
-          <button className="btn btn-primary" onClick={handleExport}>⬇ Descargar JSON</button>
+          <div style={{ display: 'flex', gap: 14, marginBottom: 10, fontSize: 13 }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="radio" checked={exportMode === 'all'} onChange={() => setExportMode('all')} />
+              Todos los usuarios
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="radio" checked={exportMode === 'selected'} onChange={() => setExportMode('selected')} />
+              Usuarios seleccionados
+            </label>
+          </div>
+          {exportMode === 'selected' && (
+            <div style={{ marginBottom: 14, border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
+              {users.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-3)' }}>No hay usuarios disponibles.</div>}
+              {users.map(user => (
+                <label key={user.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedUserIds.includes(user.id)}
+                    onChange={() => toggleUserSelection(user.id)}
+                  />
+                  <span style={{
+                    width: 18, height: 18, borderRadius: '50%', background: user.color, color: '#fff',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700,
+                  }}>
+                    {(user.name || 'U').charAt(0).toUpperCase()}
+                  </span>
+                  {user.name}
+                </label>
+              ))}
+            </div>
+          )}
+          <button
+            className="btn btn-primary"
+            onClick={handleExport}
+            disabled={exportMode === 'selected' && selectedUserIds.length === 0}
+          >
+            ⬇ Descargar JSON
+          </button>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../api.js';
+import { api, getActiveUserId, setActiveUserId } from '../api.js';
 import { CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
 import { statusLabel } from '../utils/categoryUtils.js';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
@@ -825,6 +825,82 @@ function MilestoneSettingsRow({ item, objectives, onSaved, onDeleted }) {
   );
 }
 
+function UserDialog({ user, onClose, onSaved }) {
+  const isNew = !user;
+  const [name, setName] = useState(user?.name || '');
+  const [color, setColor] = useState(user?.color || '#2563eb');
+  const [sections, setSections] = useState(user?.content_sections || {
+    clients: true,
+    publications: true,
+    certifications: true,
+    repos: true,
+    prs: true,
+    events: true,
+    reading_list: true,
+    documents: true,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function save() {
+    if (!name.trim()) { setError('El nombre es obligatorio'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      if (isNew) await api.createUser({ name: name.trim(), color, content_sections: sections });
+      else await api.updateUser(user.id, { name: name.trim(), color, content_sections: sections });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo guardar');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog title={isNew ? 'Nuevo usuario' : `Editar usuario — ${user.name}`} onClose={onClose}>
+      <div style={fieldW}>
+        <label style={labelSt}>Nombre *</label>
+        <input type="text" value={name} onChange={e => setName(e.target.value)} style={{ width: '100%' }} autoFocus />
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Color</label>
+        <ColorPicker value={color} onChange={setColor} />
+      </div>
+      <div style={fieldW}>
+        <label style={labelSt}>Secciones de contenido</label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {[
+            ['clients', 'Clientes'],
+            ['publications', 'Publicaciones'],
+            ['certifications', 'Certificaciones'],
+            ['repos', 'Proyectos'],
+            ['prs', 'Pull Requests'],
+            ['events', 'Eventos'],
+            ['reading_list', 'Para Leer'],
+            ['documents', 'Documentos'],
+          ].map(([key, label]) => (
+            <label key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={!!sections[key]}
+                onChange={(e) => setSections(prev => ({ ...prev, [key]: e.target.checked }))}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+      {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : isNew ? 'Crear' : 'Guardar'}</button>
+      </div>
+    </Dialog>
+  );
+}
+
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -839,9 +915,14 @@ export default function Settings() {
   const [editingObjectiveFromSearch, setEditingObjectiveFromSearch] = useState(null);
   const [editingMilestoneFromSearch, setEditingMilestoneFromSearch] = useState(null);
   const [milestoneGroupsExpanded, setMilestoneGroupsExpanded] = useState({});
+  const [users, setUsers] = useState([]);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [activeUserId, setActiveUserState] = useState(getActiveUserId());
 
   function loadCats() { api.categories().then(setCats); }
   function loadObjectives() { api.objectives().then(setObjectives); }
+  function loadUsers() { api.users().then(setUsers); }
   async function loadMilestones() {
     const [classicMilestones, publications, certifications, repos, prs, events, tasks] = await Promise.all([
       api.milestones(),
@@ -946,9 +1027,14 @@ export default function Settings() {
 
     setMilestoneItems(mergedItems);
   }
-  function loadAll() { loadCats(); loadObjectives(); loadMilestones(); }
+  function loadAll() { loadCats(); loadObjectives(); loadMilestones(); loadUsers(); }
 
   useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    const onChanged = (e) => setActiveUserState(e.detail || getActiveUserId());
+    window.addEventListener('active-user-changed', onChanged);
+    return () => window.removeEventListener('active-user-changed', onChanged);
+  }, []);
   useEffect(() => {
     const intent = location.state;
     if (!intent?.fromSearch) return;
@@ -1010,6 +1096,19 @@ export default function Settings() {
           onDeleted={() => { setEditingMilestoneFromSearch(null); loadAll(); }}
         />
       )}
+      {creatingUser && (
+        <UserDialog
+          onClose={() => setCreatingUser(false)}
+          onSaved={() => { setCreatingUser(false); loadUsers(); setActiveUserId(getActiveUserId()); }}
+        />
+      )}
+      {editingUser && (
+        <UserDialog
+          user={editingUser}
+          onClose={() => setEditingUser(null)}
+          onSaved={() => { setEditingUser(null); loadUsers(); setActiveUserId(getActiveUserId()); }}
+        />
+      )}
 
       <div className="page-header">
         <div>
@@ -1023,6 +1122,38 @@ export default function Settings() {
           El ID es permanente; el nombre y el color son editables.
         </p>
         {cats.map(cat => <CategoryRow key={cat.id} cat={cat} onSaved={loadCats} onDeleted={loadCats} />)}
+      </SectionCard>
+
+      <SectionCard title="Usuarios" count={users.length} onNew={() => setCreatingUser(true)}>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>
+          Cada usuario tiene su propio espacio de datos. Pulsa el círculo arriba a la derecha para cambiar.
+        </p>
+        {users.map(user => (
+          <div
+            key={user.id}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, ...rowBorder, cursor: 'pointer' }}
+            onClick={() => setEditingUser(user)}
+          >
+            <span style={{
+              width: 24, height: 24, borderRadius: '50%', background: user.color, color: '#fff',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 12,
+            }}>
+              {(user.name || 'U').charAt(0).toUpperCase()}
+            </span>
+            <div style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{user.name}</div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveUserId(user.id);
+              }}
+            >
+              Usar
+            </button>
+            {activeUserId === user.id && <span className="badge" style={{ background: '#d1fae5', color: '#065f46' }}>Activo</span>}
+          </div>
+        ))}
       </SectionCard>
 
       <SectionCard title="Objetivos" count={objectives.length} onNew={() => setCreatingObj(true)}>
