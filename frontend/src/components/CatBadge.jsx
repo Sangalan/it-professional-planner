@@ -6,9 +6,23 @@ const CategoriesContext = createContext([]);
 export function CategoriesProvider({ children }) {
   const [cats, setCats] = useState([]);
   useEffect(() => {
-    api.categories().then((data) => {
-      setCats([...data].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es')));
-    });
+    let cancelled = false;
+    const loadCategories = () => {
+      api.categories().then((data) => {
+        if (cancelled) return;
+        setCats([...data].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es')));
+      }).catch(() => {
+        if (cancelled) return;
+        setCats([]);
+      });
+    };
+
+    loadCategories();
+    window.addEventListener('active-user-changed', loadCategories);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('active-user-changed', loadCategories);
+    };
   }, []);
   return <CategoriesContext.Provider value={cats}>{children}</CategoriesContext.Provider>;
 }
