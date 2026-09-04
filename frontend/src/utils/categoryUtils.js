@@ -38,6 +38,7 @@ export const STATUS_LABELS = {
   completed:   'Completada',
   not_started: 'No iniciado',
   blocked:     'Bloqueado',
+  postponed:   'Postpuesto',
 };
 
 export function statusLabel(s) {

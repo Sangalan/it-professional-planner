@@ -7,11 +7,14 @@ import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
   { value: 'in_progress', label: 'En desarrollo' },
   { value: 'completed',   label: 'Publicado ✓' },
+  { value: 'postponed',   label: 'Postpuesto' },
+  { value: 'discarded',   label: 'Descartado' },
 ];
 const TYPE_OPTIONS = [
   { value: 'client', label: 'Cliente' },
@@ -172,6 +175,8 @@ export default function ReposView() {
   const [toDate, setToDate] = useState('');
   const [filterCats, setFilterCats] = useState([]);
   const [filterTypes, setFilterTypes] = useState([]);
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!selected && !creating);
 
   async function load() {
     api.repos().then(setRepos);
@@ -201,9 +206,11 @@ export default function ReposView() {
   };
   const visible = repos
     .filter(r => !normalizedSearch || (r.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(r => matchesQuickQuery(r.title, quickQuery))
     .filter(r => dateMatches(r.target_date))
     .filter(r => filterCats.length === 0 || filterCats.some(fc => parseCatIds(r.category_ids, r.category_id).includes(fc)))
     .filter(r => filterTypes.length === 0 || filterTypes.includes(getRepoType(r, objectiveById)))
+    .filter(r => statusFilter === 'all' || (statusFilter === 'discarded' ? r.status === 'discarded' : r.status !== 'discarded'))
     .sort((a, b) => {
       const aType = getRepoType(a, objectiveById);
       const bType = getRepoType(b, objectiveById);
@@ -214,13 +221,15 @@ export default function ReposView() {
       if (ad !== bd) return ad.localeCompare(bd);
       return (a.title || '').localeCompare(b.title || '', 'es');
     });
-  const totalRepos = repos.length;
-  const completedRepos = repos.filter(r => r.status === 'completed').length;
-  const inProgressRepos = repos.filter(r => r.status === 'in_progress').length;
+  const countedRepos = repos.filter(r => !['postponed', 'discarded', 'failed'].includes(r.status));
+  const totalRepos = countedRepos.length;
+  const completedRepos = countedRepos.filter(r => r.status === 'completed').length;
+  const inProgressRepos = countedRepos.filter(r => r.status === 'in_progress').length;
   const progressPct = totalRepos > 0 ? Math.round((completedRepos / totalRepos) * 100) : 0;
 
   return (
     <div>
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="proyectos" />
       <div className="page-header">
         <div>
           <div className="page-title">Proyectos</div>
@@ -258,6 +267,11 @@ export default function ReposView() {
         availableCatIds={usedCatIds}
         extraFilters={
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label="Filtrar por estado">
+              <option value="active">Activos</option>
+              <option value="all">Todos</option>
+              <option value="discarded">Descartado</option>
+            </select>
             {TYPE_OPTIONS.map(type => {
               const active = filterTypes.includes(type.value);
               return (

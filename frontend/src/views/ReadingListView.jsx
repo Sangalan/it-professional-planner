@@ -5,6 +5,7 @@ import { CategoryBadges, CategorySelector } from '../components/CatBadge.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW = { marginBottom: 14 };
@@ -354,6 +355,7 @@ export default function ReadingListView() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [filterCats, setFilterCats] = useState([]);
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!dialog);
 
   async function load() {
     api.readingList().then(setItems);
@@ -390,15 +392,18 @@ export default function ReadingListView() {
   const allPending = items.filter(it => it.status === 'pending');
   const allRead = items.filter(it => it.status !== 'pending');
   const usedCatIds = [...new Set(items.flatMap(it => parseCatIds(it.category_ids, it.category_id)))];
-  const isFiltering = search.trim() || filterCats.length > 0 || fromDate || toDate;
-  const pending = isFiltering ? applyFilters(allPending, search, filterCats, fromDate, toDate) : allPending;
-  const read = isFiltering ? applyFilters(allRead, search, filterCats, fromDate, toDate) : allRead;
+  const isFiltering = search.trim() || quickQuery.trim() || filterCats.length > 0 || fromDate || toDate;
+  const pending = (isFiltering ? applyFilters(allPending, search, filterCats, fromDate, toDate) : allPending)
+    .filter(item => matchesQuickQuery(item.title, quickQuery));
+  const read = (isFiltering ? applyFilters(allRead, search, filterCats, fromDate, toDate) : allRead)
+    .filter(item => matchesQuickQuery(item.title, quickQuery));
   const totalItems = items.length;
   const readItems = allRead.length;
   const readPct = totalItems > 0 ? Math.round((readItems / totalItems) * 100) : 0;
 
   return (
     <div>
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="elementos para leer" />
       <div className="page-header">
         <div>
           <div className="page-title">Para Leer</div>

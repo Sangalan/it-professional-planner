@@ -5,6 +5,7 @@ import { CategoryBadges, CategorySelector, useCats } from '../components/CatBadg
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const thStyle = { padding: '9px 18px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
@@ -109,6 +110,7 @@ export default function DocumentsView() {
   const [sortDir, setSortDir] = useState('desc');
   const [uploading, setUploading] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!selected && !uploading);
   const fileRef = useRef();
   const cats = useCats();
 
@@ -166,6 +168,7 @@ export default function DocumentsView() {
 
   const filtered = docs
     .filter(d => !q || d.name.toLowerCase().includes(q.toLowerCase()))
+    .filter(d => matchesQuickQuery(d.name, quickQuery))
     .filter(d => dateMatches(d.created_at))
     .filter(d => filterCats.length === 0 || filterCats.some(fc => (d.category_ids || []).includes(fc)));
 
@@ -199,6 +202,7 @@ export default function DocumentsView() {
 
   return (
     <div>
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="documentos" />
       <div className="page-header">
         <div>
           <div className="page-title">Documentos</div>

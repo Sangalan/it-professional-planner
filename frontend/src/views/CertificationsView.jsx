@@ -8,12 +8,16 @@ import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
 import { buildCertificationStatsMap, formatCertificationStats } from '../utils/certificationMetrics.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
+import StatusFilter from '../components/StatusFilter.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
   { value: 'in_progress', label: 'En curso' },
   { value: 'completed',   label: 'Aprobada ✓' },
   { value: 'failed',      label: 'Fallida' },
+  { value: 'postponed',   label: 'Postpuesta' },
+  { value: 'discarded',   label: 'Descartada' },
 ];
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
@@ -170,6 +174,8 @@ export default function CertificationsView() {
   const [searchTitle, setSearchTitle] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!selected && !creating);
 
   async function load() {
     Promise.all([
@@ -204,6 +210,8 @@ export default function CertificationsView() {
   };
   const filteredBySearch = certs
     .filter(c => !normalizedSearch || (c.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(c => matchesQuickQuery(c.title, quickQuery))
+    .filter(c => statusFilter === 'all' || (statusFilter === 'discarded' ? c.status === 'discarded' : c.status !== 'discarded'))
     .filter(c => dateMatches(c.target_date))
     .filter(c => filterCats.length === 0 || filterCats.some(fc => parseCatIds(c.category_ids, c.category_id).includes(fc)));
   const activeCerts = filteredBySearch
@@ -216,6 +224,7 @@ export default function CertificationsView() {
 
   return (
     <div>
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="certificaciones" />
       <div className="page-header">
         <div>
           <div className="page-title">Certificaciones</div>
@@ -251,6 +260,7 @@ export default function CertificationsView() {
         selectedCats={filterCats}
         onSelectedCatsChange={setFilterCats}
         availableCatIds={usedCatIds}
+        extraFilters={<StatusFilter value={statusFilter} onChange={setStatusFilter} />}
       />
 
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 8 }}>En progreso / pendientes</div>

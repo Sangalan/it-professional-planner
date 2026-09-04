@@ -7,6 +7,8 @@ import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
+import StatusFilter from '../components/StatusFilter.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'No iniciado' },
@@ -14,6 +16,8 @@ const STATUS_OPTIONS = [
   { value: 'review',      label: 'En review' },
   { value: 'merged',      label: 'Merged ✓' },
   { value: 'closed',      label: 'Cerrada' },
+  { value: 'postponed',   label: 'Postpuesto' },
+  { value: 'discarded',   label: 'Descartado' },
 ];
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
@@ -170,6 +174,8 @@ export default function PRsView() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [filterCats, setFilterCats] = useState([]);
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!selected && !creating);
 
   async function load() {
     api.prs().then(setPrs);
@@ -197,6 +203,8 @@ export default function PRsView() {
   };
   const visible = prs
     .filter(p => !normalizedSearch || (p.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(p => matchesQuickQuery(p.title, quickQuery))
+    .filter(p => statusFilter === 'all' || (statusFilter === 'discarded' ? p.status === 'discarded' : p.status !== 'discarded'))
     .filter(dateMatches)
     .filter(p => filterCats.length === 0 || filterCats.some(fc => parseCatIds(p.category_ids, p.category_id).includes(fc)));
 
@@ -208,6 +216,7 @@ export default function PRsView() {
 
   return (
     <div>
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="pull requests" />
       <div className="page-header">
         <div>
           <div className="page-title">Pull Requests</div>
@@ -243,6 +252,7 @@ export default function PRsView() {
         selectedCats={filterCats}
         onSelectedCatsChange={setFilterCats}
         availableCatIds={usedCatIds}
+        extraFilters={<StatusFilter value={statusFilter} onChange={setStatusFilter} />}
       />
 
       {visible.length === 0 ? (

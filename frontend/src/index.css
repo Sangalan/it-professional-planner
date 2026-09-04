@@ -582,6 +582,26 @@ body {
 }
 
 .milestone-title { flex: 1; color: var(--text); }
+.milestone-hover-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.milestone-row:hover .milestone-hover-actions,
+.milestone-row:focus-within .milestone-hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.objective-hover-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.obj-header:hover .objective-hover-actions,
+.obj-header:focus-within .objective-hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
 .milestone-date  { color: var(--text-3); white-space: nowrap; }
 .milestone-days  { font-weight: 600; white-space: nowrap; }
 .milestone-days.soon  { color: var(--warning); }

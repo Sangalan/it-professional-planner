@@ -8,11 +8,15 @@ import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
 import { PUBLICATION_TYPE_OPTIONS, getPublicationTypeMeta } from '../utils/publicationTypes.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
+import StatusFilter from '../components/StatusFilter.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'pending',   label: 'Pendiente' },
   { value: 'draft',     label: 'Borrador' },
   { value: 'published', label: 'Publicado ✓' },
+  { value: 'postponed', label: 'Postpuesta' },
+  { value: 'discarded', label: 'Descartada' },
 ];
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
@@ -186,6 +190,8 @@ export default function PublicationsView() {
   const [searchTitle, setSearchTitle] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!selected && !creating);
 
   async function load() {
     api.publications().then(setPubs);
@@ -213,6 +219,8 @@ export default function PublicationsView() {
 
   const filteredBySearch = pubs
     .filter(p => !normalizedSearch || (p.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(p => matchesQuickQuery(p.title, quickQuery))
+    .filter(p => statusFilter === 'all' || (statusFilter === 'discarded' ? p.status === 'discarded' : p.status !== 'discarded'))
     .filter(p => dateMatches(p.date))
     .filter(p => filterCats.length === 0 || filterCats.some(fc => parseCatIds(p.category_ids, p.category_id).includes(fc)))
   const activePubs = filteredBySearch
@@ -231,6 +239,7 @@ export default function PublicationsView() {
 
   return (
     <div>
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="publicaciones" />
       <div className="page-header">
         <div>
           <div className="page-title">Publicaciones</div>
@@ -278,6 +287,7 @@ export default function PublicationsView() {
         selectedCats={filterCats}
         onSelectedCatsChange={setFilterCats}
         availableCatIds={usedCatIds}
+        extraFilters={<StatusFilter value={statusFilter} onChange={setStatusFilter} />}
       />
 
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 8 }}>Por publicar</div>

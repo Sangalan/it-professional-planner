@@ -293,11 +293,15 @@ function ObjectiveDialog({ obj, onClose, onSaved, onDeleted }) {
         </div>
         <div>
           <label style={labelSt}>Estado</label>
-          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+          <select value={form.status} onChange={e => {
+            const status = e.target.value;
+            setForm(prev => ({ ...prev, status, ...(status === 'postponed' ? { start_date: '', end_date: '' } : {}) }));
+          }} style={{ width: '100%' }}>
             <option value="not_started">No iniciado</option>
             <option value="in_progress">En curso</option>
             <option value="completed">Completado</option>
             <option value="blocked">Bloqueado</option>
+            <option value="postponed">Postpuesto</option>
           </select>
         </div>
       </div>

@@ -59,7 +59,7 @@ function isSectionEnabled(userId, section) {
   return !!getUserContentSections(userId)[section];
 }
 
-function getHiddenTaskRefs(userId) {
+function getHiddenTaskRefs(userId, includeInactive = false) {
   const sections = getUserContentSections(userId);
   const hiddenMilestoneIds = [];
   const pushIds = (table) => {
@@ -76,7 +76,32 @@ function getHiddenTaskRefs(userId) {
     ? db.prepare("SELECT id FROM objectives WHERE user_id = ? AND type = 'client'").all(userId).map(r => r.id)
     : [];
 
-  return { hiddenMilestoneIds, hiddenObjectiveIds };
+  if (includeInactive) {
+    const inactiveStatuses = ['postponed', 'discarded', 'failed'];
+    const placeholders = inactiveStatuses.map(() => '?').join(',');
+    for (const table of ['milestones', 'publications', 'certifications', 'repos', 'prs', 'events']) {
+      const ids = db.prepare(`SELECT id FROM ${table} WHERE user_id = ? AND status IN (${placeholders})`)
+        .all(userId, ...inactiveStatuses).map(r => r.id);
+      hiddenMilestoneIds.push(...ids);
+    }
+    const ids = db.prepare(`SELECT id FROM objectives WHERE user_id = ? AND status IN (${placeholders})`)
+      .all(userId, ...inactiveStatuses).map(r => r.id);
+    hiddenObjectiveIds.push(...ids);
+  }
+
+  return {
+    hiddenMilestoneIds: [...new Set(hiddenMilestoneIds)],
+    hiddenObjectiveIds: [...new Set(hiddenObjectiveIds)],
+  };
+}
+
+function filterVisibleTaskRows(tasks, refs) {
+  const hiddenMilestones = new Set(refs.hiddenMilestoneIds);
+  const hiddenObjectives = new Set(refs.hiddenObjectiveIds);
+  return tasks.filter(task =>
+    (!task.milestone_id || !hiddenMilestones.has(task.milestone_id)) &&
+    (!task.objective_id || !hiddenObjectives.has(task.objective_id))
+  );
 }
 
 function applyTaskVisibility(sql, params, refs) {
@@ -97,16 +122,33 @@ function ensureUser(userId) {
 
 function computeTaskProgress(objectiveId) {
   if (!objectiveId) return 0;
-  const all = db.prepare('SELECT status FROM tasks WHERE objective_id = ? AND is_fixed = 0').all(objectiveId);
+  const all = db.prepare(`
+    SELECT status FROM tasks
+    WHERE objective_id = ? AND is_fixed = 0
+      AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND milestones.status IN ('discarded', 'failed'))
+      AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.status IN ('postponed', 'discarded', 'failed'))
+      AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.status IN ('postponed', 'discarded', 'failed'))
+      AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.id = tasks.milestone_id AND publications.status IN ('postponed', 'discarded', 'failed'))
+      AND NOT EXISTS (SELECT 1 FROM prs WHERE prs.id = tasks.milestone_id AND prs.status IN ('postponed', 'discarded', 'failed'))
+      AND NOT EXISTS (SELECT 1 FROM events WHERE events.id = tasks.milestone_id AND events.status IN ('postponed', 'discarded', 'failed'))
+  `).all(objectiveId);
   if (!all.length) return 0;
   const done = all.filter(t => t.status === 'completed').length;
   return Math.round((done / all.length) * 100);
 }
 
 function computeGlobalTaskProgress() {
-  const total = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE is_fixed = 0').get().n;
+  const eligible = `is_fixed = 0
+    AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = tasks.objective_id AND objectives.status IN ('postponed', 'discarded', 'failed'))
+    AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND milestones.status IN ('discarded', 'failed'))
+    AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.status IN ('postponed', 'discarded', 'failed'))
+    AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.status IN ('postponed', 'discarded', 'failed'))
+    AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.id = tasks.milestone_id AND publications.status IN ('postponed', 'discarded', 'failed'))
+    AND NOT EXISTS (SELECT 1 FROM prs WHERE prs.id = tasks.milestone_id AND prs.status IN ('postponed', 'discarded', 'failed'))
+    AND NOT EXISTS (SELECT 1 FROM events WHERE events.id = tasks.milestone_id AND events.status IN ('postponed', 'discarded', 'failed'))`;
+  const total = db.prepare(`SELECT COUNT(*) as n FROM tasks WHERE ${eligible}`).get().n;
   if (total === 0) return 0;
-  const done = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE is_fixed = 0 AND status = 'completed'").get().n;
+  const done = db.prepare(`SELECT COUNT(*) as n FROM tasks WHERE ${eligible} AND status = 'completed'`).get().n;
   return Math.round((done / total) * 100);
 }
 
@@ -149,7 +191,7 @@ function computeMilestoneProgress(milestoneId) {
 }
 
 function deriveMilestoneStatus(currentStatus, pct) {
-  if (currentStatus === 'blocked') return 'blocked';
+  if (currentStatus === 'blocked' || currentStatus === 'discarded' || currentStatus === 'failed') return currentStatus;
   if (pct === 100) return 'completed';
   if (pct > 0)    return 'in_progress';
   return 'not_started';
@@ -185,7 +227,7 @@ function recomputeAllObjectivesAndGlobalProgress() {
 }
 
 function deriveObjectiveStatus(currentStatus, pct) {
-  if (currentStatus === 'blocked') return 'blocked';
+  if (currentStatus === 'blocked' || currentStatus === 'postponed') return currentStatus;
   if (pct === 100) return 'completed';
   if (pct > 0)    return 'in_progress';
   return 'not_started';
@@ -367,7 +409,7 @@ app.get('/api/tasks/search', (req, res) => {
 
 app.get('/api/tasks', (req, res) => {
   const { date, category_id, status, from, to, objective_id } = req.query;
-  const refs = getHiddenTaskRefs(req.userId);
+  const refs = getHiddenTaskRefs(req.userId, Boolean(date || (from && to)));
   // Non-fixed tasks
   let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND user_id = ?';
   let params = [req.userId];
@@ -417,12 +459,12 @@ app.get('/api/tasks', (req, res) => {
     fixed = db.prepare(fixedSql).all(...fixedParams).map(t => ({ ...t, is_overdue: 0 }));
   }
 
-  res.json([...tasks, ...fixed]);
+  res.json([...tasks, ...filterVisibleTaskRows(fixed, refs)]);
 });
 
 app.get('/api/tasks/today', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  const refs = getHiddenTaskRefs(req.userId);
+  const refs = getHiddenTaskRefs(req.userId, true);
   let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND user_id = ?';
   let params = [today, req.userId];
   ({ sql, params } = applyTaskVisibility(sql, params, refs));
@@ -433,7 +475,7 @@ app.get('/api/tasks/today', (req, res) => {
     expandFixedTasks(today, today, { user_id: req.userId }),
     findClonedTasksForRange(today, today, { user_id: req.userId })
   );
-  res.json([...tasks, ...fixed].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '')));
+  res.json([...tasks, ...filterVisibleTaskRows(fixed, refs)].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '')));
 });
 
 app.get('/api/tasks/week', (req, res) => {
@@ -446,7 +488,7 @@ app.get('/api/tasks/week', (req, res) => {
 
   const from = monday.toISOString().slice(0, 10);
   const to = sunday.toISOString().slice(0, 10);
-  const refs = getHiddenTaskRefs(req.userId);
+  const refs = getHiddenTaskRefs(req.userId, true);
   let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND date BETWEEN ? AND ? AND user_id = ?';
   let params = [from, to, req.userId];
   ({ sql, params } = applyTaskVisibility(sql, params, refs));
@@ -457,13 +499,13 @@ app.get('/api/tasks/week', (req, res) => {
     expandFixedTasks(from, to, { user_id: req.userId }),
     findClonedTasksForRange(from, to, { user_id: req.userId })
   );
-  res.json([...tasks, ...fixed]);
+  res.json([...tasks, ...filterVisibleTaskRows(fixed, refs)]);
 });
 
 app.get('/api/tasks/now', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const timeStr = new Date().toTimeString().slice(0, 5);
-  const refs = getHiddenTaskRefs(req.userId);
+  const refs = getHiddenTaskRefs(req.userId, true);
   let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND start_time IS NOT NULL AND user_id = ?';
   let params = [today, req.userId];
   ({ sql, params } = applyTaskVisibility(sql, params, refs));
@@ -473,7 +515,7 @@ app.get('/api/tasks/now', (req, res) => {
     expandFixedTasks(today, today, { user_id: req.userId }),
     findClonedTasksForRange(today, today, { user_id: req.userId })
   ).filter(t => t.start_time);
-  const tasks = [...regular, ...fixed].sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const tasks = [...regular, ...filterVisibleTaskRows(fixed, refs)].sort((a, b) => a.start_time.localeCompare(b.start_time));
 
   const active = tasks.find(t => t.start_time <= timeStr && t.end_time > timeStr);
   const upcoming = tasks.filter(t => t.start_time > timeStr).sort((a, b) => a.start_time.localeCompare(b.start_time));
@@ -641,7 +683,7 @@ app.get('/api/objectives', (req, res) => {
   const params = [req.userId];
   if (!isSectionEnabled(req.userId, 'clients')) sql += " AND type != 'client'";
   if (type) { sql += ' AND type = ?'; params.push(type); }
-  sql += ' ORDER BY priority, start_date';
+  sql += " ORDER BY CASE WHEN status = 'postponed' THEN 1 ELSE 0 END, priority, start_date";
   const objectives = db.prepare(sql).all(...params);
   for (const obj of objectives) {
     try { obj.category_ids = obj.category_ids ? JSON.parse(obj.category_ids) : (obj.category_id ? [obj.category_id] : []); } catch (_) { obj.category_ids = obj.category_id ? [obj.category_id] : []; }
@@ -651,8 +693,18 @@ app.get('/api/objectives', (req, res) => {
         CASE WHEN status = 'completed' THEN 1 ELSE 0 END ASC,
         target_date ASC NULLS LAST
     `).all(obj.id, req.userId);
-    obj.task_count = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND user_id = ?').get(obj.id, req.userId).n;
-    obj.done_count = db.prepare("SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND status = 'completed' AND user_id = ?").get(obj.id, req.userId).n;
+    const objectiveTaskRows = db.prepare(`
+      SELECT status FROM tasks
+      WHERE objective_id = ? AND is_fixed = 0 AND user_id = ?
+        AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND milestones.status IN ('discarded', 'failed'))
+        AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.status IN ('postponed', 'discarded', 'failed'))
+        AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.status IN ('postponed', 'discarded', 'failed'))
+        AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.id = tasks.milestone_id AND publications.status IN ('postponed', 'discarded', 'failed'))
+        AND NOT EXISTS (SELECT 1 FROM prs WHERE prs.id = tasks.milestone_id AND prs.status IN ('postponed', 'discarded', 'failed'))
+        AND NOT EXISTS (SELECT 1 FROM events WHERE events.id = tasks.milestone_id AND events.status IN ('postponed', 'discarded', 'failed'))
+    `).all(obj.id, req.userId);
+    obj.task_count = objectiveTaskRows.length;
+    obj.done_count = objectiveTaskRows.filter(t => t.status === 'completed').length;
     const orphanRows = db.prepare("SELECT status FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND (milestone_id IS NULL OR milestone_id = '') AND user_id = ?").all(obj.id, req.userId);
     obj.orphan_count = orphanRows.length;
     obj.orphan_done  = orphanRows.filter(t => t.status === 'completed').length;
@@ -685,7 +737,7 @@ app.post('/api/objectives', (req, res) => {
   db.prepare(`INSERT INTO objectives (id,title,description,category_id,category_ids,start_date,end_date,target_value,progress_mode,percentage_completed,status,priority,notes,color,type,user_id)
     VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?)`)
     .run(id, title, description || '', primaryCat, catIds.length ? JSON.stringify(catIds) : null,
-      start_date || null, end_date || null,
+      status === 'postponed' ? null : (start_date || null), status === 'postponed' ? null : (end_date || null),
       target_value || null, progress_mode || 'task_based', status || 'not_started', priority ?? 2, notes || '', color || null,
       type || 'objective', req.userId);
   res.status(201).json(db.prepare('SELECT * FROM objectives WHERE id = ? AND user_id = ?').get(id, req.userId));
@@ -713,8 +765,8 @@ app.put('/api/objectives/:id', (req, res) => {
     title                = COALESCE(@title,        title),
     description          = COALESCE(@description,  description),
     target_value         = COALESCE(@target_value, target_value),
-    start_date           = COALESCE(@start_date,   start_date),
-    end_date             = COALESCE(@end_date,      end_date),
+    start_date           = CASE WHEN @status = 'postponed' THEN NULL ELSE COALESCE(@start_date, start_date) END,
+    end_date             = CASE WHEN @status = 'postponed' THEN NULL ELSE COALESCE(@end_date, end_date) END,
     priority             = COALESCE(@priority,     priority),
     status               = @status,
     percentage_completed = @pct,
@@ -1211,7 +1263,7 @@ app.get('/api/work-blocks', (req, res) => {
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
 app.get('/api/dashboard', (req, res) => {
   const userId = req.userId;
-  const refs = getHiddenTaskRefs(userId);
+  const refs = getHiddenTaskRefs(userId, true);
   const today = new Date().toISOString().slice(0, 10);
   const doneTaskStatuses = new Set(['completed']);
   const doneItemStatuses = new Set(['published', 'completed', 'merged', 'closed', 'failed', 'cancelled']);

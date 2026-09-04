@@ -9,6 +9,7 @@ import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
 import { canCompleteTask } from '../utils/taskUtils.js';
 import { PUBLICATION_TYPE_OPTIONS } from '../utils/publicationTypes.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const fieldW  = { marginBottom: 14 };
@@ -18,12 +19,15 @@ const STATUS_OPTS = [
   { value: 'in_progress', label: 'En curso' },
   { value: 'completed',   label: 'Completado' },
   { value: 'blocked',     label: 'Bloqueado' },
+  { value: 'discarded',   label: 'Descartado' },
 ];
 
 const PROJECT_STATUS_OPTS = [
   { value: 'not_started', label: 'No iniciado' },
   { value: 'in_progress', label: 'En desarrollo' },
   { value: 'completed', label: 'Publicado ✓' },
+  { value: 'postponed', label: 'Postpuesto' },
+  { value: 'discarded', label: 'Descartado' },
 ];
 const PROJECT_TYPE_OPTS = [
   { value: 'client', label: 'Cliente' },
@@ -31,7 +35,7 @@ const PROJECT_TYPE_OPTS = [
   { value: 'personal', label: 'Personal' },
 ];
 
-const STATUS_ICONS = { not_started: '⚪', in_progress: '🔵', completed: '✅', blocked: '🔴' };
+const STATUS_ICONS = { not_started: '⚪', in_progress: '🔵', completed: '✅', blocked: '🔴', discarded: '⚫' };
 const MILESTONE_KIND_OPTS = [
   { value: 'classic', label: '🏁 Hito clásico' },
   { value: 'publication', label: '✍️ Publicación' },
@@ -47,7 +51,7 @@ function fmtMoney(n) {
 }
 
 function daysLeft(dateStr) {
-  if (!dateStr) return 9999;
+  if (!dateStr) return null;
   const today = new Date().toISOString().slice(0, 10);
   return Math.round((new Date(dateStr + 'T12:00:00') - new Date(today + 'T12:00:00')) / 86400000);
 }
@@ -468,7 +472,7 @@ function CreatePublicationDialog({ objectiveId, onClose, onSaved }) {
           <div><label style={labelSt}>Fecha</label><SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} /></div>
         )}
         <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}>{PUBLICATION_TYPE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="failed">Fallida</option><option value="cancelled">Cancelada</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="failed">Fallida</option><option value="cancelled">Cancelada</option><option value="postponed">Postpuesta</option><option value="discarded">Descartada</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
       <div style={fieldW}><label style={labelSt}>Texto de la publicación</label><textarea value={form.publication_text} onChange={e => set('publication_text', e.target.value)} rows={4} style={{ width: '100%', resize: 'vertical' }} /></div>
@@ -494,7 +498,7 @@ function CreateCertificationDialog({ objectiveId, onClose, onSaved }) {
       <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Fecha objetivo</label><SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completada</option><option value="blocked">Bloqueada</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completada</option><option value="failed">Fallida</option><option value="blocked">Bloqueada</option><option value="postponed">Postpuesta</option><option value="discarded">Descartada</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
@@ -520,7 +524,7 @@ function CreatePRDialog({ objectiveId, onClose, onSaved }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Inicio</label><SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} /></div>
         <div><label style={labelSt}>Fin</label><SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="review">En review</option><option value="merged">Merged</option><option value="closed">Cerrado</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="review">En review</option><option value="merged">Merged</option><option value="closed">Cerrado</option><option value="postponed">Postpuesto</option><option value="discarded">Descartado</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
@@ -553,7 +557,7 @@ function CreateEventDialog({ objectiveId, onClose, onSaved }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Inicio</label><SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} /></div>
         <div><label style={labelSt}>Fin</label><SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="cancelled">Cancelado</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="cancelled">Cancelado</option><option value="postponed">Postpuesto</option><option value="discarded">Descartado</option></select></div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Formato</label><select value={form.format} onChange={e => set('format', e.target.value)} style={{ width: '100%' }}><option value="online">Online</option><option value="presencial">Presencial</option><option value="hibrido">Híbrido</option></select></div>
@@ -577,6 +581,7 @@ function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onRe
 
   const isMilestone = kind === 'milestone';
   const days = m.days_remaining ?? daysLeft(m.target_date);
+  const hasDate = Boolean(m.target_date);
   const cls  = days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok';
   const dayLabel = days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d restantes`;
   const pct  = m.task_total > 0 ? Math.round((m.task_done / m.task_total) * 100) : null;
@@ -642,9 +647,7 @@ function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onRe
               <span className="badge" style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1' }}>Proyecto</span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            {fmtDate(m.target_date)}{' '}{expanded ? '▲' : '▼'}
-          </div>
+          {hasDate && <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{fmtDate(m.target_date)}</div>}
           {pct !== null && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
               <div className="progress-bar" style={{ flex: 1, maxWidth: 120, height: 4 }}>
@@ -654,10 +657,12 @@ function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onRe
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-          <div className="milestone-date">{fmtShortDate(m.target_date)}</div>
-          <div className={`milestone-days ${cls}`}>{dayLabel}</div>
-        </div>
+        {hasDate && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+            <div className="milestone-date">{fmtShortDate(m.target_date)}</div>
+            <div className={`milestone-days ${cls}`}>{dayLabel}</div>
+          </div>
+        )}
         {/* Billed amount badge */}
         {m.billed_amount > 0 && (
           <span style={{
@@ -715,7 +720,7 @@ function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onRe
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
                 <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>{task.title}</div>
                 <div className="task-meta">
-                  <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>
+                  {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
                   {task.start_time && <span className="task-time" style={{ fontSize: 10 }}>{task.start_time}</span>}
                   <CatBadge id={task.category_id} />
                 </div>
@@ -919,6 +924,7 @@ function ClientCard({ client, onReload }) {
 export default function ClientsView() {
   const [clients,   setClients]   = useState([]);
   const [creating,  setCreating]  = useState(false);
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!creating);
 
   async function load() {
     api.objectives({ type: 'client' }).then(setClients);
@@ -927,9 +933,11 @@ export default function ClientsView() {
   useEffect(() => { load(); }, []);
 
   const totalBilled = clients.reduce((s, c) => s + (c.total_billed || 0), 0);
-  const totalTasks  = clients.reduce((s, c) => s + (c.task_count  || 0), 0);
-  const doneTasks   = clients.reduce((s, c) => s + (c.done_count  || 0), 0);
+  const activeClients = clients.filter(c => !['postponed', 'discarded', 'failed'].includes(c.status));
+  const totalTasks  = activeClients.reduce((s, c) => s + (c.task_count  || 0), 0);
+  const doneTasks   = activeClients.reduce((s, c) => s + (c.done_count  || 0), 0);
   const globalPct   = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+  const visibleClients = clients.filter(client => matchesQuickQuery(client.title, quickQuery));
 
   return (
     <div>
@@ -951,6 +959,8 @@ export default function ClientsView() {
         />
       )}
 
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="clientes" />
+
       <ContentMetricsSummary
         title="Resumen de clientes"
         metrics={[
@@ -967,7 +977,7 @@ export default function ClientsView() {
           Sin clientes. Crea el primero con el botón "+ Nuevo cliente".
         </div>
       ) : (
-        clients.map(client => <ClientCard key={client.id} client={client} onReload={load} />)
+        visibleClients.map(client => <ClientCard key={client.id} client={client} onReload={load} />)
       )}
     </div>
   );

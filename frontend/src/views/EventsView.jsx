@@ -7,12 +7,16 @@ import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
+import StatusFilter from '../components/StatusFilter.jsx';
 
 const STATUS_OPTIONS = [
   { value: 'not_started', label: 'Pendiente' },
   { value: 'in_progress', label: 'En curso' },
   { value: 'completed',   label: 'Realizado ✓' },
   { value: 'cancelled',   label: 'Cancelado' },
+  { value: 'postponed',   label: 'Postpuesto' },
+  { value: 'discarded',   label: 'Descartado' },
 ];
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
@@ -235,6 +239,8 @@ export default function EventsView() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [filterCats, setFilterCats] = useState([]);
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!selected && !creating);
 
   async function load() {
     api.events().then(setEvents);
@@ -263,6 +269,8 @@ export default function EventsView() {
   };
   const visible = events
     .filter(e => !normalizedSearch || (e.title || '').toLowerCase().includes(normalizedSearch))
+    .filter(e => matchesQuickQuery(e.title, quickQuery))
+    .filter(e => statusFilter === 'all' || (statusFilter === 'discarded' ? e.status === 'discarded' : e.status !== 'discarded'))
     .filter(dateMatches)
     .filter(e => filterCats.length === 0 || filterCats.some(fc => parseCatIds(e.category_ids, e.category_id).includes(fc)));
 
@@ -345,6 +353,7 @@ export default function EventsView() {
 
   return (
     <div>
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="eventos" />
       <div className="page-header">
         <div>
           <div className="page-title">Eventos</div>
@@ -380,6 +389,7 @@ export default function EventsView() {
         selectedCats={filterCats}
         onSelectedCatsChange={setFilterCats}
         availableCatIds={usedCatIds}
+        extraFilters={<StatusFilter value={statusFilter} onChange={setStatusFilter} />}
       />
 
       {visible.length === 0 ? (

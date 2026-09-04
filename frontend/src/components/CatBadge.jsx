@@ -160,6 +160,7 @@ export function CategoryBadges({ ids = [], keyPrefix = '' }) {
 
 export default function CatBadge({ id, style = {}, ...rest }) {
   const cats = useCats();
+  if (!id) return null;
   const cat = cats.find(c => c.id === id);
   const color = cat?.color || '#94a3b8';
   const textColor = cat?.text_color || color;
@@ -169,7 +170,7 @@ export default function CatBadge({ id, style = {}, ...rest }) {
       style={{ background: color + '22', color: textColor, border: `1px solid ${textColor}`, ...style }}
       {...rest}
     >
-      {cat?.name || id || '—'}
+      {cat?.name || id}
     </span>
   );
 }

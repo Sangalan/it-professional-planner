@@ -14,12 +14,14 @@ import { DetailDialog as PRDetailDialog } from './PRsView.jsx';
 import { DetailDialog as EventDetailDialog } from './EventsView.jsx';
 import { canCompleteTask, isFixedTask } from '../utils/taskUtils.js';
 import { PUBLICATION_TYPE_OPTIONS } from '../utils/publicationTypes.js';
+import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
 
 const STATUS_ICONS = {
   not_started: '⚪',
   in_progress: '🔵',
   completed:   '✅',
   blocked:     '🔴',
+  discarded:   '⚫',
 };
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
@@ -57,6 +59,7 @@ function Dialog({ title, onClose, children }) {
 }
 
 function ObjectiveDialog({ obj, onClose, onSaved }) {
+  const isNew = !obj;
   const [form, setForm] = useState({
     title: obj?.title || '',
     description: obj?.description || '',
@@ -80,13 +83,15 @@ function ObjectiveDialog({ obj, onClose, onSaved }) {
     setSaving(true);
     setError('');
     try {
-      await api.updateObjective(obj.id, {
+      const payload = {
         ...form,
         priority: Number(form.priority),
         category_ids: form.category_ids,
         category_id: form.category_ids[0] || null,
         color: form.color || null,
-      });
+      };
+      if (isNew) await api.createObjective(payload);
+      else await api.updateObjective(obj.id, payload);
       onSaved();
       onClose();
     } catch (e) {
@@ -97,7 +102,7 @@ function ObjectiveDialog({ obj, onClose, onSaved }) {
   }
 
   return (
-    <Dialog title={`Editar — ${obj.title}`} onClose={onClose}>
+    <Dialog title={isNew ? 'Nuevo objetivo' : `Editar — ${obj.title}`} onClose={onClose}>
       <div style={fieldW}>
         <label style={labelSt}>Título *</label>
         <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus />
@@ -125,11 +130,15 @@ function ObjectiveDialog({ obj, onClose, onSaved }) {
         </div>
         <div>
           <label style={labelSt}>Estado</label>
-          <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
+          <select value={form.status} onChange={e => {
+            const status = e.target.value;
+            setForm(prev => ({ ...prev, status, ...(status === 'postponed' ? { start_date: '', end_date: '' } : {}) }));
+          }} style={{ width: '100%' }}>
             <option value="not_started">No iniciado</option>
             <option value="in_progress">En curso</option>
             <option value="completed">Completado</option>
             <option value="blocked">Bloqueado</option>
+            <option value="postponed">Postpuesto</option>
           </select>
         </div>
       </div>
@@ -206,7 +215,7 @@ function CreateClassicMilestoneDialog({ objectiveId, onClose, onSaved }) {
         <div>
           <label style={labelSt}>Estado</label>
           <select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}>
-            <option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="blocked">Bloqueado</option>
+            <option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="blocked">Bloqueado</option><option value="discarded">Descartado</option>
           </select>
         </div>
       </div>
@@ -259,7 +268,7 @@ function CreatePublicationDialog({ objectiveId, item, onClose, onSaved }) {
           <div><label style={labelSt}>Fecha</label><SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} /></div>
         )}
         <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}>{PUBLICATION_TYPE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="failed">Fallida</option><option value="cancelled">Cancelada</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="failed">Fallida</option><option value="cancelled">Cancelada</option><option value="postponed">Postpuesta</option><option value="discarded">Descartada</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
       <div style={fieldW}><label style={labelSt}>Texto de la publicación</label><textarea value={form.publication_text} onChange={e => set('publication_text', e.target.value)} rows={4} style={{ width: '100%', resize: 'vertical' }} /></div>
@@ -296,7 +305,7 @@ function CreateCertificationDialog({ objectiveId, item, onClose, onSaved }) {
       <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%' }} autoFocus /></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Fecha objetivo</label><SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completada</option><option value="blocked">Bloqueada</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completada</option><option value="failed">Fallida</option><option value="blocked">Bloqueada</option><option value="postponed">Postpuesta</option><option value="discarded">Descartada</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
       {!isNew && (
@@ -340,7 +349,7 @@ function CreateRepoDialog({ objectiveId, item, onClose, onSaved }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}><option value="client">Cliente</option><option value="sangalan">Sangalan</option><option value="personal">Personal</option></select></div>
         <div><label style={labelSt}>Fecha objetivo</label><SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En desarrollo</option><option value="completed">Publicado ✓</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En desarrollo</option><option value="completed">Publicado ✓</option><option value="postponed">Postpuesto</option><option value="discarded">Descartado</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>URL GitHub</label><input type="url" value={form.url} onChange={e => set('url', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} /></div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
@@ -379,7 +388,7 @@ function CreatePRDialog({ objectiveId, item, onClose, onSaved }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Inicio</label><SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} /></div>
         <div><label style={labelSt}>Fin</label><SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="review">En review</option><option value="merged">Merged</option><option value="closed">Cerrado</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="review">En review</option><option value="merged">Merged</option><option value="closed">Cerrado</option><option value="postponed">Postpuesto</option><option value="discarded">Descartado</option></select></div>
       </div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
       {!isNew && (
@@ -436,7 +445,7 @@ function CreateEventDialog({ objectiveId, item, onClose, onSaved }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Inicio</label><SpanishDateInput value={form.start_date} onChange={v => set('start_date', v)} style={{ width: '100%' }} /></div>
         <div><label style={labelSt}>Fin</label><SpanishDateInput value={form.end_date} onChange={v => set('end_date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="cancelled">Cancelado</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En curso</option><option value="completed">Completado</option><option value="cancelled">Cancelado</option><option value="postponed">Postpuesto</option><option value="discarded">Descartado</option></select></div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div><label style={labelSt}>Formato</label><select value={form.format} onChange={e => set('format', e.target.value)} style={{ width: '100%' }}><option value="online">Online</option><option value="presencial">Presencial</option><option value="hibrido">Híbrido</option></select></div>
@@ -489,7 +498,6 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
           <span style={{ fontStyle: 'italic', color: 'var(--text-3)' }}>Sin Hito</span>
           <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {orphanCount} tarea{orphanCount !== 1 ? 's' : ''} sin hito asignado
-            {' '}{expanded ? '▲' : '▼'}
           </div>
           {orphanCount > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
@@ -533,7 +541,7 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
                   {task.title}
                 </div>
                 <div className="task-meta">
-                  <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>
+                  {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
                   {task.start_time && <span className="task-time" style={{ fontSize: 10 }}>{task.start_time}</span>}
                   <CatBadge id={task.category_id} />
                 </div>
@@ -561,6 +569,8 @@ const LINKED_STATUS_ICONS = {
   not_started: '⚪', in_progress: '🔵', completed: '✅', published: '✅',
   merged: '✅', closed: '🔴', failed: '🔴', review: '🟡', pending: '⚪', draft: '🔵',
   cancelled: '🔴',
+  discarded: '⚫',
+  postponed: '⏸',
 };
 
 const LINKED_STATUS_LABELS = {
@@ -568,10 +578,12 @@ const LINKED_STATUS_LABELS = {
   published: 'Publicado', merged: 'Merged', closed: 'Cerrada',
   failed: 'Fallida', review: 'En review', pending: 'Pendiente', draft: 'Borrador',
   cancelled: 'Cancelado',
+  discarded: 'Descartado',
+  postponed: 'Postpuesto',
 };
 
 function daysLeft(dateStr) {
-  if (!dateStr) return 9999;
+  if (!dateStr) return null;
   const today = new Date().toISOString().slice(0, 10);
   return Math.round((new Date(dateStr + 'T12:00:00') - new Date(today + 'T12:00:00')) / 86400000);
 }
@@ -626,6 +638,7 @@ function EditClassicMilestoneDialog({ milestone, onClose, onSaved }) {
             <option value="in_progress">En curso</option>
             <option value="completed">Completado</option>
             <option value="blocked">Bloqueado</option>
+            <option value="discarded">Descartado</option>
           </select>
         </div>
       </div>
@@ -651,6 +664,7 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
   const [editingLinked, setEditingLinked] = useState(false);
 
   const days = item.days_remaining ?? daysLeft(item.date);
+  const hasDate = Boolean(item.date);
   const isCompletedCertification = item.type === 'certification' && item.status === 'completed';
   const cls = isCompletedCertification ? 'ok' : (days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok');
   const dayLabel = isCompletedCertification
@@ -739,12 +753,30 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
       <div className="milestone-row" style={{ paddingLeft: 12, cursor: 'pointer', flexWrap: 'wrap', gap: 6 }} onClick={toggleExpanded}>
         <span style={{ fontSize: 13 }}>{isSimple ? (STATUS_ICONS[item.status] || '⚪') : (LINKED_STATUS_ICONS[item.status] || '⚪')}</span>
         <div className="milestone-title" style={{ fontSize: 13 }}>
-          <span>{item.title}</span>
-          {item.icon && <span style={{ marginLeft: 4 }}>{item.icon}</span>}
-          {certStatsLabel && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-3)' }}>{certStatsLabel}</span>}
-          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            {fmtDate(item.date)}{' '}{expanded ? '▲' : '▼'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>{item.title}</span>
+            {item.icon && <span>{item.icon}</span>}
+            {certStatsLabel && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{certStatsLabel}</span>}
+            <div className="milestone-hover-actions" style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 4 }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={e => { e.stopPropagation(); onAddTask(item); }}
+              >
+                + Tarea
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={e => {
+                  e.stopPropagation();
+                  if (isSimple) setEditingMilestone(true);
+                  else setEditingLinked(true);
+                }}
+              >
+                ✎ Editar hito
+              </button>
+            </div>
           </div>
+          {hasDate && <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{fmtDate(item.date)}</div>}
           {pct !== null && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
               <div className="progress-bar" style={{ flex: 1, maxWidth: 120, height: 4 }}>
@@ -754,10 +786,12 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
             </div>
           )}
         </div>
-        <div>
-          <div className="milestone-date">{fmtShortDate(item.date)}</div>
-          <div className={`milestone-days ${cls}`}>{dayLabel}</div>
-        </div>
+        {hasDate && (
+          <div>
+            <div className="milestone-date">{fmtShortDate(item.date)}</div>
+            <div className={`milestone-days ${cls}`}>{dayLabel}</div>
+          </div>
+        )}
         {!isSimple && (
           <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap', background: 'var(--bg)', color: 'var(--text-2)' }}>
             {LINKED_STATUS_LABELS[item.status] || item.status}
@@ -774,24 +808,6 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
           }}
           onClick={e => e.stopPropagation()}
         >
-          <div style={{ display: 'flex', gap: 8, padding: '0 0 8px', borderBottom: '1px dashed var(--border)', marginBottom: 8 }}>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={e => { e.stopPropagation(); onAddTask(item); }}
-            >
-              + Tarea
-            </button>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={e => {
-                e.stopPropagation();
-                if (isSimple) setEditingMilestone(true);
-                else setEditingLinked(true);
-              }}
-            >
-              ✎ Editar hito
-            </button>
-          </div>
           {tasks.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 0' }}>Sin tareas para este hito</div>
           ) : tasks.map(task => (
@@ -809,7 +825,7 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
                 <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>{task.title}</div>
                 <div className="task-meta">
-                  <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>
+                  {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
                   {task.start_time && <span className="task-time" style={{ fontSize: 10 }}>{task.start_time}</span>}
                   <CatBadge id={task.category_id} style={{ fontSize: 10 }} />
                 </div>
@@ -833,7 +849,7 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
   );
 }
 
-function ObjectiveCard({ obj, objectives, onUpdate }) {
+function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter }) {
   const [expanded, setExpanded] = useState(false);
   const [newTaskFor, setNewTaskFor] = useState(null); // milestone-like object
   const [mvVersion, setMvVersion] = useState(0);
@@ -848,7 +864,6 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
   useEffect(() => {
     if (!expanded) return;
     let cancelled = false;
-    setContentLoaded(false);
     Promise.all([
       api.certifications({ objective_id: obj.id }),
       api.repos({ objective_id: obj.id }),
@@ -887,9 +902,13 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
   const allMilestones = [
     ...(obj.milestones || []).map(m => ({ ...m, type: 'milestone', icon: null })),
     ...contentItems,
-  ].sort((a, b) => {
-    const aDone = ['completed', 'published', 'merged', 'closed', 'failed', 'cancelled'].includes(a.status) ? 1 : 0;
-    const bDone = ['completed', 'published', 'merged', 'closed', 'failed', 'cancelled'].includes(b.status) ? 1 : 0;
+  ].filter(item => {
+    if (milestoneStatusFilter === 'all') return true;
+    if (milestoneStatusFilter === 'discarded') return item.status === 'discarded';
+    return item.status !== 'discarded';
+  }).sort((a, b) => {
+    const aDone = ['completed', 'published', 'merged', 'closed', 'failed', 'cancelled', 'discarded', 'postponed'].includes(a.status) ? 1 : 0;
+    const bDone = ['completed', 'published', 'merged', 'closed', 'failed', 'cancelled', 'discarded', 'postponed'].includes(b.status) ? 1 : 0;
     if (aDone !== bDone) return aDone - bDone;
     if (!a.date && !b.date) return 0;
     if (!a.date) return 1;
@@ -982,12 +1001,34 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           {obj.target_value && (
             <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 2 }}>{obj.target_value}</div>
           )}
-          <div className="obj-title">{obj.title}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-            <span className={`milestone-days ${days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok'}`}>{days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}</span>
-            {obj.end_date && <span className="task-time">{obj.end_date}</span>}
-            <span className="task-time">{obj.task_count - obj.done_count} tareas restantes</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="obj-title">{obj.title}</div>
+            <div className="objective-hover-actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={e => { e.stopPropagation(); setChoosingMilestoneType(true); }}
+              >
+                + Hito
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={e => { e.stopPropagation(); setEditingObjective(true); }}
+              >
+                ✎ Editar Objetivo
+              </button>
+            </div>
           </div>
+          {obj.status === 'postponed' ? (
+            <div style={{ display: 'inline-flex', marginTop: 6, padding: '3px 9px', borderRadius: 10, background: '#fef3c7', color: '#92400e', fontSize: 11, fontWeight: 700 }}>
+              ⏸ Postpuesto · No se está trabajando en este objetivo
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+              {days != null && <span className={`milestone-days ${days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok'}`}>{days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}</span>}
+              {obj.end_date && <span className="task-time">{obj.end_date}</span>}
+              <span className="task-time">{obj.task_count - obj.done_count} tareas restantes</span>
+            </div>
+          )}
           {(() => { const ids = obj.category_ids?.length ? obj.category_ids : (obj.category_id ? [obj.category_id] : []); return ids.length > 0 && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><CategoryBadges ids={ids} keyPrefix={`${obj.id}-`} /></div>; })()}
         </div>
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
@@ -1007,7 +1048,11 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
           <TaskModal
             initial={{ objective_id: obj.id, milestone_id: newTaskFor.id }}
             onClose={() => setNewTaskFor(null)}
-            onSave={() => { setNewTaskFor(null); handleUpdateAndRefresh(); }}
+            onSave={() => {
+              setNewTaskFor(null);
+              setMvVersion(v => v + 1);
+              handleUpdateAndRefresh();
+            }}
           />
         </div>
       )}
@@ -1015,20 +1060,6 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
       {/* All milestones (simple + content items) sorted by date */}
       {expanded && (
         <div style={{ marginTop: 4 }} onClick={e => e.stopPropagation()}>
-          <div style={{ display: 'flex', gap: 8, padding: '0 12px 8px', borderBottom: '1px dashed var(--border)', marginBottom: 8 }}>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={e => { e.stopPropagation(); setChoosingMilestoneType(true); }}
-            >
-              + Hito
-            </button>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={e => { e.stopPropagation(); setEditingObjective(true); }}
-            >
-              ✎ Editar Objetivo
-            </button>
-          </div>
           {!contentLoaded && (
             <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '6px 12px' }}>Cargando hitos…</div>
           )}
@@ -1065,20 +1096,35 @@ function ObjectiveCard({ obj, objectives, onUpdate }) {
 
 export default function ObjectivesView() {
   const [objectives, setObjectives] = useState([]);
+  const [creatingObjective, setCreatingObjective] = useState(false);
+  const [milestoneStatusFilter, setMilestoneStatusFilter] = useState('active');
+  const [quickQuery, setQuickQuery] = useQuickTypeSearch(!creatingObjective);
 
   async function loadAll() {
-    const [objectivesData, events, tasks] = await Promise.all([
+    const [objectivesData, events, tasks, repos, certifications, publications, prs] = await Promise.all([
       api.objectives(),
       api.events(),
       api.tasks(),
+      api.repos(),
+      api.certifications(),
+      api.publications(),
+      api.prs(),
     ]);
 
     const cancelledEventIds = new Set(
       events.filter(e => e.status === 'cancelled').map(e => e.id)
     );
+    const excludedItemIds = new Set([
+      ...objectivesData.flatMap(obj => (obj.milestones || []).filter(m => ['discarded', 'failed'].includes(m.status)).map(m => m.id)),
+      ...repos.filter(r => ['postponed', 'discarded', 'failed'].includes(r.status)).map(r => r.id),
+      ...certifications.filter(c => ['postponed', 'discarded', 'failed'].includes(c.status)).map(c => c.id),
+      ...publications.filter(p => ['postponed', 'discarded', 'failed'].includes(p.status)).map(p => p.id),
+      ...prs.filter(p => ['postponed', 'discarded', 'failed'].includes(p.status)).map(p => p.id),
+      ...events.filter(e => ['postponed', 'discarded', 'failed'].includes(e.status)).map(e => e.id),
+    ]);
     const effectiveObjectives = objectivesData.map(obj => {
       const objectiveTasks = tasks.filter(
-        t => t.objective_id === obj.id && !isFixedTask(t) && !cancelledEventIds.has(t.milestone_id)
+        t => t.objective_id === obj.id && !isFixedTask(t) && !cancelledEventIds.has(t.milestone_id) && !excludedItemIds.has(t.milestone_id)
       );
       const taskCount = objectiveTasks.length;
       const doneCount = objectiveTasks.filter(t => t.status === 'completed').length;
@@ -1096,9 +1142,11 @@ export default function ObjectivesView() {
 
   useEffect(() => { loadAll(); }, []);
 
-  const totalTasks = objectives.reduce((s, o) => s + (o.task_count || 0), 0);
-  const doneTasks  = objectives.reduce((s, o) => s + (o.done_count  || 0), 0);
+  const activeObjectives = objectives.filter(o => !['postponed', 'discarded', 'failed'].includes(o.status));
+  const totalTasks = activeObjectives.reduce((s, o) => s + (o.task_count || 0), 0);
+  const doneTasks  = activeObjectives.reduce((s, o) => s + (o.done_count  || 0), 0);
   const globalPct  = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+  const visibleObjectives = objectives.filter(obj => matchesQuickQuery(obj.title, quickQuery));
 
   return (
     <div>
@@ -1107,6 +1155,24 @@ export default function ObjectivesView() {
           <div className="page-title">Objetivos e hitos</div>
           <div className="page-subtitle">Progreso global: {globalPct}% — Q2 2026</div>
         </div>
+        <button className="btn btn-primary" onClick={() => setCreatingObjective(true)}>+ Objetivo</button>
+      </div>
+
+      {creatingObjective && (
+        <ObjectiveDialog
+          onClose={() => setCreatingObjective(false)}
+          onSaved={() => { setCreatingObjective(false); loadAll(); }}
+        />
+      )}
+
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="objetivos" />
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <select value={milestoneStatusFilter} onChange={e => setMilestoneStatusFilter(e.target.value)} aria-label="Filtrar elementos por estado">
+          <option value="active">Elementos activos</option>
+          <option value="all">Todos</option>
+          <option value="discarded">Descartado</option>
+        </select>
       </div>
 
       {/* Global progress */}
@@ -1132,7 +1198,12 @@ export default function ObjectivesView() {
         </div>
       </div>
 
-      {objectives.map(obj => <ObjectiveCard key={obj.id} obj={obj} objectives={objectives} onUpdate={loadAll} />)}
+      {visibleObjectives.map(obj => <ObjectiveCard key={obj.id} obj={obj} objectives={objectives} onUpdate={loadAll} milestoneStatusFilter={milestoneStatusFilter} />)}
+      {quickQuery.trim() && visibleObjectives.length === 0 && (
+        <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)' }}>
+          Ningún objetivo coincide con “{quickQuery}”.
+        </div>
+      )}
     </div>
   );
 }
