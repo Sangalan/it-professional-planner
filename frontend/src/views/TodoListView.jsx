@@ -30,21 +30,24 @@ function groupTodos(tasks) {
     return Math.round((completedMinutes / totalMinutes) * 100);
   };
   const today = toDateStr(new Date());
-  const overdue = tasks.filter(task => task.date && task.date < today && task.status !== 'completed');
-  const undated = tasks.filter(task => !task.date && !overdue.includes(task));
-  const dated = tasks.filter(task => task.date && !overdue.includes(task));
+  const completed = tasks.filter(task => task.status === 'completed');
+  const active = tasks.filter(task => task.status !== 'completed');
+  const overdue = active.filter(task => task.date && task.date < today);
+  const undated = active.filter(task => !task.date && !overdue.includes(task));
+  const dated = active.filter(task => task.date && !overdue.includes(task));
   const todayTasks = dated.filter(task => task.date === today);
-  const futureOrCompletedDated = dated.filter(task => task.date !== today);
-  const dates = [...new Set(futureOrCompletedDated.map(task => task.date))].sort();
+  const futureDated = dated.filter(task => task.date !== today);
+  const dates = [...new Set(futureDated.map(task => task.date))].sort();
 
   return [
     ...(overdue.length ? [{ key: 'overdue', label: 'Vencidas', overdue: true, tasks: overdue }] : []),
-    ...(todayTasks.length ? [{ key: 'today', label: `Hoy ${fmtDate(today)}`, today: true, completionPercent: completionPercent(todayTasks), tasks: todayTasks }] : []),
+    ...(todayTasks.length ? [{ key: 'today', label: `Hoy ${fmtDate(today)}`, today: true, completionPercent: completionPercent(tasks.filter(task => task.date === today)), tasks: todayTasks }] : []),
     ...(undated.length ? [{ key: 'undated', label: 'Sin fecha', tasks: undated }] : []),
     ...dates.map(date => {
-      const dateTasks = futureOrCompletedDated.filter(task => task.date === date);
-      return { key: date, label: fmtDate(date), completionPercent: completionPercent(dateTasks), tasks: dateTasks };
+      const dateTasks = futureDated.filter(task => task.date === date);
+      return { key: date, label: fmtDate(date), completionPercent: completionPercent(tasks.filter(task => task.date === date)), tasks: dateTasks };
     }),
+    ...(completed.length ? [{ key: 'completed', label: `Completadas (${completed.length})`, completed: true, tasks: completed }] : []),
   ];
 }
 
@@ -125,6 +128,7 @@ function QuickAdd({ objectiveId, moneyMaker = false, onCreated }) {
 
 function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, onEdit, onTaskContextMenu, onColumnDrop, onTaskDrop, onTaskDragStart, onTaskDragEnd, dragColumnRef, dragTaskRef, saving }) {
   const [dropTarget, setDropTarget] = useState(null);
+  const [completedExpanded, setCompletedExpanded] = useState(false);
   const dropTargetRef = useRef(null);
   const previewTasks = useMemo(() => {
     const preview = dropTarget;
@@ -208,8 +212,13 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
       <div className="todo-column-body">
         {groups.map(group => (
           <div key={group.key} className="todo-group">
-            {group.label && <div className={`todo-date-divider${group.overdue ? ' overdue' : ''}${group.today ? ' today' : ''}`}><span>{group.label}{group.completionPercent !== undefined && ` - ${group.completionPercent}%`}</span></div>}
-            {group.tasks.map(task => {
+            {group.label && (group.completed
+              ? <button type="button" className="todo-completed-toggle" aria-expanded={completedExpanded}
+                onClick={() => setCompletedExpanded(value => !value)}>
+                <span>{group.label}</span><span>{completedExpanded ? '▲' : '▼'}</span>
+              </button>
+              : <div className={`todo-date-divider${group.overdue ? ' overdue' : ''}${group.today ? ' today' : ''}`}><span>{group.label}{group.completionPercent !== undefined && ` - ${group.completionPercent}%`}</span></div>)}
+            {(!group.completed || completedExpanded) && group.tasks.map(task => {
               const isMoneyAlias = isMoneyObjective(objective) && task.objective_id !== objective.id;
               const sourceId = dragTaskRef.current?.id || draggedTaskId;
               const draggedTask = tasks.find(item => item.id === sourceId);

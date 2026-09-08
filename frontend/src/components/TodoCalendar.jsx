@@ -155,6 +155,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
   const [changeDayAnchor, setChangeDayAnchor] = useState(null);
   const [changingDay, setChangingDay] = useState(false);
   const [sortMode, setSortMode] = useState('importance');
+  const [completedExpanded, setCompletedExpanded] = useState(false);
   const [dropTarget, setDropTarget] = useState(null);
   const [durationTooltip, setDurationTooltip] = useState(null);
   const draggedTaskRef = useRef(null);
@@ -185,6 +186,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
   }, [dayMenu, taskMenu]);
   useEffect(() => {
     let cancelled = false;
+    setCompletedExpanded(false);
     setAgenda(null);
     setError('');
     api.tasks({ date: selected }).then(rows => { if (!cancelled) setAgenda({ date: selected, rows }); })
@@ -253,7 +255,8 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
   const showCapacityLimitAtTop = free !== null
     && uncompletableTaskIds.size > 0
     && (free === 0 || capacityLimitAfterTaskId === null);
-  const firstCompletedTaskId = pending.length > 0 ? detail.find(task => task.status === 'completed')?.id : null;
+  const firstCompletedTaskId = detail.find(task => task.status === 'completed')?.id || null;
+  const completedCount = detail.length - pending.length;
   const completableTaskCount = free === null ? 0 : pending.length - uncompletableTaskIds.size;
   function showDurationTooltip(event, task) {
     const cumulative = cumulativeDurationByTaskId.get(task.id) || { minutes: 0, missing: 0 };
@@ -347,11 +350,15 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
           </p>
           {missing > 0 && <p>{missing} ToDo sin estimación. Aún no se puede confirmar si caben todos.</p>}
         </div>}
-      {sortMode === 'importance' && detail.length > 1 && <p className="text-muted">Arrastra las tareas para ordenar este día.</p>}
+      {sortMode === 'importance' && pending.length > 1 && <p className="text-muted">Arrastra las tareas para ordenar este día.</p>}
       {showCapacityLimitAtTop && <div className="todo-capacity-limit" role="separator" aria-label="Límite del tiempo disponible" />}
       {!detail.length && <p className="empty-state">No hay ToDo asignados a este día.</p>}
       {detail.map(task => <React.Fragment key={task.id}>
-        {firstCompletedTaskId === task.id && <div className="todo-completed-gap" aria-hidden="true" />}
+        {firstCompletedTaskId === task.id && <button type="button" className="todo-completed-toggle"
+          aria-expanded={completedExpanded} onClick={() => setCompletedExpanded(value => !value)}>
+          <span>Completadas ({completedCount})</span><span>{completedExpanded ? '▲' : '▼'}</span>
+        </button>}
+        {(task.status !== 'completed' || completedExpanded) && <>
         <article className={`todo-detail-card${dropTarget?.id === task.id ? ' drop-target' : ''}${uncompletableTaskIds.has(task.id) ? ' exceeds-capacity' : ''}`} style={objectiveColor(task) ? { '--todo-objective-color': objectiveColor(task) } : undefined}
         onMouseEnter={event => showDurationTooltip(event, task)} onMouseLeave={() => hideDurationTooltip(task.id)}
         draggable={sortMode === 'importance' && !reordering}
@@ -390,8 +397,9 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
         </div>
         {task.description && <p>{task.description}</p>}
         {task.status === 'completed' && <span className="badge badge-completed">Completada{formatActualDuration(task.actual_seconds) && ` · ${formatActualDuration(task.actual_seconds)}`}</span>}
-      </article>
-      {capacityLimitAfterTaskId === task.id && <div className="todo-capacity-limit" role="separator" aria-label="Límite del tiempo disponible" />}
+        </article>
+        {capacityLimitAfterTaskId === task.id && <div className="todo-capacity-limit" role="separator" aria-label="Límite del tiempo disponible" />}
+        </>}
       </React.Fragment>)}
     </aside>
     <section className="card todo-month-view">

@@ -843,6 +843,8 @@ input[type="range"] { cursor: pointer; }
 .todo-date-divider.overdue { color: var(--danger); }
 .todo-date-divider.today { color: var(--accent); }
 .todo-date-divider.today::after { background: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.todo-completed-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; margin: 10px 0 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-2); font: inherit; font-size: 12px; font-weight: 700; text-align: left; cursor: pointer; }
+.todo-completed-toggle:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
 .todo-today-end-divider { height: 1px; margin: 10px 0 4px; background: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .todo-card {
   position: relative;
