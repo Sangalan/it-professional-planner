@@ -7,6 +7,7 @@ const TABLE_LABELS = {
   objectives:     'Objetivos',
   milestones:     'Hitos',
   tasks:          'Tareas',
+  deadlines:      'Fechas límite',
   events:         'Eventos',
   publications:   'Publicaciones',
   certifications: 'Certificaciones',

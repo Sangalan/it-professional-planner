@@ -243,8 +243,19 @@ function daysRemaining(dateStr) {
 }
 
 function isOverdue(dateStr, status) {
-  if (status === 'completed') return false;
+  if (!dateStr || status === 'completed') return false;
   return new Date(dateStr) < new Date(new Date().toDateString());
+}
+
+function isTodoTask(task) {
+  return !task.is_fixed && (!task.date || (!task.start_time && !task.end_time));
+}
+
+function minutesBetweenTimes(start, end) {
+  if (!start || !end) return 0;
+  const [startHours, startMinutes] = start.split(':').map(Number);
+  const [endHours, endMinutes] = end.split(':').map(Number);
+  return Math.max(0, endHours * 60 + endMinutes - startHours * 60 - startMinutes);
 }
 
 function normalizeTaskStatus(status, isFixed, fallback = 'pending') {
@@ -264,6 +275,13 @@ function filterFixedInstancesWithClones(instances, clones) {
       .map(buildClonedTaskKey)
   );
   return instances.filter(task => !cloneKeys.has(buildClonedTaskKey(task)));
+}
+
+function filterScheduledOriginalsWithClones(tasks) {
+  const completedInstances = new Set(tasks
+    .filter(task => task.is_cloned && task.cloned_from && task.date)
+    .map(task => `${task.cloned_from}::${task.date}`));
+  return tasks.filter(task => task.is_cloned || !task.date || !completedInstances.has(`${task.id}::${task.date}`));
 }
 
 function findClonedTasksForRange(from, to, filters = {}) {
@@ -403,7 +421,7 @@ app.get('/api/tasks/search', (req, res) => {
   ({ sql, params } = applyTaskVisibility(sql, params, refs));
   sql += ' ORDER BY date, start_time LIMIT 200';
   const tasks = db.prepare(sql).all(...params);
-  tasks.forEach(t => { t.is_overdue = t.is_fixed ? 0 : (isOverdue(t.date, t.status) ? 1 : 0); });
+  tasks.forEach(t => { t.is_overdue = isTodoTask(t) ? 0 : (isOverdue(t.date, t.status) ? 1 : 0); });
   res.json(tasks);
 });
 
@@ -426,7 +444,7 @@ app.get('/api/tasks', (req, res) => {
   ({ sql, params } = applyTaskVisibility(sql, params, refs));
   sql += ' ORDER BY date, start_time';
   const tasks = db.prepare(sql).all(...params);
-  tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
+  tasks.forEach(t => { t.is_overdue = isTodoTask(t) ? 0 : (isOverdue(t.date, t.status) ? 1 : 0); });
 
   let fixed = [];
   // Expand fixed tasks when querying a date range/day.
@@ -459,7 +477,7 @@ app.get('/api/tasks', (req, res) => {
     fixed = db.prepare(fixedSql).all(...fixedParams).map(t => ({ ...t, is_overdue: 0 }));
   }
 
-  res.json([...tasks, ...filterVisibleTaskRows(fixed, refs)]);
+  res.json(filterScheduledOriginalsWithClones([...tasks, ...filterVisibleTaskRows(fixed, refs)]));
 });
 
 app.get('/api/tasks/today', (req, res) => {
@@ -470,12 +488,12 @@ app.get('/api/tasks/today', (req, res) => {
   ({ sql, params } = applyTaskVisibility(sql, params, refs));
   sql += ' ORDER BY start_time';
   const tasks = db.prepare(sql).all(...params);
-  tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
+  tasks.forEach(t => { t.is_overdue = isTodoTask(t) ? 0 : (isOverdue(t.date, t.status) ? 1 : 0); });
   const fixed = filterFixedInstancesWithClones(
     expandFixedTasks(today, today, { user_id: req.userId }),
     findClonedTasksForRange(today, today, { user_id: req.userId })
   );
-  res.json([...tasks, ...filterVisibleTaskRows(fixed, refs)].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '')));
+  res.json(filterScheduledOriginalsWithClones([...tasks, ...filterVisibleTaskRows(fixed, refs)]).sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '')));
 });
 
 app.get('/api/tasks/week', (req, res) => {
@@ -494,12 +512,12 @@ app.get('/api/tasks/week', (req, res) => {
   ({ sql, params } = applyTaskVisibility(sql, params, refs));
   sql += ' ORDER BY date, start_time';
   const tasks = db.prepare(sql).all(...params);
-  tasks.forEach(t => { t.is_overdue = isOverdue(t.date, t.status) ? 1 : 0; });
+  tasks.forEach(t => { t.is_overdue = isTodoTask(t) ? 0 : (isOverdue(t.date, t.status) ? 1 : 0); });
   const fixed = filterFixedInstancesWithClones(
     expandFixedTasks(from, to, { user_id: req.userId }),
     findClonedTasksForRange(from, to, { user_id: req.userId })
   );
-  res.json([...tasks, ...filterVisibleTaskRows(fixed, refs)]);
+  res.json(filterScheduledOriginalsWithClones([...tasks, ...filterVisibleTaskRows(fixed, refs)]));
 });
 
 app.get('/api/tasks/now', (req, res) => {
@@ -515,18 +533,87 @@ app.get('/api/tasks/now', (req, res) => {
     expandFixedTasks(today, today, { user_id: req.userId }),
     findClonedTasksForRange(today, today, { user_id: req.userId })
   ).filter(t => t.start_time);
-  const tasks = [...regular, ...filterVisibleTaskRows(fixed, refs)].sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const tasks = filterScheduledOriginalsWithClones([...regular, ...filterVisibleTaskRows(fixed, refs)])
+    .sort((a, b) => a.start_time.localeCompare(b.start_time));
 
-  const active = tasks.find(t => t.start_time <= timeStr && t.end_time > timeStr);
+  const tracked = db.prepare(`SELECT * FROM tasks
+    WHERE user_id = ? AND is_fixed = 0 AND status != 'completed'
+      AND (timer_started_at IS NOT NULL OR (status = 'in_progress' AND date = ?))
+    ORDER BY CASE WHEN timer_started_at IS NOT NULL THEN 0 ELSE 1 END,
+      COALESCE(timer_started_at, date || 'T' || start_time) DESC
+    LIMIT 1`).get(req.userId, today);
+  const active = tracked || tasks.find(t => t.status !== 'completed' && t.start_time <= timeStr && t.end_time > timeStr);
   const upcoming = tasks.filter(t => t.start_time > timeStr).sort((a, b) => a.start_time.localeCompare(b.start_time));
 
   res.json({ current: active || null, upcoming: upcoming[0] || null, time: timeStr, date: today });
 });
 
+app.post('/api/tasks/:id/timer', (req, res) => {
+  const { action } = req.body;
+  if (!['start', 'pause', 'complete'].includes(action)) return res.status(400).json({ error: 'Acción inválida' });
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  if (!task) return res.status(404).json({ error: 'Not found' });
+  if (task.is_fixed) return res.status(400).json({ error: 'La tarea es fija' });
+  const now = new Date();
+  if (action === 'start') {
+    if (task.status === 'completed') return res.status(409).json({ error: 'La tarea ya está completada' });
+    const other = db.prepare('SELECT id FROM tasks WHERE user_id = ? AND timer_started_at IS NOT NULL AND id != ?').get(req.userId, task.id);
+    if (other) return res.status(409).json({ error: 'Pausa la tarea en curso antes de comenzar otra' });
+    db.prepare(`UPDATE tasks SET timer_started_at = COALESCE(timer_started_at, ?),
+      original_estimate_minutes = COALESCE(original_estimate_minutes, duration_estimated), status = 'in_progress'
+      WHERE id = ? AND user_id = ?`).run(now.toISOString(), task.id, req.userId);
+  } else if (task.status !== 'completed') {
+    // Legacy scheduled tasks have no timestamp until their first timer action.
+    const started = task.timer_started_at || (task.date && task.start_time ? `${task.date}T${task.start_time}:00` : null);
+    const elapsed = started ? Math.max(0, (now.getTime() - Date.parse(started)) / 1000) : 0;
+    db.prepare(`UPDATE tasks SET actual_seconds = actual_seconds + ?, timer_started_at = NULL,
+      original_estimate_minutes = COALESCE(original_estimate_minutes, duration_estimated),
+      status = ?, percentage_completed = ?, completed_at = ?, start_time = NULL, end_time = NULL
+      WHERE id = ? AND user_id = ?`).run(Number.isFinite(elapsed) ? elapsed : 0,
+        action === 'complete' ? 'completed' : 'pending', action === 'complete' ? 100 : task.percentage_completed,
+        action === 'complete' ? now.toISOString() : null, task.id, req.userId);
+    recomputeForTask(task.milestone_id || null, null);
+    recomputeAllObjectivesAndGlobalProgress();
+  }
+  res.json(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(task.id, req.userId));
+});
+
+app.post('/api/tasks/:id/complete-scheduled', (req, res) => {
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  if (!task) return res.status(404).json({ error: 'Not found' });
+  if (!task.is_fixed && isTodoTask(task)) return res.status(400).json({ error: 'La tarea no tiene un horario planificado' });
+
+  const date = req.body.date || new Date().toISOString().slice(0, 10);
+  const sourceId = task.cloned_from || task.id;
+  const existing = db.prepare(`SELECT * FROM tasks
+    WHERE user_id = ? AND is_cloned = 1 AND cloned_from = ? AND date = ? AND status = 'completed'
+    LIMIT 1`).get(req.userId, sourceId, date);
+  if (existing) return res.json(existing);
+
+  const now = new Date();
+  const id = 'task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  const startTime = req.body.start_time || task.start_time || null;
+  const endTime = req.body.end_time || task.end_time || null;
+  const scheduledMinutes = minutesBetweenTimes(startTime, endTime);
+  const scheduledSeconds = scheduledMinutes * 60;
+  db.prepare(`INSERT INTO tasks
+    (id,title,description,category_id,category_ids,subcategory,date,start_time,end_time,
+     duration_estimated,status,priority,objective_id,milestone_id,is_fixed,is_money_maker,notes,label,
+     is_cloned,cloned_from,percentage_completed,user_id,actual_seconds,completed_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, task.title, task.description || '', task.category_id, task.category_ids, task.subcategory || '',
+      date, startTime, endTime, task.duration_estimated || scheduledMinutes, 'completed', task.priority,
+      task.objective_id, task.milestone_id, 0, task.is_money_maker ? 1 : 0, task.notes || '', task.label || '', 1, sourceId, 100,
+      req.userId, scheduledSeconds, now.toISOString());
+  recomputeForTask(task.milestone_id || null, task.objective_id || null);
+  recomputeAllObjectivesAndGlobalProgress();
+  res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.userId));
+});
+
 app.get('/api/tasks/:id', (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   if (!task) return res.status(404).json({ error: 'Not found' });
-  task.is_overdue = isOverdue(task.date, task.status) ? 1 : 0;
+  task.is_overdue = isTodoTask(task) ? 0 : (isOverdue(task.date, task.status) ? 1 : 0);
   res.json(task);
 });
 
@@ -540,14 +627,17 @@ function parseCategoryIds(category_ids, category_id) {
 
 app.post('/api/tasks', (req, res) => {
   const { title, description, category_id, category_ids, date, start_time, end_time,
-    duration_estimated, priority, objective_id, milestone_id, is_fixed,
+    duration_estimated, priority, objective_id, milestone_id, is_fixed, is_money_maker,
     fixed_days, fixed_start_date, fixed_end_date, notes, label, isCloned, clonedFrom } = req.body;
 
   const isFixed = is_fixed ? 1 : 0;
-  // For fixed tasks, date defaults to fixed_start_date; for regular tasks date is required
+  // Fixed tasks need a starting date. Regular tasks without a date are ToDos.
   const effectiveDate = date || (isFixed ? fixed_start_date : null);
   const effectiveStatus = normalizeTaskStatus('pending', isFixed, 'pending');
-  if (!title || !effectiveDate) return res.status(400).json({ error: 'title y date son obligatorios' });
+  if (!title) return res.status(400).json({ error: 'title es obligatorio' });
+  if (isFixed && !effectiveDate) return res.status(400).json({ error: 'fixed_start_date es obligatoria para tareas fijas' });
+  const effectiveStartTime = effectiveDate ? (start_time || null) : null;
+  const effectiveEndTime = effectiveDate ? (end_time || null) : null;
 
   const cats = parseCategoryIds(category_ids, category_id);
   const primaryCat = cats[0] || null;
@@ -560,20 +650,23 @@ app.post('/api/tasks', (req, res) => {
   }
 
   const id = 'task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  const todoOrder = objective_id
+    ? db.prepare('SELECT COALESCE(MAX(todo_order), -1) + 1 AS n FROM tasks WHERE objective_id = ? AND user_id = ?').get(objective_id, req.userId).n
+    : null;
   db.prepare(`INSERT INTO tasks
     (id,title,description,category_id,category_ids,subcategory,date,start_time,end_time,
-     duration_estimated,status,priority,objective_id,milestone_id,is_fixed,
-     fixed_days,fixed_start_date,fixed_end_date,notes,label,is_cloned,cloned_from,percentage_completed,user_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+     duration_estimated,status,priority,objective_id,milestone_id,is_fixed,is_money_maker,
+     fixed_days,fixed_start_date,fixed_end_date,notes,label,is_cloned,cloned_from,percentage_completed,user_id,todo_order)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, title, description || '', primaryCat, JSON.stringify(cats), '',
-      effectiveDate, start_time || null, end_time || null,
-      duration_estimated ?? timeDiff(start_time, end_time),
+      effectiveDate, effectiveStartTime, effectiveEndTime,
+      effectiveDate ? (duration_estimated ?? timeDiff(start_time, end_time)) : null,
       effectiveStatus, priority ?? 2, objective_id || null, milestone_id || null,
-      isFixed,
+      isFixed, is_money_maker ? 1 : 0,
       isFixed && fixed_days ? JSON.stringify(fixed_days) : null,
       isFixed ? (fixed_start_date || null) : null,
       isFixed ? (fixed_end_date || null) : null,
-      notes || '', label || '', isCloned ? 1 : 0, clonedFrom || null, 0, req.userId);
+      notes || '', label || '', isCloned ? 1 : 0, clonedFrom || null, 0, req.userId, todoOrder);
 
   recomputeForTask(milestone_id || null, null);
   const global_progress = recomputeAllObjectivesAndGlobalProgress();
@@ -581,9 +674,33 @@ app.post('/api/tasks', (req, res) => {
   res.status(201).json({ ...createdTask, global_progress });
 });
 
+app.post('/api/tasks/todo-day-reorder', (req, res) => {
+  const { date, ids } = req.body;
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    || !Array.isArray(ids) || !ids.length || ids.some(id => typeof id !== 'string')
+    || new Set(ids).size !== ids.length) {
+    return res.status(400).json({ error: 'Fecha y tareas no válidas' });
+  }
+  const rows = db.prepare('SELECT * FROM tasks WHERE date = ? AND user_id = ?').all(date, req.userId);
+  const allowed = new Set(rows.filter(isTodoTask).map(task => task.id));
+  if (ids.some(id => !allowed.has(id))) return res.status(400).json({ error: 'Las tareas deben pertenecer al mismo día' });
+  const update = db.prepare('UPDATE tasks SET todo_day_order = ?, todo_order_date = ? WHERE id = ? AND date = ? AND user_id = ?');
+  db.transaction(() => ids.forEach((id, index) => update.run(index, date, id, date, req.userId)))();
+  res.json({ ok: true });
+});
+
+app.post('/api/tasks/todo-reorder', (req, res) => {
+  const { objective_id, ids } = req.body;
+  if (!objective_id || !Array.isArray(ids)) return res.status(400).json({ error: 'objective_id e ids son obligatorios' });
+  const update = db.prepare('UPDATE tasks SET todo_order = ? WHERE id = ? AND objective_id = ? AND user_id = ?');
+  const tx = db.transaction(() => ids.forEach((id, index) => update.run(index, id, objective_id, req.userId)));
+  tx();
+  res.json({ ok: true });
+});
+
 app.put('/api/tasks/:id', (req, res) => {
   const { title, description, category_id, category_ids, date, start_time, end_time,
-    duration_estimated, priority, objective_id, milestone_id, is_fixed,
+    duration_estimated, priority, objective_id, milestone_id, is_fixed, is_money_maker,
     fixed_days, fixed_start_date, fixed_end_date,
     status, percentage_completed, notes, label, isCloned, clonedFrom } = req.body;
 
@@ -619,6 +736,7 @@ app.put('/api/tasks/:id', (req, res) => {
     objective_id        = COALESCE(@objective_id, objective_id),
     milestone_id        = COALESCE(@milestone_id, milestone_id),
     is_fixed            = COALESCE(@is_fixed,    is_fixed),
+    is_money_maker      = COALESCE(@is_money_maker, is_money_maker),
     fixed_days          = COALESCE(@fixed_days,  fixed_days),
     fixed_start_date    = COALESCE(@fixed_start_date, fixed_start_date),
     fixed_end_date      = COALESCE(@fixed_end_date,   fixed_end_date),
@@ -641,6 +759,7 @@ app.put('/api/tasks/:id', (req, res) => {
       objective_id: objective_id ?? null,
       milestone_id: milestone_id ?? null,
       is_fixed: is_fixed !== undefined ? (is_fixed ? 1 : 0) : null,
+      is_money_maker: is_money_maker !== undefined ? (is_money_maker ? 1 : 0) : null,
       fixed_days: fixed_days !== undefined ? (Array.isArray(fixed_days) ? JSON.stringify(fixed_days) : fixed_days) : null,
       fixed_start_date: fixed_start_date ?? null,
       fixed_end_date: fixed_end_date ?? null,
@@ -656,6 +775,21 @@ app.put('/api/tasks/:id', (req, res) => {
   // Allow explicit null for milestone_id (COALESCE ignores nulls)
   if ('milestone_id' in req.body) {
     db.prepare('UPDATE tasks SET milestone_id = ? WHERE id = ?').run(milestone_id ?? null, req.params.id);
+  }
+  // Scheduling fields must accept explicit nulls so a dated task can become a ToDo.
+  if ('date' in req.body) {
+    const nextDate = nextIsFixed ? (date || fixed_start_date || task.fixed_start_date) : (date || null);
+    db.prepare('UPDATE tasks SET date = ? WHERE id = ? AND user_id = ?').run(nextDate, req.params.id, req.userId);
+    if (!nextDate) {
+      db.prepare('UPDATE tasks SET start_time = NULL, end_time = NULL, duration_estimated = NULL WHERE id = ? AND user_id = ?')
+        .run(req.params.id, req.userId);
+    }
+  }
+  if ('start_time' in req.body && (date || (date === undefined && task.date))) {
+    db.prepare('UPDATE tasks SET start_time = ? WHERE id = ? AND user_id = ?').run(start_time || null, req.params.id, req.userId);
+  }
+  if ('end_time' in req.body && (date || (date === undefined && task.date))) {
+    db.prepare('UPDATE tasks SET end_time = ? WHERE id = ? AND user_id = ?').run(end_time || null, req.params.id, req.userId);
   }
 
   // Recompute milestone + objective (both old and new ids in case they changed)
@@ -674,6 +808,41 @@ app.delete('/api/tasks/:id', (req, res) => {
   recomputeForTask(task.milestone_id, null);
   const global_progress = recomputeAllObjectivesAndGlobalProgress();
   res.json({ ok: true, global_progress });
+});
+
+// ── DEADLINES ───────────────────────────────────────────────────────────────
+app.get('/api/deadlines', (req, res) => {
+  const { date, from, to } = req.query;
+  let sql = 'SELECT * FROM deadlines WHERE user_id = ?';
+  const params = [req.userId];
+  if (date) { sql += ' AND date = ?'; params.push(date); }
+  if (from) { sql += ' AND date >= ?'; params.push(from); }
+  if (to) { sql += ' AND date <= ?'; params.push(to); }
+  sql += ' ORDER BY date, title COLLATE NOCASE';
+  res.json(db.prepare(sql).all(...params));
+});
+
+app.post('/api/deadlines', (req, res) => {
+  const { title, date, color } = req.body;
+  if (!title?.trim() || !date) return res.status(400).json({ error: 'title y date son obligatorios' });
+  const id = 'deadline-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  db.prepare('INSERT INTO deadlines (id,title,date,color,user_id) VALUES (?,?,?,?,?)')
+    .run(id, title.trim(), date, color || '#dc2626', req.userId);
+  res.status(201).json(db.prepare('SELECT * FROM deadlines WHERE id = ? AND user_id = ?').get(id, req.userId));
+});
+
+app.put('/api/deadlines/:id', (req, res) => {
+  const { title, date, color } = req.body;
+  const deadline = db.prepare('SELECT * FROM deadlines WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  if (!deadline) return res.status(404).json({ error: 'Not found' });
+  db.prepare(`UPDATE deadlines SET title = COALESCE(?, title), date = COALESCE(?, date), color = COALESCE(?, color)
+    WHERE id = ? AND user_id = ?`).run(title?.trim() || null, date || null, color || null, req.params.id, req.userId);
+  res.json(db.prepare('SELECT * FROM deadlines WHERE id = ? AND user_id = ?').get(req.params.id, req.userId));
+});
+
+app.delete('/api/deadlines/:id', (req, res) => {
+  db.prepare('DELETE FROM deadlines WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
+  res.json({ ok: true });
 });
 
 // ── OBJECTIVES ───────────────────────────────────────────────────────────────
@@ -741,6 +910,15 @@ app.post('/api/objectives', (req, res) => {
       target_value || null, progress_mode || 'task_based', status || 'not_started', priority ?? 2, notes || '', color || null,
       type || 'objective', req.userId);
   res.status(201).json(db.prepare('SELECT * FROM objectives WHERE id = ? AND user_id = ?').get(id, req.userId));
+});
+
+app.post('/api/objectives/todo-reorder', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids debe ser un array' });
+  const update = db.prepare('UPDATE objectives SET todo_order = ? WHERE id = ? AND user_id = ?');
+  const tx = db.transaction(() => ids.forEach((id, index) => update.run(index, id, req.userId)));
+  tx();
+  res.json({ ok: true });
 });
 
 app.delete('/api/objectives/:id', (req, res) => {
@@ -1276,7 +1454,7 @@ app.get('/api/dashboard', (req, res) => {
   const allNonFixedTasks = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND user_id = ?').all(userId).filter(isVisibleTask);
   const totalTasks  = allNonFixedTasks.length;
   const doneTasks   = allNonFixedTasks.filter(t => t.status === 'completed').length;
-  const overdueTasks= db.prepare(`SELECT * FROM tasks WHERE is_fixed = 0 AND date < ? AND status != 'completed' AND user_id = ? ORDER BY date`).all(today, userId).filter(isVisibleTask);
+  const overdueTasks= db.prepare(`SELECT * FROM tasks WHERE is_fixed = 0 AND date < ? AND (start_time IS NOT NULL OR end_time IS NOT NULL) AND status != 'completed' AND user_id = ? ORDER BY date`).all(today, userId).filter(isVisibleTask);
 
   const nextMilestones = db.prepare(`SELECT m.*, o.title as obj_title FROM milestones m
     JOIN objectives o ON m.objective_id = o.id
@@ -1440,6 +1618,7 @@ app.get('/api/export', (req, res) => {
     objectives:     selectByUsers('objectives'),
     milestones:     selectByUsers('milestones'),
     tasks:          selectByUsers('tasks'),
+    deadlines:      selectByUsers('deadlines'),
     events:         selectByUsers('events'),
     publications:   selectByUsers('publications'),
     certifications: selectByUsers('certifications'),
@@ -1503,9 +1682,16 @@ app.post('/api/import', (req, res) => {
     for (const t of (data.tasks || [])) {
       const id = resolveId('tasks', t.id);
       if (!id) { track('tasks', false); continue; }
-      db.prepare('INSERT INTO tasks (id,title,description,category_id,category_ids,subcategory,date,start_time,end_time,duration_estimated,status,priority,objective_id,milestone_id,is_fixed,notes,label,is_cloned,cloned_from,percentage_completed) VALUES (@id,@title,@description,@category_id,@category_ids,@subcategory,@date,@start_time,@end_time,@duration_estimated,@status,@priority,@objective_id,@milestone_id,@is_fixed,@notes,@label,@is_cloned,@cloned_from,@percentage_completed)')
-        .run({ subcategory: '', category_ids: null, ...t, id });
+      db.prepare('INSERT INTO tasks (id,title,description,category_id,category_ids,subcategory,date,start_time,end_time,duration_estimated,status,priority,objective_id,milestone_id,is_fixed,is_money_maker,notes,label,is_cloned,cloned_from,percentage_completed) VALUES (@id,@title,@description,@category_id,@category_ids,@subcategory,@date,@start_time,@end_time,@duration_estimated,@status,@priority,@objective_id,@milestone_id,@is_fixed,@is_money_maker,@notes,@label,@is_cloned,@cloned_from,@percentage_completed)')
+        .run({ subcategory: '', category_ids: null, is_money_maker: 0, ...t, id });
       track('tasks', true);
+    }
+    for (const deadline of (data.deadlines || [])) {
+      const id = resolveId('deadlines', deadline.id);
+      if (!id) { track('deadlines', false); continue; }
+      db.prepare('INSERT INTO deadlines (id,title,date,color,user_id) VALUES (@id,@title,@date,@color,@user_id)')
+        .run({ color: '#dc2626', user_id: req.userId, ...deadline, id });
+      track('deadlines', true);
     }
     for (const e of (data.events || [])) {
       const id = resolveId('events', e.id);

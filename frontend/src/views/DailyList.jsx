@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { toDateStr, fmtDate, formatDuration, getGapHours, timeToMinutes } from '../utils/dateUtils.js';
 import { getCatColor } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
+import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
 import { CategoryBadges } from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
@@ -72,12 +73,14 @@ function parseCatIds(raw, fallback) {
 
 export default function DailyList() {
   const [tasks, setTasks]       = useState([]);
+  const [deadlines, setDeadlines] = useState([]);
   const [dateStr, setDateStr]   = useState(toDateStr(new Date()));
   const [filterCat, setFilterCat] = useState('');
   const [cats, setCats]         = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
   const [editTask, setEditTask] = useState(null);
+  const [editDeadline, setEditDeadline] = useState(null);
   const [gapDialog, setGapDialog] = useState(null);
   const [calendarView, setCalendarView] = useState('current');
   const [currentTime, setCurrentTime] = useState(new Date().toTimeString().slice(0, 5));
@@ -86,8 +89,9 @@ export default function DailyList() {
   const suppressClickRef = useRef(false);
 
   async function load() {
-    const data = await api.tasks({ date: dateStr });
+    const [data, deadlineRows] = await Promise.all([api.tasks({ date: dateStr }), api.deadlines({ date: dateStr })]);
     setTasks(data);
+    setDeadlines(deadlineRows);
   }
 
   useEffect(() => { load(); }, [dateStr]);
@@ -299,6 +303,8 @@ export default function DailyList() {
           onDeleted={() => { setEditTask(null); load(); }}
         />
       )}
+      {editDeadline && <DeadlineModal initial={editDeadline} onClose={() => setEditDeadline(null)}
+        onSave={() => { setEditDeadline(null); load(); }} onDeleted={() => { setEditDeadline(null); load(); }} />}
       {gapDialog && (
         <GapPickerDialog
           date={dateStr}
@@ -312,6 +318,12 @@ export default function DailyList() {
         <CalendarContentSummary mode="day" date={dateStr} />
       ) : (
         <>
+          {deadlines.length > 0 && <div className="card" style={{ marginBottom: 14, padding: '12px 16px' }}>
+            <div className="card-title" style={{ marginBottom: 8 }}>Fechas límite</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {deadlines.map(deadline => <DeadlineChip key={deadline.id} deadline={deadline} onClick={setEditDeadline} />)}
+            </div>
+          </div>}
           {/* ── Category filter ── */}
           <div className="filter-row">
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Filtrar:</span>

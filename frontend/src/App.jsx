@@ -7,6 +7,7 @@ import NowView from './views/NowView.jsx';
 import DailyList from './views/DailyList.jsx';
 import WeeklyCalendar from './views/WeeklyCalendar.jsx';
 import MonthlyCalendar from './views/MonthlyCalendar.jsx';
+import TodoListView from './views/TodoListView.jsx';
 import TasksView from './views/TasksView.jsx';
 import ObjectivesView from './views/ObjectivesView.jsx';
 import ClientsView from './views/ClientsView.jsx';
@@ -23,6 +24,7 @@ import ImportExport from './views/ImportExport.jsx';
 import { CategoriesProvider } from './components/CatBadge.jsx';
 import TaskModal from './components/TaskModal.jsx';
 import GapPickerDialog from './components/GapPickerDialog.jsx';
+import DailyMoneyPlanning from './components/DailyMoneyPlanning.jsx';
 
 // Compute total free minutes within 9:00–20:00 by merging task intervals
 function computeFreeHours(tasks) {
@@ -119,6 +121,7 @@ function SidebarStatus() {
       if (
         previousCurrent &&
         previousCurrent.id !== current.id &&
+        previousCurrent.end_time &&
         secondsUntilTime(previousCurrent.end_time) <= 0 &&
         !endedTaskIdsRef.current.has(previousCurrent.id)
       ) {
@@ -135,8 +138,8 @@ function SidebarStatus() {
       lastKnownCurrentRef.current = current;
 
       // End alert when current task reaches its end time.
-      const secondsLeft = secondsUntilTime(current.end_time);
-      if (secondsLeft <= 0 && !endedTaskIdsRef.current.has(current.id)) {
+      const secondsLeft = current.end_time ? secondsUntilTime(current.end_time) : null;
+      if (secondsLeft !== null && secondsLeft <= 0 && !endedTaskIdsRef.current.has(current.id)) {
         endedTaskIdsRef.current.add(current.id);
         playBeep();
         api.tasksNow().then(setNowData).catch(() => {});
@@ -149,6 +152,7 @@ function SidebarStatus() {
     // If polling switched current->none, still emit end alert if due.
     if (
       previousCurrent &&
+      previousCurrent.end_time &&
       secondsUntilTime(previousCurrent.end_time) <= 0 &&
       !endedTaskIdsRef.current.has(previousCurrent.id)
     ) {
@@ -281,6 +285,7 @@ const navMain = [
   { path: '/today',     icon: '📋',  label: 'Hoy' },
   { path: '/week',      icon: '🗓',  label: 'Semana' },
   { path: '/month',     icon: '📅',  label: 'Mes' },
+  { path: '/todo-list', icon: '💪',  label: 'ToDo-List' },
   { path: '/tasks',     icon: '✅',  label: 'Tareas' },
   { path: '/objectives',icon: '🎯',  label: 'Objetivos' },
 ];
@@ -327,6 +332,9 @@ function SectionGuard({ enabled, sectionLabel, children }) {
 export default function App() {
   const [users, setUsers] = useState([]);
   const [activeUserId, setActiveUserState] = useState(getActiveUserId());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('sidebar-collapsed') === 'true',
+  );
   const activeUser = users.find(u => u.id === activeUserId) || null;
   const sections = activeUser?.content_sections || {
     clients: true, publications: true, certifications: true, repos: true, prs: true, events: true, reading_list: true, documents: true,
@@ -350,13 +358,32 @@ export default function App() {
     setActiveUserId(next.id);
   }
 
+  function toggleSidebar() {
+    setSidebarCollapsed(collapsed => {
+      const next = !collapsed;
+      localStorage.setItem('sidebar-collapsed', String(next));
+      return next;
+    });
+  }
+
   return (
     <CategoriesProvider>
-      <div className="app-shell">
-        <aside className="sidebar">
+      <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+        <aside className="sidebar" aria-label="Navegación principal">
           <div className="sidebar-brand">
-            <h1>Plan Maestro</h1>
-            <SidebarStatus />
+            <div className="sidebar-brand-heading">
+              <h1>Plan Maestro</h1>
+              <button
+                type="button"
+                className="sidebar-toggle"
+                onClick={toggleSidebar}
+                aria-label={sidebarCollapsed ? 'Mostrar menú completo' : 'Mostrar solo iconos'}
+                title={sidebarCollapsed ? 'Mostrar menú completo' : 'Mostrar solo iconos'}
+              >
+                {sidebarCollapsed ? '»' : '«'}
+              </button>
+            </div>
+            <div className="sidebar-status"><SidebarStatus /></div>
           </div>
           <nav className="sidebar-nav">
             <div className="nav-section">Plan</div>
@@ -366,9 +393,10 @@ export default function App() {
                 to={item.path}
                 end={item.path === '/'}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                title={sidebarCollapsed ? item.label : undefined}
               >
                 <span className="icon">{item.icon}</span>
-                {item.label}
+                <span className="nav-label">{item.label}</span>
               </NavLink>
             ))}
             <div className="nav-section">Contenido</div>
@@ -387,9 +415,10 @@ export default function App() {
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                title={sidebarCollapsed ? item.label : undefined}
               >
                 <span className="icon">{item.icon}</span>
-                {item.label}
+                <span className="nav-label">{item.label}</span>
               </NavLink>
             ))}
             <div className="nav-section">Herramientas</div>
@@ -398,14 +427,16 @@ export default function App() {
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                title={sidebarCollapsed ? item.label : undefined}
               >
                 <span className="icon">{item.icon}</span>
-                {item.label}
+                <span className="nav-label">{item.label}</span>
               </NavLink>
             ))}
           </nav>
         </aside>
         <main className="main-content">
+          <DailyMoneyPlanning userId={activeUserId} />
           <div style={{ position: 'fixed', top: 12, right: 18, zIndex: 120 }}>
             <button
               onClick={switchUser}
@@ -431,6 +462,7 @@ export default function App() {
             <Route path="/today"      element={<DailyList />} />
             <Route path="/week"       element={<WeeklyCalendar />} />
             <Route path="/month"      element={<MonthlyCalendar />} />
+            <Route path="/todo-list"  element={<TodoListView />} />
             <Route path="/tasks"      element={<TasksView />} />
             <Route path="/objectives" element={<ObjectivesView />} />
             <Route path="/clients" element={<SectionGuard enabled={sections.clients} sectionLabel="Clientes"><ClientsView /></SectionGuard>} />

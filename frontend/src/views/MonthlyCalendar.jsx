@@ -7,6 +7,7 @@ import {
 } from '../utils/dateUtils.js';
 import { getCatColor } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
+import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
 import CatBadge from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
@@ -56,11 +57,12 @@ function sortTasksByStartTime(a, b) {
   return (a.title || '').localeCompare(b.title || '');
 }
 
-function DayDetail({ dateStr, tasks, events, getTaskColor, getMilestoneLabel, onClose, onRefresh }) {
+function DayDetail({ dateStr, tasks, events, deadlines, getTaskColor, getMilestoneLabel, onClose, onRefresh }) {
   useEscapeClose(onClose);
   const [localTasks, setLocalTasks] = useState(tasks);
   const [editTask, setEditTask] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editDeadline, setEditDeadline] = useState(null);
 
   async function toggle(task) {
     if (!canCompleteTask(task)) return;
@@ -109,6 +111,13 @@ function DayDetail({ dateStr, tasks, events, getTaskColor, getMilestoneLabel, on
             }}
           />
         )}
+        {editDeadline && <DeadlineModal initial={editDeadline} onClose={() => setEditDeadline(null)}
+          onSave={() => { setEditDeadline(null); onRefresh(); }} onDeleted={() => { setEditDeadline(null); onRefresh(); }} />}
+
+        {deadlines.length > 0 && <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: 6 }}>Fechas límite</div>
+          {deadlines.map(deadline => <DeadlineChip key={deadline.id} deadline={deadline} onClick={setEditDeadline} />)}
+        </div>}
 
         {events.length > 0 && (
           <div style={{ marginBottom: 12 }}>
@@ -170,6 +179,7 @@ export default function MonthlyCalendar() {
   const [month, setMonth] = useState(new Date(2026, 3, 1)); // April 2026
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);
+  const [deadlines, setDeadlines] = useState([]);
   const [cats, setCats] = useState([]);
   const [objectiveColors, setObjectiveColors] = useState({});
   const [milestoneTitles, setMilestoneTitles] = useState({});
@@ -185,6 +195,7 @@ export default function MonthlyCalendar() {
     const to   = toDateStr(days[days.length - 1]);
     api.tasks({ from, to }).then(setTasks);
     api.events({ from, to }).then(setEvents);
+    api.deadlines({ from, to }).then(setDeadlines);
   }
 
   useEffect(() => { reloadMonth(); }, [month]);
@@ -232,7 +243,8 @@ export default function MonthlyCalendar() {
       .filter(t => t.date === ds && (!filterCat || t.category_id === filterCat))
       .sort(sortTasksByStartTime);
     const dayEvents = events.filter(e => e.start_date <= ds && e.end_date >= ds);
-    return { tasks: dayTasks, events: dayEvents };
+    const dayDeadlines = deadlines.filter(deadline => deadline.date === ds);
+    return { tasks: dayTasks, events: dayEvents, deadlines: dayDeadlines };
   }
 
   const selDate = selected ? toDateStr(selected) : null;
@@ -322,13 +334,15 @@ export default function MonthlyCalendar() {
               const inMonth = isSameMonth(d, month);
               const today = isToday(d);
               const isSelected = selected && toDateStr(d) === toDateStr(selected);
-              const { tasks: dt, events: de } = getItemsForDay(d);
+              const { tasks: dt, events: de, deadlines: dd } = getItemsForDay(d);
               const nowHour = new Date().getHours();
               const dayGapHours = inMonth ? getGapHours(dt).filter(h => !today || h >= nowHour) : [];
               const allItems = [
+                ...dd.slice(1).map(deadline => ({ ...deadline, _type: 'deadline' })),
                 ...de.map(e => ({ ...e, _type: 'event' })),
-                ...dt.slice(0, 3).map(t => ({ ...t, _type: 'task' })),
-              ].slice(0, 4);
+                ...dt.map(t => ({ ...t, _type: 'task' })),
+              ].slice(0, dd.length ? 3 : 4);
+              const hiddenItemCount = Math.max(0, dd.length + de.length + dt.length - (dd.length ? 1 : 0) - allItems.length);
 
               return (
                 <div
@@ -339,8 +353,15 @@ export default function MonthlyCalendar() {
                     today ? 'today' : '',
                     isSelected ? 'selected' : '',
                   ].filter(Boolean).join(' ')}
+                  style={dd[0] ? { boxShadow: `inset 0 0 0 2px ${dd[0].color}` } : undefined}
                   onClick={() => setSelected(d)}
                 >
+                  {dd[0] && <button type="button" className="deadline-day-banner"
+                    style={{ '--deadline-color': dd[0].color || '#dc2626' }}
+                    title={`Fecha límite: ${dd[0].title}`}
+                    onClick={e => { e.stopPropagation(); setSelected(d); }}>
+                    <strong>{d.getDate()}</strong><span>{dd[0].title}</span>
+                  </button>}
                   <div
                     onClick={dayGapHours.length > 0 ? (e => { e.stopPropagation(); setGapDialog({ date: ds, gapHours: dayGapHours }); }) : undefined}
                     title={dayGapHours.length > 0
@@ -360,10 +381,10 @@ export default function MonthlyCalendar() {
                     }}>
                     {dayGapHours.length > 0 ? `⚠ ${dayGapHours.length}h libres` : ''}
                   </div>
-                  <div className="cal-day">{d.getDate()}</div>
+                  {!dd[0] && <div className="cal-day">{d.getDate()}</div>}
                   <div className="cal-items">
                     {allItems.map((item, i) => {
-                      const color = item._type === 'task' ? getTaskColor(item) : getCatColor(item.category_id);
+                      const color = item._type === 'deadline' ? item.color : (item._type === 'task' ? getTaskColor(item) : getCatColor(item.category_id));
                       return (
                         <div key={i} className="cal-item"
                           style={{
@@ -372,7 +393,7 @@ export default function MonthlyCalendar() {
                             lineHeight: item._type === 'task' ? 1.2 : undefined,
                           }}
                           title={item.title}>
-                          {item.title}
+                          {item._type === 'deadline' ? '◆ ' : ''}{item.title}
                           {item._type === 'task' && (
                             <div style={{ fontSize: 9, opacity: 0.92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {getMilestoneLabel(item)}
@@ -381,9 +402,9 @@ export default function MonthlyCalendar() {
                         </div>
                       );
                     })}
-                    {dt.length + de.length > 4 && (
+                    {hiddenItemCount > 0 && (
                       <div style={{ fontSize: 9, color: 'var(--text-3)', paddingLeft: 4 }}>
-                        +{dt.length + de.length - 4} más
+                        +{hiddenItemCount} más
                       </div>
                     )}
                   </div>
@@ -398,6 +419,7 @@ export default function MonthlyCalendar() {
               dateStr={toDateStr(selected)}
               tasks={selItems.tasks}
               events={selItems.events}
+              deadlines={selItems.deadlines}
               getTaskColor={getTaskColor}
               getMilestoneLabel={getMilestoneLabel}
               onClose={() => setSelected(null)}

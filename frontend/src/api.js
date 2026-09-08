@@ -31,6 +31,17 @@ function authHeaders(extra = {}) {
   return { 'x-user-id': activeUserId, ...extra };
 }
 
+function notifyTaskChange() {
+  window.dispatchEvent(new CustomEvent('tasks-changed', { detail: { userId: activeUserId } }));
+}
+
+function withTaskChange(promise) {
+  return promise.then(result => {
+    notifyTaskChange();
+    return result;
+  });
+}
+
 function sortCategoriesByName(categories) {
   return [...categories].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -87,9 +98,20 @@ export const api = {
   tasksWeek:     () => get('/tasks/week'),
   tasksNow:      () => get('/tasks/now'),
   taskById:      (id) => get(`/tasks/${id}`),
-  createTask:    (body) => post('/tasks', body),
-  updateTask:    (id, body) => put(`/tasks/${id}`, body),
-  deleteTask:    (id) => fetch(withUser(`/tasks/${id}`), { method: 'DELETE', headers: authHeaders() }).then(r => r.json()),
+  createTask:    (body) => withTaskChange(post('/tasks', body)),
+  updateTask:    (id, body) => withTaskChange(put(`/tasks/${id}`, body)),
+  taskTimer:     (id, action) => withTaskChange(post(`/tasks/${id}/timer`, { action })),
+  completeScheduledTask: (task) => withTaskChange(post(`/tasks/${task.id}/complete-scheduled`, {
+    date: task.date, start_time: task.start_time, end_time: task.end_time,
+  })),
+  reorderTodoDay: (date, ids) => post('/tasks/todo-day-reorder', { date, ids }),
+  reorderTodos:  (objectiveId, ids) => post('/tasks/todo-reorder', { objective_id: objectiveId, ids }),
+  deleteTask:    (id) => withTaskChange(fetch(withUser(`/tasks/${id}`), { method: 'DELETE', headers: authHeaders() }).then(r => r.json())),
+
+  deadlines:      (params = {}) => get('/deadlines?' + new URLSearchParams(params)),
+  createDeadline: (body) => post('/deadlines', body),
+  updateDeadline: (id, body) => put(`/deadlines/${id}`, body),
+  deleteDeadline: (id) => fetch(withUser(`/deadlines/${id}`), { method: 'DELETE', headers: authHeaders() }).then(r => r.json()),
 
   createCategory:   (body) => post('/categories', body),
   updateCategory:   (id, body) => put(`/categories/${id}`, body),
@@ -98,6 +120,7 @@ export const api = {
   objectives:      (params = {}) => get('/objectives?' + new URLSearchParams(params)),
   createObjective: (body) => post('/objectives', body),
   updateObjective: (id, body) => put(`/objectives/${id}`, body),
+  reorderTodoObjectives: (ids) => post('/objectives/todo-reorder', { ids }),
   deleteObjective: (id) => fetch(withUser(`/objectives/${id}`), { method: 'DELETE', headers: authHeaders() }).then(r => r.json()),
 
   milestones:      () => get('/milestones'),

@@ -71,6 +71,11 @@ export function formatDuration(mins) {
   return `${h}h ${m}m`;
 }
 
+export function formatActualDuration(seconds) {
+  const value = Number(seconds);
+  return value > 0 ? formatDuration(Math.max(1, Math.round(value / 60))) : '';
+}
+
 export function formatCountdown(totalSeconds) {
   if (totalSeconds <= 0) return '0m';
   const h = Math.floor(totalSeconds / 3600);
@@ -80,6 +85,7 @@ export function formatCountdown(totalSeconds) {
 }
 
 export function secondsUntilTime(timeStr) {
+  if (!timeStr) return 0;
   const now = new Date();
   const [h, m] = timeStr.split(':').map(Number);
   const target = new Date(now);

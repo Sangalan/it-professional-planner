@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { CategorySelector } from './CatBadge.jsx';
 import SpanishDateInput from './SpanishDateInput.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
-import { getEditableTaskStatuses } from '../utils/taskUtils.js';
+import { getEditableTaskStatuses, isTodoTask } from '../utils/taskUtils.js';
 import { getPublicationTypeMeta } from '../utils/publicationTypes.js';
 
 function parseCatIds(raw, fallback) {
@@ -29,7 +29,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
   })();
   const [form, setForm] = useState({
     title: '', description: '', date: '', start_time: '', end_time: '',
-    priority: 2, objective_id: '', milestone_id: '', is_fixed: false,
+    priority: 2, objective_id: '', milestone_id: '', is_fixed: false, is_money_maker: false,
     fixed_start_date: '', fixed_end_date: '',
     notes: '', status: 'pending',
     isCloned: !!initial.isCloned || !!initial.is_cloned,
@@ -82,25 +82,28 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
   }
 
   function set(field, value) { setForm(f => ({ ...f, [field]: value })); }
+  const isTodo = isTodoTask(form);
 
   function buildTaskPayload({ cloneAsRegular = false } = {}) {
     const isFixedTask = cloneAsRegular ? false : !!form.is_fixed;
     const effectiveDate = cloneAsRegular
       ? (openedInstanceDate || form.date || form.fixed_start_date || '')
       : form.date;
+    const hasSchedule = isFixedTask || !!effectiveDate;
 
     return {
       title:        form.title.trim(),
       description:  form.description || '',
       category_ids: form.category_ids,
       category_id:  form.category_ids[0] || null,
-      date:         effectiveDate,
-      start_time:   form.start_time || null,
-      end_time:     form.end_time || null,
+      date:         effectiveDate || null,
+      start_time:   hasSchedule ? (form.start_time || null) : null,
+      end_time:     hasSchedule ? (form.end_time || null) : null,
       priority:     Number(form.priority),
       objective_id: form.objective_id || null,
       milestone_id: form.milestone_id || null,
       is_fixed:     isFixedTask ? 1 : 0,
+      is_money_maker: form.is_money_maker ? 1 : 0,
       fixed_days:        isFixedTask ? form.fixed_days : null,
       fixed_start_date:  isFixedTask ? (form.fixed_start_date || null) : null,
       fixed_end_date:    isFixedTask ? (form.fixed_end_date || null) : null,
@@ -114,7 +117,6 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.title.trim()) { setError('El título es obligatorio'); return; }
-    if (!form.is_fixed && !form.date) { setError('La fecha es obligatoria'); return; }
     if (form.is_fixed && form.fixed_days.length === 0) { setError('Selecciona al menos un día de la semana'); return; }
     if (form.is_fixed && !form.fixed_start_date) { setError('La fecha de inicio es obligatoria para tareas fijas'); return; }
     setSaving(true);
@@ -168,7 +170,9 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h2 style={{ fontSize: 17, fontWeight: 700 }}>
-            {isEdit ? 'Editar tarea' : 'Nueva tarea'}
+            {isEdit
+              ? (isTodo ? 'Editar ToDo' : 'Editar tarea')
+              : (isTodo ? 'Nuevo ToDo' : 'Nueva tarea')}
           </h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-3)', lineHeight: 1 }}>✕</button>
         </div>
@@ -188,21 +192,25 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
           </div>
 
           {/* Date + times */}
-          <div style={{ display: 'grid', gridTemplateColumns: form.is_fixed ? '1fr 1fr' : '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: (!form.is_fixed && !form.date) ? '1fr' : (form.is_fixed ? '1fr 1fr' : '1fr 1fr 1fr'), gap: 10, marginBottom: 14 }}>
             {!form.is_fixed && (
               <div>
-                <label style={labelStyle}>Fecha *</label>
-                <SpanishDateInput value={form.date} onChange={v => set('date', v)} style={{ width: '100%' }} />
+                <label style={labelStyle}>Fecha (opcional)</label>
+                <SpanishDateInput value={form.date} onChange={v => set('date', v)} placeholder="Sin fecha · ToDo" style={{ width: '100%' }} />
               </div>
             )}
-            <div>
-              <label style={labelStyle}>Hora inicio</label>
-              <input type="time" value={form.start_time} onChange={e => set('start_time', e.target.value)} style={{ width: '100%' }} />
-            </div>
-            <div>
-              <label style={labelStyle}>Hora fin</label>
-              <input type="time" value={form.end_time} onChange={e => set('end_time', e.target.value)} style={{ width: '100%' }} />
-            </div>
+            {(form.is_fixed || form.date) && (
+              <>
+                <div>
+                  <label style={labelStyle}>Hora inicio</label>
+                  <input type="time" value={form.start_time} onChange={e => set('start_time', e.target.value)} style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Hora fin</label>
+                  <input type="time" value={form.end_time} onChange={e => set('end_time', e.target.value)} style={{ width: '100%' }} />
+                </div>
+              </>
+            )}
           </div>
 
           {/* Categories */}
@@ -253,7 +261,11 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
                 {milestones.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
               </select>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 14 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingBottom: 7, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input type="checkbox" checked={!!form.is_money_maker} onChange={e => set('is_money_maker', e.target.checked)} />
+                Money maker 💰
+              </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingBottom: 7, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 <input type="checkbox" checked={!!form.is_fixed} onChange={e => set('is_fixed', e.target.checked)} />
                 Tarea fija 📌
@@ -367,7 +379,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
                 </button>
               )}
               <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear tarea'}
+                {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : (isTodo ? 'Crear ToDo' : 'Crear tarea')}
               </button>
             </div>
           </div>

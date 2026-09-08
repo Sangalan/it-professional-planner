@@ -6,6 +6,7 @@ import {
 } from '../utils/dateUtils.js';
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
+import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
 
@@ -84,12 +85,14 @@ export default function WeeklyCalendar() {
 
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);
+  const [deadlines, setDeadlines] = useState([]);
   const [workBlocks, setWorkBlocks] = useState([]);
   const [objectiveColors, setObjectiveColors] = useState({});
   const [milestoneTitles, setMilestoneTitles] = useState({});
   const [currentTime, setCurrentTime] = useState(new Date().toTimeString().slice(0, 5));
   const [createFor, setCreateFor] = useState(null);   // date string
   const [editTask, setEditTask] = useState(null);      // task object
+  const [editDeadline, setEditDeadline] = useState(null);
   const [gapDialog, setGapDialog] = useState(null);   // { date, hour }
   const [calendarView, setCalendarView] = useState('current');
   const [taskInteraction, setTaskInteraction] = useState(null);
@@ -103,6 +106,7 @@ export default function WeeklyCalendar() {
     const to   = toDateStr(days[6]);
     api.tasks({ from, to }).then(setTasks);
     api.events({ from, to }).then(setEvents);
+    api.deadlines({ from, to }).then(setDeadlines);
     api.workBlocks().then(setWorkBlocks);
   }, [weekStart]);
 
@@ -345,6 +349,9 @@ export default function WeeklyCalendar() {
           }}
         />
       )}
+      {editDeadline && <DeadlineModal initial={editDeadline} onClose={() => setEditDeadline(null)}
+        onSave={() => { setEditDeadline(null); api.deadlines({ from: toDateStr(days[0]), to: toDateStr(days[6]) }).then(setDeadlines); }}
+        onDeleted={() => { setEditDeadline(null); api.deadlines({ from: toDateStr(days[0]), to: toDateStr(days[6]) }).then(setDeadlines); }} />}
       {gapDialog && (
         <GapPickerDialog
           date={gapDialog.date}
@@ -405,6 +412,9 @@ export default function WeeklyCalendar() {
                         }}>
                           {d.getDate()}
                         </div>
+                        {deadlines.filter(deadline => deadline.date === ds).map(deadline => (
+                          <DeadlineChip key={deadline.id} deadline={deadline} compact onClick={setEditDeadline} />
+                        ))}
                         {(eventsByDate[ds] || []).map(ev => (
                           <div key={ev.id} title={ev.title} style={{
                             fontSize: 9, padding: '1px 4px', borderRadius: 3,

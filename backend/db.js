@@ -55,6 +55,11 @@ try { db.prepare('ALTER TABLE categories ADD COLUMN user_id TEXT').run(); } catc
 try { db.prepare('ALTER TABLE objectives ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE milestones ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE tasks ADD COLUMN user_id TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN todo_order INTEGER').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN todo_day_order INTEGER').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN todo_order_date TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE tasks ADD COLUMN is_money_maker INTEGER DEFAULT 0').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE objectives ADD COLUMN todo_order INTEGER').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE work_blocks ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE events ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE publications ADD COLUMN user_id TEXT').run(); } catch (_) {}
@@ -101,7 +106,8 @@ function initSchema() {
       status TEXT DEFAULT 'not_started',
       priority INTEGER DEFAULT 2,
       notes TEXT,
-      user_id TEXT
+      user_id TEXT,
+      todo_order INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS milestones (
@@ -132,6 +138,7 @@ function initSchema() {
       objective_id TEXT,
       milestone_id TEXT,
       is_fixed INTEGER DEFAULT 0,
+      is_money_maker INTEGER DEFAULT 0,
       fixed_days TEXT,
       fixed_start_date TEXT,
       fixed_end_date TEXT,
@@ -140,7 +147,10 @@ function initSchema() {
       is_cloned INTEGER DEFAULT 0,
       cloned_from TEXT,
       percentage_completed REAL DEFAULT 0,
-      user_id TEXT
+      user_id TEXT,
+      todo_order INTEGER,
+      todo_day_order INTEGER,
+      todo_order_date TEXT
     );
 
     CREATE TABLE IF NOT EXISTS work_blocks (
@@ -234,7 +244,25 @@ function initSchema() {
       created_at TEXT DEFAULT (datetime('now')),
       user_id TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS deadlines (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      date TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#dc2626',
+      user_id TEXT
+    );
   `);
+
+  const timingColumns = db.prepare('PRAGMA table_info(tasks)').all().map(column => column.name);
+  for (const [name, definition] of Object.entries({
+    actual_seconds: 'REAL NOT NULL DEFAULT 0',
+    timer_started_at: 'TEXT',
+    original_estimate_minutes: 'REAL',
+    completed_at: 'TEXT',
+  })) {
+    if (!timingColumns.includes(name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
+  }
 
   const defaultSections = JSON.stringify({
     clients: true,
@@ -251,7 +279,7 @@ function initSchema() {
 
   const scopedTables = [
     'categories', 'objectives', 'milestones', 'tasks', 'work_blocks',
-    'events', 'publications', 'certifications', 'repos', 'prs', 'documents', 'reading_list',
+    'events', 'publications', 'certifications', 'repos', 'prs', 'documents', 'reading_list', 'deadlines',
   ];
   for (const table of scopedTables) {
     try {

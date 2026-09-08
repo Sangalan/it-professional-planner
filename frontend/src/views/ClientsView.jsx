@@ -588,7 +588,7 @@ function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onRe
 
   async function fetchTasks() {
     const data = await api.tasks({ milestone_id: m.id });
-    setTasks(data.sort((a, b) => a.date.localeCompare(b.date)));
+    setTasks(data.sort((a, b) => (a.date || '9999-12-31').localeCompare(b.date || '9999-12-31')));
   }
 
   useEffect(() => { if (expanded) fetchTasks(); }, [version]);

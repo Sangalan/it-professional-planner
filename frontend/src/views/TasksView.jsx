@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { fmtDate, formatDuration } from '../utils/dateUtils.js';
+import { fmtDate, formatDuration, formatActualDuration } from '../utils/dateUtils.js';
 import { CategoryBadges } from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
+import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
-import { canCompleteTask } from '../utils/taskUtils.js';
+import { canCompleteTask, isTodoTask } from '../utils/taskUtils.js';
 
 const TASK_STATUS_OPTIONS = [
   { value: '', label: 'Estado: Todos' },
@@ -34,14 +35,18 @@ function compareTasks(a, b) {
 
 export default function TasksView() {
   const [tasks, setTasks] = useState([]);
+  const [deadlines, setDeadlines] = useState([]);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [editingDeadline, setEditingDeadline] = useState(null);
   const [collapsedSections, setCollapsedSections] = useState({
+    todo: false,
     overdue: true,
     pending: true,
     in_progress: true,
     blocked: true,
     completed: true,
+    deadlines: false,
   });
   const [searchTitle, setSearchTitle] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -50,8 +55,9 @@ export default function TasksView() {
   const [statusFilter, setStatusFilter] = useState('');
 
   async function load() {
-    const data = await api.tasks();
+    const [data, deadlineRows] = await Promise.all([api.tasks(), api.deadlines()]);
     setTasks(data.sort(compareTasks));
+    setDeadlines(deadlineRows);
   }
 
   useEffect(() => { load(); }, []);
@@ -91,11 +97,18 @@ export default function TasksView() {
     load();
   }
 
-  const overdueTasks = visible.filter(t => !!t.is_overdue && t.status !== 'completed');
-  const pendingTasks = visible.filter(t => t.status === 'pending' && !t.is_overdue);
-  const inProgressTasks = visible.filter(t => t.status === 'in_progress' && !t.is_overdue);
-  const blockedTasks = visible.filter(t => t.status === 'blocked' && !t.is_overdue);
-  const completedTasks = visible.filter(t => t.status === 'completed');
+  const overdueTasks = visible.filter(t => !isTodoTask(t) && !!t.is_overdue && t.status !== 'completed');
+  const todoTasks = visible.filter(isTodoTask);
+  const pendingTasks = visible.filter(t => !isTodoTask(t) && t.status === 'pending' && !t.is_overdue);
+  const inProgressTasks = visible.filter(t => !isTodoTask(t) && t.status === 'in_progress' && !t.is_overdue);
+  const blockedTasks = visible.filter(t => !isTodoTask(t) && t.status === 'blocked' && !t.is_overdue);
+  const completedTasks = visible.filter(t => !isTodoTask(t) && t.status === 'completed');
+  const visibleDeadlines = deadlines.filter(deadline => {
+    if (searchTitle && !deadline.title.toLowerCase().includes(searchTitle.trim().toLowerCase())) return false;
+    if (fromDate && deadline.date < fromDate) return false;
+    if (toDate && deadline.date > toDate) return false;
+    return !statusFilter && filterCats.length === 0;
+  });
 
   function renderTaskRow(task) {
     const catIds = parseCatIds(task.category_ids, task.category_id);
@@ -113,6 +126,7 @@ export default function TasksView() {
         <div className="task-info">
           <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>{task.title}</div>
           <div className="task-meta">
+            {isTodoTask(task) && <span className="badge badge-pending">ToDo</span>}
             {task.date && <span className="task-time">{fmtDate(task.date)}</span>}
             {task.start_time && <span className="task-time">{task.start_time}{task.end_time ? `-${task.end_time}` : ''}</span>}
             {task.duration_estimated > 0 && <span className="task-time">{formatDuration(task.duration_estimated)}</span>}
@@ -124,13 +138,21 @@ export default function TasksView() {
           )}
         </div>
         {task.status === 'completed' && (
-          <span className="badge badge-completed">Completada</span>
+          <span className="badge badge-completed">Completada{formatActualDuration(task.actual_seconds) && ` · ${formatActualDuration(task.actual_seconds)}`}</span>
         )}
       </div>
     );
   }
 
-  function renderSection(key, label, list, emptyText) {
+  function renderDeadlineRow(deadline) {
+    return <div key={deadline.id} className="task-row" style={{ cursor: 'pointer' }} onClick={() => setEditingDeadline(deadline)}>
+      <span style={{ width: 10, height: 10, borderRadius: '50%', background: deadline.color, flexShrink: 0, marginTop: 4 }} />
+      <div className="task-info"><div className="task-title">{deadline.title}</div><div className="task-meta"><span className="task-time">{fmtDate(deadline.date)}</span></div></div>
+      <DeadlineChip deadline={deadline} compact onClick={setEditingDeadline} />
+    </div>;
+  }
+
+  function renderSection(key, label, list, emptyText, renderRow = renderTaskRow) {
     const collapsed = collapsedSections[key];
     return (
       <div key={key} className="card" style={{ marginBottom: 14 }}>
@@ -147,7 +169,7 @@ export default function TasksView() {
           <div style={{ padding: '0 18px' }}>
             {list.length === 0 ? (
               <div style={{ padding: '14px 0', fontSize: 13, color: 'var(--text-3)' }}>{emptyText}</div>
-            ) : list.map(renderTaskRow)}
+            ) : list.map(renderRow)}
           </div>
         )}
       </div>
@@ -179,6 +201,8 @@ export default function TasksView() {
           onDeleted={() => { setEditing(null); load(); }}
         />
       )}
+      {editingDeadline && <DeadlineModal initial={editingDeadline} onClose={() => setEditingDeadline(null)}
+        onSave={() => { setEditingDeadline(null); load(); }} onDeleted={() => { setEditingDeadline(null); load(); }} />}
 
       <ContentMetricsSummary
         title="Resumen de tareas"
@@ -211,13 +235,15 @@ export default function TasksView() {
         }
       />
 
-      {visible.length === 0 ? (
+      {visible.length === 0 && visibleDeadlines.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
           {searchTitle || fromDate || toDate || filterCats.length > 0 || statusFilter ? 'Sin resultados' : 'No hay tareas todavía'}
         </div>
       ) : (
         <>
+          {renderSection('deadlines', 'Fechas límite', visibleDeadlines, 'Sin fechas límite', renderDeadlineRow)}
+          {renderSection('todo', 'ToDo', todoTasks, 'Sin ToDo')}
           {renderSection('overdue', 'Vencidas', overdueTasks, 'Sin tareas vencidas')}
           {renderSection('pending', 'Pendientes', pendingTasks, 'Sin tareas pendientes')}
           {renderSection('in_progress', 'En curso', inProgressTasks, 'Sin tareas en curso')}
