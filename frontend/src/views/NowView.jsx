@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { formatCountdown, secondsUntilTime, secondsBetweenTimes, timeToMinutes } from '../utils/dateUtils.js';
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import { canCompleteTask, isTodoTask } from '../utils/taskUtils.js';
 
 // Web Audio API beep — no external files needed
@@ -167,7 +168,7 @@ export default function NowView() {
           <div className="now-task-label" style={{ color: getCatColor(current.category_id) }}>
             TAREA ACTIVA · {getCatLabel(current.category_id)}
           </div>
-          <div className="now-task-title">{current.title}</div>
+          <div className="now-task-title"><MoneyMakerIcon task={current} />{current.title}</div>
           <div className="now-task-time">
             {current.start_time} → {current.end_time}
             &nbsp;·&nbsp;
@@ -238,7 +239,7 @@ export default function NowView() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div className="dot" style={{ background: getCatColor(upcoming.category_id), width: 10, height: 10 }} />
             <div>
-              <div style={{ fontWeight: 600, fontSize: 15 }}>{upcoming.title}</div>
+              <div style={{ fontWeight: 600, fontSize: 15 }}><MoneyMakerIcon task={upcoming} />{upcoming.title}</div>
               <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
                 {upcoming.start_time} → {upcoming.end_time}
                 &nbsp;·&nbsp;{getCatLabel(upcoming.category_id)}

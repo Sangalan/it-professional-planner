@@ -97,6 +97,7 @@ export const api = {
   tasksToday:    () => get('/tasks/today'),
   tasksWeek:     () => get('/tasks/week'),
   tasksNow:      () => get('/tasks/now'),
+  moneyPlanningToday: () => get('/money-planning/today'),
   taskById:      (id) => get(`/tasks/${id}`),
   createTask:    (body) => withTaskChange(post('/tasks', body)),
   updateTask:    (id, body) => withTaskChange(put(`/tasks/${id}`, body)),

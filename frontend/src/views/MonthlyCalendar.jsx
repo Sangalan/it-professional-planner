@@ -12,6 +12,7 @@ import CatBadge from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import { canCompleteTask } from '../utils/taskUtils.js';
 
 const DOW = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
@@ -155,7 +156,7 @@ function DayDetail({ dateStr, tasks, events, deadlines, getTaskColor, getMilesto
                 )}
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: getTaskColor(task), marginTop: 5, flexShrink: 0 }} />
                 <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditTask(task)}>
-                  <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>{task.title}</div>
+                  <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}><MoneyMakerIcon task={task} />{task.title}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, fontStyle: 'italic' }}>
                     {getMilestoneLabel(task)}
                   </div>

@@ -39,7 +39,9 @@ export function sortDayTodos(tasks, objectives, categories, sortMode = 'time') {
   };
   const dayOrder = task => task.todo_order_date === task.date
     ? (task.todo_day_order ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+  const running = task => task.status === 'in_progress' || Boolean(task.timer_started_at);
   return [...tasks].sort((a, b) => Number(a.status === 'completed') - Number(b.status === 'completed')
+    || (sortMode === 'importance' ? Number(running(b)) - Number(running(a)) : 0)
     || (sortMode === 'time' ? duration(a) - duration(b) : dayOrder(a) - dayOrder(b))
     || (a.todo_order ?? Number.MAX_SAFE_INTEGER) - (b.todo_order ?? Number.MAX_SAFE_INTEGER)
     || (sortMode === 'time' ? Number(business(b)) - Number(business(a)) : 0)

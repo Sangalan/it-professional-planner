@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { fmtDate, formatDuration } from '../utils/dateUtils.js';
 import { statusLabel } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import { CategoryBadges } from '../components/CatBadge.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
@@ -859,7 +860,7 @@ export default function Search() {
                   )}
 
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className={`task-title ${item.status === 'completed' ? 'done' : ''}`}>{item.title}</div>
+                    <div className={`task-title ${item.status === 'completed' ? 'done' : ''}`}><MoneyMakerIcon task={item.raw} />{item.title}</div>
                     <div className="task-meta">
                       {item.date && <span className="task-time">{fmtDate(item.date)}</span>}
                       {item.start_time && <span className="task-time">{item.start_time}–{item.end_time}</span>}

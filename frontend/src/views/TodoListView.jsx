@@ -4,6 +4,7 @@ import { api, getActiveUserId } from '../api.js';
 import TaskModal from '../components/TaskModal.jsx';
 import TodoCalendar from '../components/TodoCalendar.jsx';
 import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import { fmtDate, toDateStr, startOfMonth, addMonths, getDaysInMonthGrid, isSameMonth, fmtMonthYear, formatDuration, formatActualDuration } from '../utils/dateUtils.js';
 import { isMoneyMakerTask, isMoneyObjective, isTodoTask } from '../utils/taskUtils.js';
 
@@ -275,7 +276,7 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
                 }}
               >
                 <div className="todo-card-heading">
-                  <div className="todo-card-title">{task.title}</div>
+                  <div className="todo-card-title"><MoneyMakerIcon task={task} />{task.title}</div>
                   {Number(task.duration_estimated) > 0 && <span className="todo-card-duration">{formatDuration(Number(task.duration_estimated))}</span>}
                 </div>
                 {task.status === 'completed' && <div className="todo-card-status">
@@ -300,12 +301,16 @@ function countdownMinutes(task, now) {
   return Math.max(0, Math.ceil((target - now) / 60000));
 }
 
-function ActiveTaskBanner({ task, onAction, saving }) {
+function ActiveTaskBanner({ task, compact = false, onAction, saving }) {
   const [now, setNow] = useState(() => new Date());
   const started = task.timer_started_at || (task.date && task.start_time ? `${task.date}T${task.start_time}:00` : null);
   const elapsed = (Number(task.actual_seconds) || 0) + (started ? Math.max(0, (now - new Date(started)) / 1000) : 0);
-  const remaining = (Number(task.original_estimate_minutes ?? task.duration_estimated) || 0) - elapsed / 60;
-  const countdown = `${remaining < 0 ? '+' : ''}${formatDuration(Math.ceil(Math.abs(remaining))) || '0m'}`;
+  const estimatedMinutes = Number(task.original_estimate_minutes ?? task.duration_estimated) || 0;
+  const remaining = estimatedMinutes - elapsed / 60;
+  const overtimeMinutes = Math.ceil(Math.max(0, -remaining));
+  const countdown = overtimeMinutes > 0
+    ? `${formatDuration(estimatedMinutes) || '0m'} +${formatDuration(overtimeMinutes)}`
+    : (formatDuration(Math.ceil(remaining)) || '0m');
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 15000);
@@ -317,29 +322,14 @@ function ActiveTaskBanner({ task, onAction, saving }) {
     return () => { document.title = 'Plan Maestro'; };
   }, [countdown]);
 
-  return <div className="todo-active-banner" role="timer" aria-live="polite">
+  return <div className={`todo-active-banner${compact ? ' compact' : ''}`} role="timer" aria-live="polite">
     <div className="todo-active-label">Tarea en curso</div>
     <div className="todo-active-countdown">{countdown}</div>
     <div className="todo-active-title-row">
-      <div className="todo-active-title">{task.title}</div>
+      <div className="todo-active-title"><MoneyMakerIcon task={task} />{task.title}</div>
       <div className="todo-active-actions">
         {isTodoTask(task) && <button type="button" className="todo-active-action" aria-label="Pausar tarea" title="Pausar" disabled={saving} onClick={() => onAction('pause')}>⏸</button>}
         <button type="button" className="todo-active-action" aria-label="Completar tarea" title="Completar" disabled={saving} onClick={() => onAction('complete')}>✓</button>
-      </div>
-    </div>
-  </div>;
-}
-
-function StartConfirmation({ task, saving, error, onCancel, onConfirm }) {
-  return <div className="todo-confirm-backdrop" role="presentation" onMouseDown={e => e.target === e.currentTarget && onCancel()}>
-    <div className="todo-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="todo-start-title">
-      <h2 id="todo-start-title">¿Comenzar este ToDo?</h2>
-      <p>{task.title}</p>
-      <p>Se programará desde este momento durante <strong>{formatDuration(Number(task.duration_estimated))}</strong>.</p>
-      {error && <div role="alert" className="todo-confirm-error">{error}</div>}
-      <div className="todo-confirm-actions">
-        <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={saving}>Cancelar</button>
-        <button type="button" className="btn btn-primary" onClick={onConfirm} disabled={saving}>{saving ? 'Comenzando…' : 'Comenzar'}</button>
       </div>
     </div>
   </div>;
@@ -366,7 +356,7 @@ function DurationDialog({ task, onClose, onSaved }) {
   return <div className="todo-confirm-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
     <form className="todo-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="todo-duration-title" onSubmit={submit}>
       <h2 id="todo-duration-title">Establecer duración</h2>
-      <p>{task.title}</p>
+      <p><MoneyMakerIcon task={task} />{task.title}</p>
       <label style={{ display: 'block', marginTop: 14 }}>Estimación (horas)
         <input ref={inputRef} type="text" inputMode="decimal" autoComplete="off" value={hours} onChange={event => setHours(event.target.value)} style={{ display: 'block', width: '100%', marginTop: 5 }} />
       </label>
@@ -480,7 +470,7 @@ function TodoDropCalendar({ task, anchor, onDropDate, onDropOutside }) {
       maxHeight,
     }} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); e.stopPropagation(); onDropOutside(); }}>
       <div className="todo-drop-calendar-title">Suelta en un día para asignar fecha</div>
-      <div className="todo-drop-calendar-task">{task.title}</div>
+      <div className="todo-drop-calendar-task"><MoneyMakerIcon task={task} />{task.title}</div>
       <div className="todo-drop-months">
         {[currentMonth, addMonths(currentMonth, 1)].map(month => (
           <section key={toDateStr(month)}>
@@ -520,8 +510,6 @@ export default function TodoListView() {
   const [saving, setSaving] = useState(false);
   const [reordering, setReordering] = useState(false);
   const [error, setError] = useState('');
-  const [startCandidate, setStartCandidate] = useState(null);
-  const [startError, setStartError] = useState('');
   const [starting, setStarting] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
   const [deadlineRows, setDeadlineRows] = useState([]);
@@ -529,6 +517,10 @@ export default function TodoListView() {
   const [taskMenu, setTaskMenu] = useState(null);
   const [durationTask, setDurationTask] = useState(null);
   const [countdownDialogOpen, setCountdownDialogOpen] = useState(false);
+  const [moneyPlanningReady, setMoneyPlanningReady] = useState(false);
+  const [dailyOverloadVisible, setDailyOverloadVisible] = useState(
+    () => Boolean(window.__dailyPlannerBannerStatus?.overloadVisible)
+  );
   const [countdownEnd, setCountdownEnd] = useState(() => {
     try {
       const saved = Number(localStorage.getItem(COUNTDOWN_STORAGE_KEY));
@@ -600,10 +592,13 @@ export default function TodoListView() {
   }
 
   async function load() {
-    const [objectiveRows, taskRows, nowData] = await Promise.all([api.objectives(), api.tasks(), api.tasksNow()]);
+    const [objectiveRows, taskRows, nowData, moneyStatus] = await Promise.all([
+      api.objectives(), api.tasks(), api.tasksNow(), api.moneyPlanningToday(),
+    ]);
     setObjectives(objectiveRows);
     setTasks(taskRows);
     setActiveTask(nowData.current || null);
+    setMoneyPlanningReady(Boolean(moneyStatus.ready));
     setLoading(false);
   }
 
@@ -616,6 +611,16 @@ export default function TodoListView() {
     return () => window.removeEventListener('tasks-changed', refresh);
   }, []);
   useEffect(() => {
+    const updateMoneyStatus = event => setMoneyPlanningReady(Boolean(event.detail?.ready));
+    window.addEventListener('money-planning-status-changed', updateMoneyStatus);
+    return () => window.removeEventListener('money-planning-status-changed', updateMoneyStatus);
+  }, []);
+  useEffect(() => {
+    const updateBannerStatus = event => setDailyOverloadVisible(Boolean(event.detail?.overloadVisible));
+    window.addEventListener('daily-banner-status-changed', updateBannerStatus);
+    return () => window.removeEventListener('daily-banner-status-changed', updateBannerStatus);
+  }, []);
+  useEffect(() => {
     if (view === 'board') api.deadlines().then(setDeadlineRows).catch(() => setDeadlineRows([]));
   }, [view]);
   useEffect(() => {
@@ -626,19 +631,21 @@ export default function TodoListView() {
     return () => { document.removeEventListener('mousedown', close); window.removeEventListener('blur', close); };
   }, [taskMenu]);
 
-  async function startTodo() {
-    const task = startCandidate;
+  async function startTodo(task) {
     const duration = Number(task?.duration_estimated);
     if (!task || !(duration > 0) || starting) return;
+    if (!moneyPlanningReady) {
+      setError('Planifica al menos 4h de tareas Money maker antes de comenzar un ToDo.');
+      return;
+    }
     setStarting(true);
-    setStartError('');
+    setError('');
     try {
       const updated = await api.taskTimer(task.id, 'start');
       setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row));
       setActiveTask(updated);
-      setStartCandidate(null);
     } catch (_) {
-      setStartError('No se pudo comenzar la tarea. Pausa primero cualquier otra tarea en curso y vuelve a intentarlo.');
+      setError('No se pudo comenzar la tarea. Pausa primero cualquier otra tarea en curso y vuelve a intentarlo.');
     } finally {
       setStarting(false);
     }
@@ -739,8 +746,9 @@ export default function TodoListView() {
 
   return (
     <div>
-      {countdownEnd && <CountdownBanner end={countdownEnd} onStop={stopCountdown} />}
-      {activeTask && <ActiveTaskBanner task={activeTask} onAction={finishActiveTask} saving={starting} />}
+      {moneyPlanningReady && countdownEnd && <CountdownBanner end={countdownEnd} onStop={stopCountdown} />}
+      {moneyPlanningReady && activeTask && <ActiveTaskBanner task={activeTask} compact={dailyOverloadVisible}
+        onAction={finishActiveTask} saving={starting} />}
       <div className="page-header">
         <div className="todo-page-heading">
           <div className="todo-page-title-row">
@@ -763,7 +771,8 @@ export default function TodoListView() {
       ) : view === 'calendar' ? (
         <TodoCalendar tasks={tasks} objectives={objectives} onEdit={setEditing}
           countdownEnd={countdownEnd}
-          onStart={task => { setStartError(''); setStartCandidate(task); }}
+          moneyPlanningReady={moneyPlanningReady}
+          onStart={startTodo}
           onSetDuration={setDurationTask}
           onCreateTask={setCreatingTaskDate}
           onReorder={reorderDay} reordering={reordering}
@@ -807,17 +816,14 @@ export default function TodoListView() {
         {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
           <button type="button" onClick={() => toggleMoneyMaker(taskMenu.task)}>{isMoneyMakerTask(taskMenu.task) ? 'Quitar Money maker' : 'Marcar Money maker 💰'}</button>
           <button type="button" onClick={() => { setDurationTask(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
-          <button type="button" disabled={taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
-            title={Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada'}
-            onClick={() => { setStartError(''); setStartCandidate(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
+          <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
+            title={!moneyPlanningReady ? 'Planifica primero 4h de tareas Money maker' : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
+            onClick={() => { startTodo(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
         </div>}
         </>
       )}
 
       {draggedTask && dragAnchor && <TodoDropCalendar task={draggedTask} anchor={dragAnchor} onDropDate={assignDate} onDropOutside={endTaskDrag} />}
-
-      {startCandidate && <StartConfirmation task={startCandidate} saving={starting} error={startError}
-        onCancel={() => { setStartCandidate(null); setStartError(''); }} onConfirm={startTodo} />}
 
       {durationTask && <DurationDialog task={durationTask} onClose={() => setDurationTask(null)}
         onSaved={updated => { setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row)); setDurationTask(null); }} />}

@@ -6,6 +6,7 @@ import TaskModal from '../components/TaskModal.jsx';
 import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import { canCompleteTask, isTodoTask } from '../utils/taskUtils.js';
 
 const TASK_STATUS_OPTIONS = [
@@ -124,7 +125,7 @@ export default function TasksView() {
           <div style={{ width: 22, flexShrink: 0 }} />
         )}
         <div className="task-info">
-          <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>{task.title}</div>
+          <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}><MoneyMakerIcon task={task} />{task.title}</div>
           <div className="task-meta">
             {isTodoTask(task) && <span className="badge badge-pending">ToDo</span>}
             {task.date && <span className="task-time">{fmtDate(task.date)}</span>}

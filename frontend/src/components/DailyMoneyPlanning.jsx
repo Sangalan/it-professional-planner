@@ -17,10 +17,7 @@ export default function DailyMoneyPlanning({ userId }) {
   const [tasks, setTasks] = useState([]);
   const [todayAgenda, setTodayAgenda] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState(null);
   const [error, setError] = useState('');
-  const [newTitle, setNewTitle] = useState('');
-  const [newHours, setNewHours] = useState('1');
 
   async function load({ quiet = false } = {}) {
     if (!quiet) setLoading(true);
@@ -57,7 +54,6 @@ export default function DailyMoneyPlanning({ userId }) {
     ...objectiveTasks.filter(task => !isFixedTask(task) && task.date === today),
     ...todayAgenda.filter(task => isFixedTask(task) && belongsToMoneyObjective(task)),
   ], [objectiveTasks, todayAgenda, objective?.id, today]);
-  const backlogTasks = objectiveTasks.filter(task => !isFixedTask(task) && task.date !== today && task.status !== 'completed');
   const moneyMinutes = estimatedMinutes(todayMoneyTasks);
   const pendingTodayTodos = tasks.filter(task => isTodoTask(task) && task.date === today && task.status !== 'completed');
   const plannedMinutes = estimatedMinutes(pendingTodayTodos);
@@ -65,105 +61,41 @@ export default function DailyMoneyPlanning({ userId }) {
   const excessMinutes = Math.max(0, plannedMinutes - availableMinutes);
   const missingMinutes = Math.max(0, REQUIRED_MINUTES - moneyMinutes);
 
-  async function updateTask(task, changes) {
-    setSavingId(task.id);
-    setError('');
-    try {
-      await api.updateTask(task.id, changes);
-      await load({ quiet: true });
-    } catch (_) {
-      setError('No se pudo guardar el cambio. Vuelve a intentarlo.');
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  async function createTask(event) {
-    event.preventDefault();
-    const hours = Number(newHours);
-    if (!newTitle.trim() || !(hours > 0)) {
-      setError('Escribe un título y una duración mayor que cero.');
-      return;
-    }
-    setSavingId('new');
-    try {
-      await api.createTask({
-        title: newTitle.trim(), date: today, start_time: null, end_time: null,
-        duration_estimated: Math.round(hours * 60), status: 'pending', priority: 2,
-        objective_id: objective.id, is_fixed: 0, is_money_maker: 1,
-      });
-      setNewTitle('');
-      setNewHours('1');
-      await load({ quiet: true });
-    } catch (_) {
-      setError('No se pudo crear el ToDo. Vuelve a intentarlo.');
-    } finally {
-      setSavingId(null);
-    }
-  }
-
   const gateOpen = !loading && objective && moneyMinutes < REQUIRED_MINUTES;
+  const overloadVisible = !loading && !gateOpen && excessMinutes > 0;
+
+  useEffect(() => {
+    if (loading) return;
+    window.dispatchEvent(new CustomEvent('money-planning-status-changed', {
+      detail: { ready: Boolean(objective) && moneyMinutes >= REQUIRED_MINUTES, moneyMinutes, requiredMinutes: REQUIRED_MINUTES },
+    }));
+  }, [loading, objective?.id, moneyMinutes]);
+
+  useEffect(() => {
+    if (loading) return;
+    const status = { moneyVisible: Boolean(gateOpen), overloadVisible };
+    window.__dailyPlannerBannerStatus = status;
+    window.dispatchEvent(new CustomEvent('daily-banner-status-changed', { detail: status }));
+  }, [loading, gateOpen, overloadVisible]);
 
   return <>
-    {!loading && excessMinutes > 0 && <section className="daily-overload-banner" role="alert">
+    {overloadVisible && <section className="daily-overload-banner" role="alert">
       <strong>Tu lista de hoy no es realista</strong>
       <span>Has planificado {formatDuration(plannedMinutes)}, pero solo quedan {formatDuration(availableMinutes) || '0m'} disponibles.</span>
       <span>Saca al menos {formatDuration(excessMinutes)} de la lista de hoy.</span>
     </section>}
 
-    {gateOpen && <div className="daily-money-backdrop">
-      <section className="daily-money-modal" role="dialog" aria-modal="true" aria-labelledby="daily-money-title"
-        style={{ '--daily-money-color': objective.color || 'var(--accent)' }}>
-        <header>
-          <div>
-            <div className="daily-money-kicker">Planificación obligatoria</div>
-            <h2 id="daily-money-title">{MONEY_OBJECTIVE_DISPLAY_TITLE}</h2>
-            <p>Asigna al menos 4h a hoy antes de continuar.</p>
-          </div>
-          <div className="daily-money-progress" aria-live="polite">
-            <strong>{formatDuration(moneyMinutes) || '0m'} / 4h</strong>
-            <span>Faltan {formatDuration(missingMinutes)}</span>
-          </div>
-        </header>
-
-        {error && <div className="daily-money-error" role="alert">{error}</div>}
-
-        <form className="daily-money-create" onSubmit={createTask}>
-          <label className="daily-money-title-field">Título
-            <input value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="Nuevo ToDo para hoy" aria-label="Título del nuevo ToDo" />
-          </label>
-          <label>Horas <input type="number" min="0.25" step="0.25" value={newHours} onChange={event => setNewHours(event.target.value)} /></label>
-          <button className="btn btn-primary" disabled={savingId === 'new'}>{savingId === 'new' ? 'Creando…' : 'Crear'}</button>
-        </form>
-
-        <div className="daily-money-columns">
-          <div>
-            <h3>Hoy</h3>
-            {!todayMoneyTasks.length && <p className="empty-state">Todavía no has asignado ningún ToDo.</p>}
-            {todayMoneyTasks.map(task => <div className="daily-money-task" key={task.id}>
-              <span>{task.title}</span>
-              <label>Horas <input type="number" min="0.25" step="0.25" defaultValue={(Number(task.duration_estimated) || 0) / 60 || ''}
-                disabled={savingId === task.id}
-                onBlur={event => {
-                  const hours = Number(event.target.value);
-                  if (hours > 0 && Math.round(hours * 60) !== Number(task.duration_estimated)) updateTask(task, { duration_estimated: Math.round(hours * 60) });
-                }} /></label>
-              {isFixedTask(task)
-                ? <small>Tarea fija</small>
-                : <button className="btn btn-ghost btn-sm" disabled={savingId === task.id} onClick={() => updateTask(task, { date: null, start_time: null, end_time: null })}>Sacar de hoy</button>}
-            </div>)}
-          </div>
-          <div>
-            <h3>Tareas Money maker disponibles</h3>
-            {!backlogTasks.length && <p className="empty-state">No hay más tareas Money maker pendientes.</p>}
-            {backlogTasks.map(task => <div className="daily-money-task" key={task.id}>
-              <span>{task.title}</span>
-              <small>{Number(task.duration_estimated) > 0 ? formatDuration(Number(task.duration_estimated)) : 'Sin duración'}</small>
-              <button className="btn btn-ghost btn-sm" disabled={savingId === task.id} onClick={() => updateTask(task, { date: today, start_time: null, end_time: null })}>Añadir a hoy</button>
-            </div>)}
-          </div>
-        </div>
-      </section>
-    </div>}
+    {gateOpen && <section className="daily-money-banner" role="status" aria-live="polite">
+      <div>
+        <div className="daily-money-kicker">Prioridad del día</div>
+        <strong>{MONEY_OBJECTIVE_DISPLAY_TITLE}</strong>
+        <span>Planifica 4h de tareas Money maker para poder comenzar cualquier ToDo.</span>
+        {error && <span>No se pudo actualizar la planificación.</span>}
+      </div>
+      <div className="daily-money-banner-progress">
+        <strong>{formatDuration(moneyMinutes) || '0m'} / 4h</strong>
+        <span>Faltan {formatDuration(missingMinutes)}</span>
+      </div>
+    </section>}
   </>;
 }

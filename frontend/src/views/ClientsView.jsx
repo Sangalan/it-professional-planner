@@ -4,6 +4,7 @@ import { fmtDate, fmtShortDate } from '../utils/dateUtils.js';
 import { statusLabel } from '../utils/categoryUtils.js';
 import CatBadge, { CategoryBadges, CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
@@ -718,7 +719,7 @@ function ClientMilestoneRow({ m, kind = 'milestone', clientId, clientColor, onRe
                 <div style={{ width: 22, flexShrink: 0 }} />
               )}
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
-                <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>{task.title}</div>
+                <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}><MoneyMakerIcon task={task} />{task.title}</div>
                 <div className="task-meta">
                   {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
                   {task.start_time && <span className="task-time" style={{ fontSize: 10 }}>{task.start_time}</span>}

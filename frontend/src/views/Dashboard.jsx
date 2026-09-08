@@ -4,6 +4,7 @@ import { fmtShortDate, fmtDate, formatDuration, differenceInDays, parseISO } fro
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import CatBadge from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import { DetailDialog as EventDetailDialog } from './EventsView.jsx';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -170,7 +171,7 @@ export default function Dashboard() {
                     {task.status === 'completed' ? '✓' : ''}
                   </div>
                   <div className="task-info">
-                    <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>{task.title}</div>
+                    <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}><MoneyMakerIcon task={task} />{task.title}</div>
                     <div className="task-meta">
                       {task.start_time && <span className="task-time">{task.start_time}–{task.end_time}</span>}
                       <CatBadge id={task.category_id} />
@@ -287,7 +288,7 @@ export default function Dashboard() {
                 onClick={() => setEditingTask(task)}
               >
                 <div className="task-info">
-                  <div className="task-title">{task.title}</div>
+                  <div className="task-title"><MoneyMakerIcon task={task} />{task.title}</div>
                   <div className="task-meta">
                     <span className="overdue-tag">{fmtDate(task.date)}</span>
                     <CatBadge id={task.category_id} />

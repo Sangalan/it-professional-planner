@@ -8,6 +8,7 @@ import { CategoryBadges } from '../components/CatBadge.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import { canCompleteTask } from '../utils/taskUtils.js';
 
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00–22:00
@@ -545,7 +546,7 @@ export default function DailyList() {
                       }}>
                         {isNow && <span style={{ marginRight: 3 }}>▶</span>}
                         {task.is_fixed === 1 && <span style={{ marginRight: 3, fontSize: 10 }}>📌</span>}
-                        {task.title}
+                        <MoneyMakerIcon task={task} />{task.title}
                       </div>
 
                       {/* Time + duration */}
@@ -651,7 +652,7 @@ function UntimeRow({ task, color, onToggle, onEdit }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
           <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`}>
-            {task.title}
+            <MoneyMakerIcon task={task} />{task.title}
           </div>
           {task.is_fixed === 1 && <span style={{ fontSize: 10, color: 'var(--text-3)' }}>📌</span>}
         </div>

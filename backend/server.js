@@ -251,6 +251,27 @@ function isTodoTask(task) {
   return !task.is_fixed && (!task.date || (!task.start_time && !task.end_time));
 }
 
+function getDailyMoneyPlanningStatus(userId, date = new Date().toISOString().slice(0, 10)) {
+  const objective = db.prepare('SELECT id, title FROM objectives WHERE user_id = ?').all(userId)
+    .find(row => String(row.title || '').trim().toLocaleLowerCase('en-US').replace(/[!?.]+$/g, '').trim() === "let's make some money");
+  if (!objective) return { ready: false, moneyMinutes: 0, requiredMinutes: 240 };
+
+  const refs = getHiddenTaskRefs(userId, true);
+  const regular = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND user_id = ?').all(date, userId);
+  const fixed = filterFixedInstancesWithClones(
+    expandFixedTasks(date, date, { user_id: userId }),
+    findClonedTasksForRange(date, date, { user_id: userId })
+  );
+  const todayTasks = filterScheduledOriginalsWithClones([
+    ...filterVisibleTaskRows(regular, refs),
+    ...filterVisibleTaskRows(fixed, refs),
+  ]);
+  const moneyMinutes = todayTasks
+    .filter(task => task.objective_id === objective.id || task.is_money_maker)
+    .reduce((sum, task) => sum + Math.max(0, Number(task.duration_estimated) || 0), 0);
+  return { ready: moneyMinutes >= 240, moneyMinutes, requiredMinutes: 240 };
+}
+
 function minutesBetweenTimes(start, end) {
   if (!start || !end) return 0;
   const [startHours, startMinutes] = start.split(':').map(Number);
@@ -548,6 +569,10 @@ app.get('/api/tasks/now', (req, res) => {
   res.json({ current: active || null, upcoming: upcoming[0] || null, time: timeStr, date: today });
 });
 
+app.get('/api/money-planning/today', (req, res) => {
+  res.json(getDailyMoneyPlanningStatus(req.userId));
+});
+
 app.post('/api/tasks/:id/timer', (req, res) => {
   const { action } = req.body;
   if (!['start', 'pause', 'complete'].includes(action)) return res.status(400).json({ error: 'Acción inválida' });
@@ -557,6 +582,9 @@ app.post('/api/tasks/:id/timer', (req, res) => {
   const now = new Date();
   if (action === 'start') {
     if (task.status === 'completed') return res.status(409).json({ error: 'La tarea ya está completada' });
+    if (isTodoTask(task) && !getDailyMoneyPlanningStatus(req.userId).ready) {
+      return res.status(409).json({ error: 'Planifica al menos 4h de tareas Money maker antes de comenzar un ToDo' });
+    }
     const other = db.prepare('SELECT id FROM tasks WHERE user_id = ? AND timer_started_at IS NOT NULL AND id != ?').get(req.userId, task.id);
     if (other) return res.status(409).json({ error: 'Pausa la tarea en curso antes de comenzar otra' });
     db.prepare(`UPDATE tasks SET timer_started_at = COALESCE(timer_started_at, ?),

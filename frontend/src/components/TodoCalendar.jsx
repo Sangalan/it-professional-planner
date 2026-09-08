@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { api } from '../api.js';
 import { useCats } from './CatBadge.jsx';
 import DeadlineModal, { DeadlineChip } from './DeadlineModal.jsx';
+import MoneyMakerIcon from './MoneyMakerIcon.jsx';
 import { isMoneyMakerTask, isTodoTask } from '../utils/taskUtils.js';
 import { availableTodoMinutes, sortDayTodos } from '../utils/todoCapacity.js';
 import { toDateStr, startOfMonth, addMonths, addDays, getDaysInMonthGrid, isSameMonth, fmtMonthYear, fmtDate, formatDuration, formatActualDuration } from '../utils/dateUtils.js';
@@ -113,7 +114,7 @@ function TodoDayPicker({ task, anchor, onSelect, onClose }) {
     : Math.max(8, anchor.top);
   return <aside ref={calendarRef} className="todo-drop-calendar" aria-label="Cambiar día del ToDo" style={{ left, top, width: panelWidth, maxHeight }}>
     <div className="todo-drop-calendar-title">Elige un día para la tarea</div>
-    <div className="todo-drop-calendar-task">{task.title}</div>
+    <div className="todo-drop-calendar-task"><MoneyMakerIcon task={task} />{task.title}</div>
     <div className="todo-drop-months">
       {[currentMonth, addMonths(currentMonth, 1)].map(displayMonth => <section key={toDateStr(displayMonth)}>
         <h3>{fmtMonthYear(displayMonth)}</h3>
@@ -133,7 +134,7 @@ function TodoDayPicker({ task, anchor, onSelect, onClose }) {
   </aside>;
 }
 
-export default function TodoCalendar({ tasks, objectives, countdownEnd, onEdit, onUpdated, onStart, onSetDuration, onCreateTask, onReorder, reordering }) {
+export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPlanningReady, onEdit, onUpdated, onStart, onSetDuration, onCreateTask, onReorder, reordering }) {
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [monthLayout, setMonthLayout] = useState(() => {
     try {
@@ -153,7 +154,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, onEdit, 
   const [changingDayTask, setChangingDayTask] = useState(null);
   const [changeDayAnchor, setChangeDayAnchor] = useState(null);
   const [changingDay, setChangingDay] = useState(false);
-  const [sortMode, setSortMode] = useState('time');
+  const [sortMode, setSortMode] = useState('importance');
   const [dropTarget, setDropTarget] = useState(null);
   const [durationTooltip, setDurationTooltip] = useState(null);
   const draggedTaskRef = useRef(null);
@@ -248,8 +249,10 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, onEdit, 
       }
     }
   }
+  if (uncompletableTaskIds.size === 0) capacityLimitAfterTaskId = null;
   const showCapacityLimitAtTop = free !== null
-    && (free === 0 || (pending.length > 0 && capacityLimitAfterTaskId === null));
+    && uncompletableTaskIds.size > 0
+    && (free === 0 || capacityLimitAfterTaskId === null);
   const firstCompletedTaskId = pending.length > 0 ? detail.find(task => task.status === 'completed')?.id : null;
   const completableTaskCount = free === null ? 0 : pending.length - uncompletableTaskIds.size;
   function showDurationTooltip(event, task) {
@@ -383,7 +386,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, onEdit, 
         onContextMenu={e => { e.preventDefault(); setTaskMenu({ task, x: Math.min(e.clientX, window.innerWidth - 190), y: Math.min(e.clientY, window.innerHeight - 200) }); }}>
         <div className="todo-detail-heading">
           <InlineEstimate task={task} onUpdated={onUpdated} />
-          <button className={`todo-detail-title${task.status === 'completed' ? ' done' : ''}`} onClick={() => onEdit(task)}>{task.title}</button>
+          <button className={`todo-detail-title${task.status === 'completed' ? ' done' : ''}`} onClick={() => onEdit(task)}><MoneyMakerIcon task={task} />{task.title}</button>
         </div>
         {task.description && <p>{task.description}</p>}
         {task.status === 'completed' && <span className="badge badge-completed">Completada{formatActualDuration(task.actual_seconds) && ` · ${formatActualDuration(task.actual_seconds)}`}</span>}
@@ -431,7 +434,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, onEdit, 
                     e.preventDefault();
                     e.stopPropagation();
                     setTaskMenu({ task, x: Math.min(e.clientX, window.innerWidth - 190), y: Math.min(e.clientY, window.innerHeight - 200) });
-                  }}>{task.title}</span>)}
+                  }}><MoneyMakerIcon task={task} />{task.title}</span>)}
               </div>;
             })}
           </div>
@@ -460,8 +463,8 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, onEdit, 
         setTaskMenu(null);
       }}>Cambiar día</button>
       <button type="button" onClick={() => { onSetDuration(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
-      <button type="button" disabled={taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
-        title={Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada'}
+      <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
+        title={!moneyPlanningReady ? 'Planifica primero 4h de tareas Money maker' : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
         onClick={() => { onStart(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
     </div>}
     {changingDayTask && changeDayAnchor && <TodoDayPicker task={changingDayTask} anchor={changeDayAnchor} onSelect={saveChangedDay}

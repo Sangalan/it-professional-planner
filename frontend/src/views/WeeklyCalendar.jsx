@@ -9,6 +9,7 @@ import TaskModal from '../components/TaskModal.jsx';
 import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
 import GapPickerDialog from '../components/GapPickerDialog.jsx';
 import CalendarContentSummary from '../components/CalendarContentSummary.jsx';
+import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 
 // Hours to display in the week view
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00–22:00
@@ -434,7 +435,7 @@ export default function WeeklyCalendar() {
                             cursor: 'pointer',
                           }}>
                             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {t.title}{t.status === 'completed' ? ' ✓' : ''}
+                              <MoneyMakerIcon task={t} />{t.title}{t.status === 'completed' ? ' ✓' : ''}
                             </div>
                             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.92 }}>
                               {getMilestoneLabel(t)}
@@ -573,7 +574,7 @@ export default function WeeklyCalendar() {
                         }}
                       >
                         <div style={{ fontSize: 9, color: 'white', fontWeight: 600, lineHeight: 1.2, overflow: 'hidden' }}>
-                          {minutesToTimeString(effectiveStart)} {task.title}
+                          {minutesToTimeString(effectiveStart)} <MoneyMakerIcon task={task} />{task.title}
                           {task.status === 'completed' && ' ✓'}
                         </div>
                         <div style={{ fontSize: 9, color: 'rgba(255,255,255,.9)', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
