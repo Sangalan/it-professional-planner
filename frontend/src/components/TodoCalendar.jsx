@@ -196,9 +196,14 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
   const byDay = useMemo(() => {
     const map = new Map();
     const postponedObjectiveIds = new Set(objectives.filter(objective => objective.status === 'postponed').map(objective => objective.id));
-    for (const task of tasks.filter(t => isTodoTask(t) && t.date && !postponedObjectiveIds.has(t.objective_id))) {
-      if (!map.has(task.date)) map.set(task.date, []);
-      map.get(task.date).push(task);
+    for (const task of tasks.filter(t => isTodoTask(t) && !postponedObjectiveIds.has(t.objective_id))) {
+      const completionTime = task.completed_at ? new Date(task.completed_at) : null;
+      const completedDate = task.status === 'completed' && completionTime && !Number.isNaN(completionTime.getTime())
+        ? toDateStr(completionTime) : null;
+      const calendarDate = completedDate || task.date;
+      if (!calendarDate) continue;
+      if (!map.has(calendarDate)) map.set(calendarDate, []);
+      map.get(calendarDate).push(task);
     }
     for (const [date, rows] of map) map.set(date, sortDayTodos(rows, objectives, categories, sortMode));
     return map;

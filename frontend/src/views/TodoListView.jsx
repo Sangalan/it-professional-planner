@@ -11,6 +11,41 @@ import { isMoneyMakerTask, isMoneyObjective, isTodoTask } from '../utils/taskUti
 const LAST_ORDER = Number.MAX_SAFE_INTEGER;
 const COUNTDOWN_STORAGE_KEY = 'todo-countdown-end';
 
+function normalizeSearchText(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
+}
+
+function useScrolledPast(ref, enabled) {
+  const [scrolledPast, setScrolledPast] = useState(false);
+
+  useEffect(() => {
+    if (!enabled) {
+      setScrolledPast(false);
+      return undefined;
+    }
+
+    let frame = null;
+    const update = () => {
+      frame = null;
+      setScrolledPast(Boolean(ref.current && ref.current.getBoundingClientRect().bottom <= 0));
+    };
+    const scheduleUpdate = () => {
+      if (frame === null) frame = window.requestAnimationFrame(update);
+    };
+
+    update();
+    window.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
+    return () => {
+      window.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('resize', scheduleUpdate);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [enabled, ref]);
+
+  return scrolledPast;
+}
+
 function byStoredOrder(a, b) {
   const completionOrder = Number(a.status === 'completed') - Number(b.status === 'completed');
   if (completionOrder) return completionOrder;
@@ -310,7 +345,7 @@ function countdownMinutes(task, now) {
   return Math.max(0, Math.ceil((target - now) / 60000));
 }
 
-function ActiveTaskBanner({ task, compact = false, onAction, saving }) {
+function ActiveTaskBanner({ task, compact = false, manageDocumentTitle = true, onAction, saving }) {
   const [now, setNow] = useState(() => new Date());
   const started = task.timer_started_at || (task.date && task.start_time ? `${task.date}T${task.start_time}:00` : null);
   const elapsed = (Number(task.actual_seconds) || 0) + (started ? Math.max(0, (now - new Date(started)) / 1000) : 0);
@@ -327,9 +362,10 @@ function ActiveTaskBanner({ task, compact = false, onAction, saving }) {
   }, [task?.id]);
 
   useEffect(() => {
+    if (compact || !manageDocumentTitle) return undefined;
     document.title = countdown;
     return () => { document.title = 'Plan Maestro'; };
-  }, [countdown]);
+  }, [compact, countdown, manageDocumentTitle]);
 
   return <div className={`todo-active-banner${compact ? ' compact' : ''}`} role="timer" aria-live="polite">
     <div className="todo-active-label">Tarea en curso</div>
@@ -417,12 +453,10 @@ function CountdownDialog({ initialEnd, onClose, onStart }) {
   </div>;
 }
 
-function CountdownBanner({ end, onStop }) {
+function CountdownBanner({ end, compact = false, leftOfActive = false, onStop }) {
   const [now, setNow] = useState(() => Date.now());
   const remainingSeconds = Math.max(0, Math.ceil((end - now) / 1000));
-  const hours = Math.floor(remainingSeconds / 3600);
-  const minutes = Math.floor((remainingSeconds % 3600) / 60);
-  const countdown = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  const countdown = formatDuration(Math.ceil(remainingSeconds / 60)) || '0m';
   const endDate = new Date(end);
   const endsToday = toDateStr(endDate) === toDateStr(new Date(now));
   const endLabel = endDate.toLocaleString('es-ES', endsToday
@@ -438,7 +472,8 @@ function CountdownBanner({ end, onStop }) {
     return () => window.clearInterval(timer);
   }, [remainingSeconds, onStop]);
 
-  return <div className="todo-countdown-banner" role="timer" aria-live="polite">
+  return <div className={`todo-countdown-banner${compact ? ' compact' : ''}${leftOfActive ? ' left-of-active' : ''}`}
+    role="timer" aria-live="polite" title={compact ? `Modo contrarreloj · hasta las ${endLabel}` : undefined}>
     <div className="todo-active-label">Modo contrarreloj · hasta las {endLabel}</div>
     <div className="todo-active-countdown">{countdown}</div>
     <div className="todo-countdown-banner-footer">
@@ -520,16 +555,14 @@ export default function TodoListView() {
   const [reordering, setReordering] = useState(false);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
-  const [activeTask, setActiveTask] = useState(null);
+  const [activeTasks, setActiveTasks] = useState([]);
   const [deadlineRows, setDeadlineRows] = useState([]);
   const [editingDeadline, setEditingDeadline] = useState(null);
   const [taskMenu, setTaskMenu] = useState(null);
   const [durationTask, setDurationTask] = useState(null);
   const [countdownDialogOpen, setCountdownDialogOpen] = useState(false);
   const [moneyPlanningReady, setMoneyPlanningReady] = useState(false);
-  const [dailyOverloadVisible, setDailyOverloadVisible] = useState(
-    () => Boolean(window.__dailyPlannerBannerStatus?.overloadVisible)
-  );
+  const [searchTerm, setSearchTerm] = useState('');
   const [countdownEnd, setCountdownEnd] = useState(() => {
     try {
       const saved = Number(localStorage.getItem(COUNTDOWN_STORAGE_KEY));
@@ -541,8 +574,41 @@ export default function TodoListView() {
   const dragAnchorRef = useRef(null);
   const dragSessionRef = useRef(0);
   const flashTimerRef = useRef(null);
+  const searchInputRef = useRef(null);
+  const countdownBannerRef = useRef(null);
+  const activeTaskBannerRef = useRef(null);
+  const countdownScrolledPast = useScrolledPast(countdownBannerRef, Boolean(moneyPlanningReady && countdownEnd));
+  const activeTaskScrolledPast = useScrolledPast(activeTaskBannerRef, Boolean(moneyPlanningReady && activeTasks.length));
 
   useEffect(() => () => window.clearTimeout(flashTimerRef.current), []);
+
+  const dialogOpen = Boolean(editing || creatingTaskDate || editingDeadline || durationTask || countdownDialogOpen);
+
+  useEffect(() => {
+    const beginSearch = event => {
+      if (dialogOpen || event.defaultPrevented || event.isComposing) return;
+      if (searchTerm && event.key === 'Escape') {
+        event.preventDefault();
+        setSearchTerm('');
+        searchInputRef.current?.blur();
+        return;
+      }
+      if (searchTerm) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
+      const activeElement = document.activeElement;
+      if (activeElement?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      event.preventDefault();
+      setSearchTerm(event.key);
+    };
+    document.addEventListener('keydown', beginSearch);
+    return () => document.removeEventListener('keydown', beginSearch);
+  }, [dialogOpen, searchTerm]);
+
+  useEffect(() => {
+    if (!searchTerm) return undefined;
+    const frame = requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [searchTerm]);
 
   function stopCountdown() {
     setCountdownEnd(null);
@@ -606,7 +672,7 @@ export default function TodoListView() {
     ]);
     setObjectives(objectiveRows);
     setTasks(taskRows);
-    setActiveTask(nowData.current || null);
+    setActiveTasks(nowData.activeTasks || (nowData.current ? [nowData.current] : []));
     setMoneyPlanningReady(Boolean(moneyStatus.ready));
     setLoading(false);
   }
@@ -623,11 +689,6 @@ export default function TodoListView() {
     const updateMoneyStatus = event => setMoneyPlanningReady(Boolean(event.detail?.ready));
     window.addEventListener('money-planning-status-changed', updateMoneyStatus);
     return () => window.removeEventListener('money-planning-status-changed', updateMoneyStatus);
-  }, []);
-  useEffect(() => {
-    const updateBannerStatus = event => setDailyOverloadVisible(Boolean(event.detail?.overloadVisible));
-    window.addEventListener('daily-banner-status-changed', updateBannerStatus);
-    return () => window.removeEventListener('daily-banner-status-changed', updateBannerStatus);
   }, []);
   useEffect(() => {
     if (view === 'board') api.deadlines().then(setDeadlineRows).catch(() => setDeadlineRows([]));
@@ -652,36 +713,44 @@ export default function TodoListView() {
     try {
       const updated = await api.taskTimer(task.id, 'start');
       setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row));
-      setActiveTask(updated);
+      setActiveTasks(rows => rows.some(row => row.id === updated.id)
+        ? rows.map(row => row.id === updated.id ? updated : row)
+        : [...rows, updated]);
     } catch (_) {
-      setError('No se pudo comenzar la tarea. Pausa primero cualquier otra tarea en curso y vuelve a intentarlo.');
+      setError('No se pudo comenzar la tarea. Vuelve a intentarlo.');
     } finally {
       setStarting(false);
     }
   }
 
-  async function finishActiveTask(action) {
-    if (!activeTask || starting) return;
+  async function finishActiveTask(task, action) {
+    if (!task || starting) return;
     setStarting(true);
     setError('');
     try {
-      const updated = isTodoTask(activeTask)
-        ? await api.taskTimer(activeTask.id, action)
-        : await api.completeScheduledTask(activeTask);
+      const updated = isTodoTask(task)
+        ? await api.taskTimer(task.id, action)
+        : await api.completeScheduledTask(task);
       setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row));
-      setActiveTask(null);
+      setActiveTasks(rows => rows.filter(row => row.id !== task.id));
     } catch (_) {
       setError('No se pudo guardar el tiempo trabajado. Vuelve a intentarlo.');
     } finally { setStarting(false); }
   }
 
+  const filteredTasks = useMemo(() => {
+    const query = normalizeSearchText(searchTerm.trim());
+    if (!query) return tasks;
+    return tasks.filter(task => normalizeSearchText(`${task.title || ''} ${task.description || ''}`).includes(query));
+  }, [searchTerm, tasks]);
+
   const columns = useMemo(() => {
-    const todoObjectiveIds = new Set(tasks.filter(task => isTodoTask(task) && task.objective_id).map(task => task.objective_id));
-    const hasMoneyMakerTodos = tasks.some(task => isTodoTask(task) && isMoneyMakerTask(task));
+    const todoObjectiveIds = new Set(filteredTasks.filter(task => isTodoTask(task) && task.objective_id).map(task => task.objective_id));
+    const hasMoneyMakerTodos = filteredTasks.some(task => isTodoTask(task) && isMoneyMakerTask(task));
     return objectives
       .filter(objective => objective.status !== 'postponed' && (todoObjectiveIds.has(objective.id) || (hasMoneyMakerTodos && isMoneyObjective(objective))))
       .sort(byStoredOrder);
-  }, [objectives, tasks]);
+  }, [objectives, filteredTasks]);
 
   async function toggleMoneyMaker(task) {
     setTaskMenu(null);
@@ -755,9 +824,25 @@ export default function TodoListView() {
 
   return (
     <div>
-      {moneyPlanningReady && countdownEnd && <CountdownBanner end={countdownEnd} onStop={stopCountdown} />}
-      {moneyPlanningReady && activeTask && <ActiveTaskBanner task={activeTask} compact={dailyOverloadVisible}
-        onAction={finishActiveTask} saving={starting} />}
+      {searchTerm && <div className="todo-type-search" role="search">
+        <span aria-hidden="true">⌕</span>
+        <input ref={searchInputRef} type="text" value={searchTerm} onChange={event => setSearchTerm(event.target.value)}
+          aria-label="Filtrar tareas" placeholder="Filtrar tareas…" />
+        <button type="button" aria-label="Cerrar búsqueda" title="Cerrar búsqueda (Esc)" onClick={() => setSearchTerm('')}>×</button>
+      </div>}
+      {moneyPlanningReady && countdownEnd && <div ref={countdownBannerRef}>
+        <CountdownBanner end={countdownEnd} onStop={stopCountdown} />
+      </div>}
+      {moneyPlanningReady && activeTasks.length > 0 && <div ref={activeTaskBannerRef} className="todo-active-banner-stack">
+        {activeTasks.map((task, index) => <ActiveTaskBanner key={task.id} task={task} manageDocumentTitle={index === 0}
+          onAction={action => finishActiveTask(task, action)} saving={starting} />)}
+      </div>}
+      {moneyPlanningReady && countdownEnd && countdownScrolledPast && <CountdownBanner end={countdownEnd}
+        compact leftOfActive={activeTaskScrolledPast} onStop={stopCountdown} />}
+      {moneyPlanningReady && activeTasks.length > 0 && activeTaskScrolledPast && <div className="todo-active-mini-stack">
+        {activeTasks.map(task => <ActiveTaskBanner key={task.id} task={task} compact
+          onAction={action => finishActiveTask(task, action)} saving={starting} />)}
+      </div>}
       <div className="page-header">
         <div className="todo-page-heading">
           <div className="todo-page-title-row">
@@ -778,7 +863,7 @@ export default function TodoListView() {
       {loading ? (
         <div className="empty-state card">Cargando…</div>
       ) : view === 'calendar' ? (
-        <TodoCalendar tasks={tasks} objectives={objectives} onEdit={setEditing}
+        <TodoCalendar tasks={filteredTasks} objectives={objectives} onEdit={setEditing}
           countdownEnd={countdownEnd}
           moneyPlanningReady={moneyPlanningReady}
           onStart={startTodo}
@@ -787,7 +872,7 @@ export default function TodoListView() {
           onReorder={reorderDay} reordering={reordering}
           onUpdated={updated => setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row))} />
       ) : columns.length === 0 ? (
-        <div className="empty-state card" style={{ padding: 40 }}>No hay objetivos con tareas ToDo</div>
+        <div className="empty-state card" style={{ padding: 40 }}>{searchTerm ? 'No hay tareas que coincidan con la búsqueda' : 'No hay objetivos con tareas ToDo'}</div>
       ) : (
         <>
         {deadlineRows.length > 0 && <div className="card todo-deadline-overview">
@@ -799,7 +884,7 @@ export default function TodoListView() {
             <TodoColumn
               key={objective.id}
               objective={objective}
-              tasks={tasks.filter(task => isTodoTask(task) && (task.objective_id === objective.id || (isMoneyObjective(objective) && isMoneyMakerTask(task)))).sort(byStoredOrder)}
+              tasks={filteredTasks.filter(task => isTodoTask(task) && (task.objective_id === objective.id || (isMoneyObjective(objective) && isMoneyMakerTask(task)))).sort(byStoredOrder)}
               onReload={load}
               onEdit={setEditing}
               onTaskContextMenu={(task, event) => setTaskMenu({ task, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 60) })}

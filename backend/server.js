@@ -561,12 +561,16 @@ app.get('/api/tasks/now', (req, res) => {
     WHERE user_id = ? AND is_fixed = 0 AND status != 'completed'
       AND (timer_started_at IS NOT NULL OR (status = 'in_progress' AND date = ?))
     ORDER BY CASE WHEN timer_started_at IS NOT NULL THEN 0 ELSE 1 END,
-      COALESCE(timer_started_at, date || 'T' || start_time) DESC
-    LIMIT 1`).get(req.userId, today);
-  const active = tracked || tasks.find(t => t.status !== 'completed' && t.start_time <= timeStr && t.end_time > timeStr);
+      COALESCE(timer_started_at, date || 'T' || start_time) DESC`).all(req.userId, today);
+  const scheduledActive = tasks.filter(t => t.status !== 'completed' && t.start_time <= timeStr && t.end_time > timeStr);
+  const activeTasks = [...tracked];
+  scheduledActive.forEach(task => {
+    if (!activeTasks.some(activeTask => activeTask.id === task.id)) activeTasks.push(task);
+  });
+  const active = activeTasks[0] || null;
   const upcoming = tasks.filter(t => t.start_time > timeStr).sort((a, b) => a.start_time.localeCompare(b.start_time));
 
-  res.json({ current: active || null, upcoming: upcoming[0] || null, time: timeStr, date: today });
+  res.json({ current: active, activeTasks, upcoming: upcoming[0] || null, time: timeStr, date: today });
 });
 
 app.get('/api/money-planning/today', (req, res) => {
@@ -585,8 +589,6 @@ app.post('/api/tasks/:id/timer', (req, res) => {
     if (isTodoTask(task) && !getDailyMoneyPlanningStatus(req.userId).ready) {
       return res.status(409).json({ error: 'Planifica al menos 4h de tareas Money maker antes de comenzar un ToDo' });
     }
-    const other = db.prepare('SELECT id FROM tasks WHERE user_id = ? AND timer_started_at IS NOT NULL AND id != ?').get(req.userId, task.id);
-    if (other) return res.status(409).json({ error: 'Pausa la tarea en curso antes de comenzar otra' });
     db.prepare(`UPDATE tasks SET timer_started_at = COALESCE(timer_started_at, ?),
       original_estimate_minutes = COALESCE(original_estimate_minutes, duration_estimated), status = 'in_progress'
       WHERE id = ? AND user_id = ?`).run(now.toISOString(), task.id, req.userId);
@@ -818,6 +820,15 @@ app.put('/api/tasks/:id', (req, res) => {
   }
   if ('end_time' in req.body && (date || (date === undefined && task.date))) {
     db.prepare('UPDATE tasks SET end_time = ? WHERE id = ? AND user_id = ?').run(end_time || null, req.params.id, req.userId);
+  }
+  if ('status' in req.body) {
+    if (nextStatus === 'completed') {
+      db.prepare('UPDATE tasks SET completed_at = COALESCE(completed_at, ?) WHERE id = ? AND user_id = ?')
+        .run(new Date().toISOString(), req.params.id, req.userId);
+    } else if (task.status === 'completed') {
+      db.prepare('UPDATE tasks SET completed_at = NULL WHERE id = ? AND user_id = ?')
+        .run(req.params.id, req.userId);
+    }
   }
 
   // Recompute milestone + objective (both old and new ids in case they changed)

@@ -780,6 +780,26 @@ input[type="range"] { cursor: pointer; }
 }
 .todo-page-title-row { display: flex; align-items: center; gap: 12px; }
 .todo-view-switch { display: flex; gap: 8px; }
+.todo-type-search {
+  position: fixed;
+  z-index: 1100;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.todo-type-search > span { color: var(--text-3); font-size: 20px; }
+.todo-type-search input[type="text"] { flex: 1; min-width: 0; border: 0; padding: 3px 0; font-size: 16px; box-shadow: none; }
+.todo-type-search button { border: 0; background: transparent; color: var(--text-3); cursor: pointer; font-size: 23px; line-height: 1; }
+.todo-type-search button:hover { color: var(--text); }
 .todo-countdown-mode-button { margin-left: 4px; padding: 10px 18px; border-color: #ef4444; background: #fff1f2; color: #b91c1c; font-size: 14px; font-weight: 700; box-shadow: 0 2px 7px rgba(220, 38, 38, .12); }
 .todo-countdown-mode-button:hover, .todo-countdown-mode-button.active { border-color: var(--danger); background: var(--danger); color: white; }
 
@@ -950,14 +970,25 @@ input[type="range"] { cursor: pointer; }
   .todo-month-toolbar h2 { min-width: calc(100% - 96px); }
 }
 
-.todo-active-banner { position: sticky; top: 0; z-index: 220; min-height: 210px; margin-bottom: 22px; padding: 24px; border-radius: 14px; background: linear-gradient(135deg, var(--accent), #1e3a8a); color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; box-shadow: var(--shadow-md); }
+.todo-active-banner { min-height: 210px; margin-bottom: 22px; padding: 24px; border-radius: 14px; background: linear-gradient(135deg, var(--accent), #1e3a8a); color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; box-shadow: var(--shadow-md); }
+.todo-active-banner-stack { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); margin-bottom: 22px; border-radius: 14px; overflow: hidden; box-shadow: var(--shadow-md); }
+.todo-active-banner-stack .todo-active-banner { min-width: 0; margin: 0; border-radius: 0; box-shadow: none; }
+.todo-active-banner-stack .todo-active-banner + .todo-active-banner { border-left: 1px solid rgba(255,255,255,.22); }
 .todo-active-banner.compact { position: fixed; top: 12px; right: 72px; z-index: 320; width: min(390px, calc(100vw - 104px)); min-height: 0; margin: 0; padding: 10px 12px; flex-direction: row; justify-content: flex-end; gap: 10px; border-radius: 10px; text-align: left; }
 .todo-active-banner.compact .todo-active-label { display: none; }
 .todo-active-banner.compact .todo-active-countdown { flex: 0 0 auto; margin: 0; font-size: 20px; white-space: nowrap; }
 .todo-active-banner.compact .todo-active-title-row { min-width: 0; justify-content: flex-end; gap: 7px; }
 .todo-active-banner.compact .todo-active-title { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .todo-active-banner.compact .todo-active-action { width: 27px; height: 27px; font-size: 13px; }
+.todo-active-mini-stack { position: fixed; top: 12px; right: 72px; z-index: 320; width: min(390px, calc(100vw - 104px)); max-height: calc(100vh - 24px); display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.todo-active-mini-stack .todo-active-banner.compact { position: static; width: 100%; flex: 0 0 auto; }
 .todo-countdown-banner { min-height: 190px; margin-bottom: 22px; padding: 24px; border-radius: 14px; background: linear-gradient(135deg, #ef4444, #991b1b); color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; box-shadow: var(--shadow-md); }
+.todo-countdown-banner.compact { position: fixed; top: 12px; right: 72px; z-index: 319; width: 250px; min-height: 0; margin: 0; padding: 10px 12px; flex-direction: row; justify-content: flex-end; gap: 9px; border-radius: 10px; }
+.todo-countdown-banner.compact.left-of-active { right: 474px; }
+.todo-countdown-banner.compact .todo-active-label, .todo-countdown-banner.compact .todo-countdown-banner-footer > span { display: none; }
+.todo-countdown-banner.compact .todo-active-countdown { margin: 0; font-size: 20px; white-space: nowrap; }
+.todo-countdown-banner.compact .todo-countdown-banner-footer { font-size: 0; }
+.todo-countdown-banner.compact .todo-active-action { width: 27px; height: 27px; font-size: 13px; }
 .todo-countdown-banner-footer { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; }
 .todo-active-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; opacity: .78; }
 .todo-active-countdown { margin: 6px 0; font-size: clamp(48px, 7vw, 76px); line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -967,6 +998,7 @@ input[type="range"] { cursor: pointer; }
 .todo-active-action { width: 32px; height: 32px; padding: 0; border: 1px solid rgba(255,255,255,.55); border-radius: 7px; background: rgba(255,255,255,.14); color: white; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; }
 .todo-active-action:hover { background: rgba(255,255,255,.25); }
 .todo-active-action:disabled { cursor: wait; opacity: .6; }
+@media (max-width: 760px) { .todo-countdown-banner.compact.left-of-active { top: 66px; right: 72px; } }
 .todo-confirm-backdrop { position: fixed; inset: 0; z-index: 500; padding: 20px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.42); }
 .todo-confirm-dialog { width: min(430px, 100%); padding: 24px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-md); }
 .todo-confirm-dialog h2 { margin: 0 0 12px; font-size: 18px; }
