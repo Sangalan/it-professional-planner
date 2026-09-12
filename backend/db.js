@@ -92,6 +92,7 @@ function initSchema() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       color TEXT NOT NULL,
+      text_color TEXT,
       user_id TEXT
     );
 
@@ -108,6 +109,9 @@ function initSchema() {
       status TEXT DEFAULT 'not_started',
       priority INTEGER DEFAULT 2,
       notes TEXT,
+      color TEXT,
+      type TEXT DEFAULT 'objective',
+      category_ids TEXT,
       user_id TEXT,
       todo_order INTEGER
     );
@@ -121,6 +125,7 @@ function initSchema() {
       percentage_completed REAL DEFAULT 0,
       status TEXT DEFAULT 'not_started',
       weight INTEGER DEFAULT 10,
+      billed_amount REAL DEFAULT 0,
       user_id TEXT
     );
 
@@ -176,6 +181,13 @@ function initSchema() {
       estimated_cost REAL DEFAULT 0,
       category_id TEXT,
       notes TEXT,
+      status TEXT DEFAULT 'not_started',
+      objective_id TEXT,
+      category_ids TEXT,
+      percentage_completed REAL DEFAULT 0,
+      registered INTEGER DEFAULT 0,
+      hotel_booked INTEGER DEFAULT 0,
+      flight_booked INTEGER DEFAULT 0,
       user_id TEXT
     );
 
@@ -188,6 +200,8 @@ function initSchema() {
       status TEXT DEFAULT 'pending',
       notes TEXT,
       publication_text TEXT,
+      objective_id TEXT,
+      category_ids TEXT,
       user_id TEXT
     );
 
@@ -198,6 +212,9 @@ function initSchema() {
       category_id TEXT,
       status TEXT DEFAULT 'not_started',
       notes TEXT,
+      objective_id TEXT,
+      category_ids TEXT,
+      percentage_completed REAL DEFAULT 0,
       user_id TEXT
     );
 
@@ -209,6 +226,9 @@ function initSchema() {
       type TEXT DEFAULT 'personal',
       status TEXT DEFAULT 'not_started',
       notes TEXT,
+      objective_id TEXT,
+      category_ids TEXT,
+      url TEXT,
       user_id TEXT
     );
 
@@ -221,6 +241,8 @@ function initSchema() {
       objective_id TEXT,
       status TEXT DEFAULT 'not_started',
       notes TEXT,
+      category_ids TEXT,
+      percentage_completed REAL DEFAULT 0,
       user_id TEXT
     );
 
@@ -231,6 +253,7 @@ function initSchema() {
       mime_type TEXT,
       size INTEGER,
       created_at TEXT DEFAULT (datetime('now')),
+      category_ids TEXT,
       user_id TEXT
     );
 

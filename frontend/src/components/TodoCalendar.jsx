@@ -134,7 +134,7 @@ function TodoDayPicker({ task, anchor, onSelect, onClose }) {
   </aside>;
 }
 
-export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPlanningReady, onEdit, onUpdated, onStart, onSetDuration, onCreateTask, onReorder, reordering }) {
+export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPlanningReady, onEdit, onUpdated, onStart, onToggleComplete, onSetDuration, onCreateTask, onReorder, reordering }) {
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [monthLayout, setMonthLayout] = useState(() => {
     try {
@@ -459,6 +459,9 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
       <button type="button" onClick={() => { setDeadlineModal({ date: dayMenu.date }); setDayMenu(null); }}>Crear fecha límite</button>
     </div>}
     {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
+      <button type="button" onClick={() => { onToggleComplete(taskMenu.task); setTaskMenu(null); }}>
+        {taskMenu.task.status === 'completed' ? 'Marcar como pendiente' : 'Completar'}
+      </button>
       <button type="button" onClick={() => toggleMoneyMaker(taskMenu.task)}>{isMoneyMakerTask(taskMenu.task) ? 'Quitar Money maker' : 'Marcar Money maker 💰'}</button>
       <button type="button" disabled={taskMenu.task.date === toDateStr(now)} onClick={() => {
         const task = taskMenu.task;

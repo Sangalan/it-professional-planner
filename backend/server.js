@@ -148,7 +148,7 @@ app.get('/api/auth/me', (req, res) => {
   res.json({ user: { email, name, picture, planner_user_id: req.userId } });
 });
 
-app.use((req, _res, next) => {
+app.use('/api', (req, _res, next) => {
   // The authenticated Google account is the only authority for data ownership.
   // Ignore the former browser-selected x-user-id/query parameter.
   req.userId = req.plannerUser.id;
@@ -455,6 +455,15 @@ function normalizeTaskStatus(status, isFixed, fallback = 'pending') {
   if (status == null) return null;
   if (isFixed && status === 'completed') return fallback;
   return status;
+}
+
+function completionTimestampForDate(completedAt, date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return completedAt;
+  const completionTime = completedAt ? new Date(completedAt) : new Date();
+  if (Number.isNaN(completionTime.getTime())) return completedAt;
+  const [year, month, day] = date.split('-').map(Number);
+  completionTime.setFullYear(year, month - 1, day);
+  return completionTime.toISOString();
 }
 
 function buildClonedTaskKey(task) {
@@ -976,6 +985,10 @@ app.put('/api/tasks/:id', (req, res) => {
   if ('date' in req.body) {
     const nextDate = nextIsFixed ? (date || fixed_start_date || task.fixed_start_date) : (date || null);
     db.prepare('UPDATE tasks SET date = ? WHERE id = ? AND user_id = ?').run(nextDate, req.params.id, req.userId);
+    if (nextDate && task.status === 'completed') {
+      db.prepare('UPDATE tasks SET completed_at = ? WHERE id = ? AND user_id = ?')
+        .run(completionTimestampForDate(task.completed_at, nextDate), req.params.id, req.userId);
+    }
     if (!nextDate) {
       db.prepare('UPDATE tasks SET start_time = NULL, end_time = NULL, duration_estimated = NULL WHERE id = ? AND user_id = ?')
         .run(req.params.id, req.userId);
@@ -1815,158 +1828,6 @@ app.post(['/api/restore', '/api/import'], (req, res) => {
     res.json({ ok: true, strategy, ...result });
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message });
-  }
-});
-
-app.get('/api/export', (req, res) => {
-  const scope = req.query.scope === 'selected' ? 'selected' : 'all';
-  const selectedUserIds = []
-    .concat(req.query.user_ids || [])
-    .flatMap(v => String(v).split(','))
-    .map(v => v.trim())
-    .filter(Boolean);
-  const selectedUsers = scope === 'selected'
-    ? (selectedUserIds.length
-      ? db.prepare(`SELECT * FROM users WHERE id IN (${selectedUserIds.map(() => '?').join(',')})`).all(...selectedUserIds)
-      : [])
-    : db.prepare('SELECT * FROM users ORDER BY name COLLATE NOCASE ASC').all();
-  const exportUserIds = selectedUsers.map(u => u.id);
-  const hasUserFilter = exportUserIds.length > 0;
-  const inClause = hasUserFilter ? ` WHERE user_id IN (${exportUserIds.map(() => '?').join(',')})` : ' WHERE 1=0';
-  const selectByUsers = (table) => db.prepare(`SELECT * FROM ${table}${inClause}`).all(...exportUserIds);
-
-  const data = {
-    exported_at: new Date().toISOString(),
-    version: 1,
-    users:          selectedUsers,
-    categories:     selectByUsers('categories'),
-    objectives:     selectByUsers('objectives'),
-    milestones:     selectByUsers('milestones'),
-    tasks:          selectByUsers('tasks'),
-    deadlines:      selectByUsers('deadlines'),
-    events:         selectByUsers('events'),
-    publications:   selectByUsers('publications'),
-    certifications: selectByUsers('certifications'),
-    repos:          selectByUsers('repos'),
-    prs:            selectByUsers('prs'),
-    work_blocks:    selectByUsers('work_blocks'),
-    reading_list:   selectByUsers('reading_list'),
-    documents:      selectByUsers('documents'),
-  };
-  const filename = `planner-export-${new Date().toISOString().slice(0, 10)}.json`;
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.setHeader('Content-Type', 'application/json');
-  res.send(JSON.stringify(data, null, 2));
-});
-
-app.post('/api/import', (req, res) => {
-  const { strategy = 'skip', ...data } = req.body;
-  if (!data || !data.categories || !data.tasks) {
-    return res.status(400).json({ error: 'JSON inválido. Debe contener al menos categories y tasks.' });
-  }
-
-  // Returns the ID to use, or null if the item should be skipped.
-  function resolveId(table, originalId) {
-    const exists = db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(originalId);
-    if (!exists) return originalId;
-    if (strategy === 'skip') return null;
-    // rename: find next available suffix
-    let n = 2, candidate;
-    do { candidate = `${originalId}-${n++}`; }
-    while (db.prepare(`SELECT id FROM ${table} WHERE id = ?`).get(candidate));
-    return candidate;
-  }
-
-  const stats = { inserted: {}, skipped: {} };
-  function track(table, inserted) {
-    const key = inserted ? 'inserted' : 'skipped';
-    stats[key][table] = (stats[key][table] || 0) + 1;
-  }
-
-  const doImport = db.transaction(() => {
-    for (const c of (data.categories || [])) {
-      const id = resolveId('categories', c.id);
-      if (!id) { track('categories', false); continue; }
-      db.prepare('INSERT INTO categories (id,name,color) VALUES (?,?,?)').run(id, c.name, c.color);
-      track('categories', true);
-    }
-    for (const o of (data.objectives || [])) {
-      const id = resolveId('objectives', o.id);
-      if (!id) { track('objectives', false); continue; }
-      db.prepare('INSERT INTO objectives (id,title,description,category_id,start_date,end_date,target_value,progress_mode,percentage_completed,status,priority,notes,color) VALUES (@id,@title,@description,@category_id,@start_date,@end_date,@target_value,@progress_mode,@percentage_completed,@status,@priority,@notes,@color)')
-        .run({ color: null, ...o, id });
-      track('objectives', true);
-    }
-    for (const m of (data.milestones || [])) {
-      const id = resolveId('milestones', m.id);
-      if (!id) { track('milestones', false); continue; }
-      db.prepare('INSERT INTO milestones (id,objective_id,title,description,target_date,percentage_completed,status,weight) VALUES (@id,@objective_id,@title,@description,@target_date,@percentage_completed,@status,@weight)')
-        .run({ ...m, id });
-      track('milestones', true);
-    }
-    for (const t of (data.tasks || [])) {
-      const id = resolveId('tasks', t.id);
-      if (!id) { track('tasks', false); continue; }
-      db.prepare('INSERT INTO tasks (id,title,description,category_id,category_ids,subcategory,date,start_time,end_time,duration_estimated,status,priority,objective_id,milestone_id,is_fixed,is_money_maker,notes,label,is_cloned,cloned_from,percentage_completed) VALUES (@id,@title,@description,@category_id,@category_ids,@subcategory,@date,@start_time,@end_time,@duration_estimated,@status,@priority,@objective_id,@milestone_id,@is_fixed,@is_money_maker,@notes,@label,@is_cloned,@cloned_from,@percentage_completed)')
-        .run({ subcategory: '', category_ids: null, is_money_maker: 0, ...t, id });
-      track('tasks', true);
-    }
-    for (const deadline of (data.deadlines || [])) {
-      const id = resolveId('deadlines', deadline.id);
-      if (!id) { track('deadlines', false); continue; }
-      db.prepare('INSERT INTO deadlines (id,title,date,color,user_id) VALUES (@id,@title,@date,@color,@user_id)')
-        .run({ color: '#dc2626', user_id: req.userId, ...deadline, id });
-      track('deadlines', true);
-    }
-    for (const e of (data.events || [])) {
-      const id = resolveId('events', e.id);
-      if (!id) { track('events', false); continue; }
-      db.prepare('INSERT INTO events (id,title,start_date,end_date,location,format,estimated_cost,category_id,notes) VALUES (@id,@title,@start_date,@end_date,@location,@format,@estimated_cost,@category_id,@notes)')
-        .run({ ...e, id });
-      track('events', true);
-    }
-    for (const p of (data.publications || [])) {
-      const id = resolveId('publications', p.id);
-      if (!id) { track('publications', false); continue; }
-      db.prepare('INSERT INTO publications (id,date,type,title,category_id,status,notes,publication_text,objective_id,category_ids) VALUES (@id,@date,@type,@title,@category_id,@status,@notes,@publication_text,@objective_id,@category_ids)')
-        .run({ ...p, id });
-      track('publications', true);
-    }
-    for (const c of (data.certifications || [])) {
-      const id = resolveId('certifications', c.id);
-      if (!id) { track('certifications', false); continue; }
-      db.prepare('INSERT INTO certifications (id,title,target_date,category_id,status,notes) VALUES (@id,@title,@target_date,@category_id,@status,@notes)')
-        .run({ ...c, id });
-      track('certifications', true);
-    }
-    for (const r of (data.repos || [])) {
-      const id = resolveId('repos', r.id);
-      if (!id) { track('repos', false); continue; }
-      db.prepare('INSERT INTO repos (id,title,target_date,category_id,type,status,notes) VALUES (@id,@title,@target_date,@category_id,@type,@status,@notes)')
-        .run({ ...r, type: r.type || 'personal', id });
-      track('repos', true);
-    }
-    for (const p of (data.prs || [])) {
-      const id = resolveId('prs', p.id);
-      if (!id) { track('prs', false); continue; }
-      db.prepare('INSERT INTO prs (id,title,start_date,end_date,category_id,objective_id,status,notes) VALUES (@id,@title,@start_date,@end_date,@category_id,@objective_id,@status,@notes)')
-        .run({ ...p, id });
-      track('prs', true);
-    }
-    for (const b of (data.work_blocks || [])) {
-      const id = resolveId('work_blocks', b.id);
-      if (!id) { track('work_blocks', false); continue; }
-      db.prepare('INSERT INTO work_blocks (id,name,type,start_time,end_time,category_id,weekday) VALUES (@id,@name,@type,@start_time,@end_time,@category_id,@weekday)')
-        .run({ ...b, id });
-      track('work_blocks', true);
-    }
-  });
-
-  try {
-    doImport();
-    res.json({ ok: true, strategy, stats });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
   }
 });
 

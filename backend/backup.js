@@ -48,6 +48,15 @@ function insertRow(db, table, row) {
   return true;
 }
 
+function updateRow(db, table, row) {
+  const allowed = new Set(getColumns(db, table));
+  const columns = Object.keys(row || {}).filter(column => column !== 'id' && allowed.has(column));
+  if (!row?.id || !columns.length) return false;
+  db.prepare(`UPDATE ${table} SET ${columns.map(column => `${column} = ?`).join(',')} WHERE id = ?`)
+    .run(...columns.map(column => row[column] ?? null), row.id);
+  return true;
+}
+
 function createBackup(db, uploadsDir, scope, requestedUserIds) {
   const selectedUsers = scope === 'selected'
     ? (requestedUserIds.length
@@ -82,7 +91,7 @@ function importBackup(db, uploadsDir, data, strategy, options = {}) {
     error.status = 400;
     throw error;
   }
-  if (!['skip', 'rename', 'restore'].includes(strategy)) {
+  if (!['skip', 'rename', 'overwrite', 'restore'].includes(strategy)) {
     const error = new Error('Estrategia de importación no válida.');
     error.status = 400;
     throw error;
@@ -95,9 +104,8 @@ function importBackup(db, uploadsDir, data, strategy, options = {}) {
     throw error;
   }
 
-  const stats = { inserted: {}, skipped: {} };
-  const track = (table, inserted) => {
-    const key = inserted ? 'inserted' : 'skipped';
+  const stats = { inserted: {}, updated: {}, skipped: {} };
+  const track = (table, key) => {
     stats[key][table] = (stats[key][table] || 0) + 1;
   };
   const maps = Object.fromEntries(TABLES.map(table => [table, new Map()]));
@@ -105,6 +113,17 @@ function importBackup(db, uploadsDir, data, strategy, options = {}) {
 
   function chooseId(table, originalId) {
     if (strategy === 'restore') return originalId;
+    if (strategy === 'overwrite') {
+      const existing = db.prepare(`SELECT ${table === 'users' ? 'id' : 'user_id'} AS owner FROM ${table} WHERE id = ?`).get(originalId);
+      if (!existing || !targetUserId || existing.owner === targetUserId) return originalId;
+      let suffix = 2;
+      let candidate = `${originalId}-${suffix}`;
+      while (db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(candidate) || reservedIds[table].has(candidate)) {
+        candidate = `${originalId}-${++suffix}`;
+      }
+      reservedIds[table].add(candidate);
+      return candidate;
+    }
     if (!db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(originalId) && !reservedIds[table].has(originalId)) {
       reservedIds[table].add(originalId);
       return originalId;
@@ -172,7 +191,7 @@ function importBackup(db, uploadsDir, data, strategy, options = {}) {
       if (targetUserId && table === 'users') continue;
       for (const source of (data[table] || [])) {
         const id = maps[table].get(source?.id);
-        if (!id) { track(table, false); continue; }
+        if (!id) { track(table, 'skipped'); continue; }
         const row = { ...source, id };
         if (targetUserId && table !== 'users') row.user_id = targetUserId;
         for (const [field, target] of Object.entries(RELATIONS[table] || {})) {
@@ -190,12 +209,20 @@ function importBackup(db, uploadsDir, data, strategy, options = {}) {
         if (table === 'documents') {
           const file = fileByDocument.get(source.id);
           if (file?.data_base64) {
-            row.filename = uniqueFilename(file.filename || row.filename);
+            const existingDocument = strategy === 'overwrite'
+              ? db.prepare('SELECT filename FROM documents WHERE id = ? AND user_id = ?').get(id, targetUserId)
+              : null;
+            row.filename = existingDocument?.filename || uniqueFilename(file.filename || row.filename);
             if (!row.filename) throw new Error(`Nombre de archivo inválido para el documento ${source.id}.`);
             filesToWrite.push({ filename: row.filename, data: Buffer.from(file.data_base64, 'base64') });
           }
         }
-        track(table, insertRow(db, table, row));
+        const exists = db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(id);
+        if (strategy === 'overwrite' && exists) {
+          track(table, updateRow(db, table, row) ? 'updated' : 'skipped');
+        } else {
+          track(table, insertRow(db, table, row) ? 'inserted' : 'skipped');
+        }
       }
     }
   });

@@ -763,16 +763,42 @@ export default function TodoListView() {
     }
   }
 
+  async function toggleTodoComplete(task) {
+    if (!task || starting) return;
+    setTaskMenu(null);
+    setStarting(true);
+    setError('');
+    try {
+      const nextStatus = task.status === 'completed' ? 'pending' : 'completed';
+      const updated = task.timer_started_at && nextStatus === 'completed'
+        ? await api.taskTimer(task.id, 'complete')
+        : await api.updateTask(task.id, {
+          status: nextStatus,
+          percentage_completed: nextStatus === 'completed' ? 100 : task.percentage_completed,
+        });
+      setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row));
+      if (nextStatus === 'completed') setActiveTasks(rows => rows.filter(row => row.id !== task.id));
+    } catch (_) {
+      setError('No se pudo cambiar el estado del ToDo. Vuelve a intentarlo.');
+    } finally {
+      setStarting(false);
+    }
+  }
+
   async function reorderDay(date, ids) {
     if (reordering) return;
+    const previousOrder = new Map(tasks.filter(task => ids.includes(task.id))
+      .map(task => [task.id, { todo_day_order: task.todo_day_order, todo_order_date: task.todo_order_date }]));
+    const positions = new Map(ids.map((id, index) => [id, index]));
+    setTasks(rows => rows.map(task => task.date === date && positions.has(task.id)
+      ? { ...task, todo_day_order: positions.get(task.id), todo_order_date: date } : task));
     setReordering(true);
     setError('');
     try {
       await api.reorderTodoDay(date, ids);
-      const positions = new Map(ids.map((id, index) => [id, index]));
-      setTasks(rows => rows.map(task => task.date === date && positions.has(task.id)
-        ? { ...task, todo_day_order: positions.get(task.id), todo_order_date: date } : task));
     } catch (_) {
+      setTasks(rows => rows.map(task => previousOrder.has(task.id)
+        ? { ...task, ...previousOrder.get(task.id) } : task));
       setError('No se pudo guardar el orden del día. Vuelve a intentarlo.');
     } finally {
       setReordering(false);
@@ -814,7 +840,10 @@ export default function TodoListView() {
     }));
     flashMovedTask(moved.id);
     try {
-      if (dateChanged) await api.updateTask(moved.id, { date: targetDate, start_time: null, end_time: null });
+      if (dateChanged) {
+        const updated = await api.updateTask(moved.id, { date: targetDate, start_time: null, end_time: null });
+        setTasks(rows => rows.map(item => item.id === moved.id ? { ...item, ...updated } : item));
+      }
       await api.reorderTodos(objectiveId, list.map(item => item.id));
     } catch (_) {
       setError('No se pudo guardar el nuevo orden. Se ha restaurado la lista.');
@@ -867,6 +896,7 @@ export default function TodoListView() {
           countdownEnd={countdownEnd}
           moneyPlanningReady={moneyPlanningReady}
           onStart={startTodo}
+          onToggleComplete={toggleTodoComplete}
           onSetDuration={setDurationTask}
           onCreateTask={setCreatingTaskDate}
           onReorder={reorderDay} reordering={reordering}
@@ -908,6 +938,9 @@ export default function TodoListView() {
           ))}
         </div>
         {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
+          <button type="button" disabled={starting} onClick={() => toggleTodoComplete(taskMenu.task)}>
+            {taskMenu.task.status === 'completed' ? 'Marcar como pendiente' : 'Completar'}
+          </button>
           <button type="button" onClick={() => toggleMoneyMaker(taskMenu.task)}>{isMoneyMakerTask(taskMenu.task) ? 'Quitar Money maker' : 'Marcar Money maker 💰'}</button>
           <button type="button" onClick={() => { setDurationTask(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
           <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}

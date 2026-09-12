@@ -55,6 +55,9 @@ export default function ImportExport() {
   }
 
   async function doImport(strategy) {
+    if (strategy === 'overwrite' && !window.confirm(
+      '¿Sobrescribir los elementos duplicados? Los valores del archivo reemplazarán los actuales cuando tengan el mismo ID.'
+    )) return;
     if (strategy === 'restore' && !window.confirm(
       '¿Restaurar la copia completa? Se eliminarán los datos y documentos actuales antes de recuperar la copia.'
     )) return;
@@ -106,6 +109,7 @@ export default function ImportExport() {
             Importación completada · estrategia: {
               result.strategy === 'skip' ? 'saltar duplicados'
                 : result.strategy === 'restore' ? 'restauración completa'
+                  : result.strategy === 'overwrite' ? 'sobrescribir duplicados'
                   : 'mantener ambos'
             }
           </div>
@@ -115,11 +119,12 @@ export default function ImportExport() {
             )}
             {Object.entries(TABLE_LABELS).map(([key, label]) => {
               const ins = result.stats.inserted?.[key] || 0;
+              const upd = result.stats.updated?.[key] || 0;
               const skp = result.stats.skipped?.[key] || 0;
-              if (!ins && !skp) return null;
+              if (!ins && !upd && !skp) return null;
               return (
                 <span key={key} style={{ fontSize: 12 }}>
-                  <strong>{label}</strong>: {ins} añadidos{skp > 0 ? `, ${skp} omitidos` : ''}
+                  <strong>{label}</strong>: {ins} añadidos{upd > 0 ? `, ${upd} actualizados` : ''}{skp > 0 ? `, ${skp} omitidos` : ''}
                 </span>
               );
             })}
@@ -160,6 +165,7 @@ export default function ImportExport() {
               Si algún elemento del archivo ya existe en la base de datos (mismo ID), puedes:
               <ul style={{ margin: '8px 0 0 16px', padding: 0 }}>
                 <li style={{ marginBottom: 4 }}><strong>Saltar duplicados</strong> — el elemento existente no se modifica.</li>
+                <li style={{ marginBottom: 4 }}><strong>Sobrescribir duplicados</strong> — actualiza el elemento existente con todos los valores de la copia.</li>
                 <li><strong>Mantener ambos</strong> — el elemento importado se inserta con un ID nuevo (<code>id-2</code>, <code>id-3</code>…).</li>
                 {pending.version >= 2 && pending.scope === 'all' && (
                   <li style={{ marginTop: 4 }}><strong>Restaurar todo</strong> — sustituye todos los datos y documentos actuales por los de la copia.</li>
@@ -167,10 +173,13 @@ export default function ImportExport() {
               </ul>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
               <button className="btn btn-ghost" onClick={() => setPending(null)} disabled={importing}>Cancelar</button>
               <button className="btn btn-ghost" onClick={() => doImport('skip')} disabled={importing}>
                 {importing ? 'Importando…' : 'Saltar duplicados'}
+              </button>
+              <button className="btn btn-ghost" onClick={() => doImport('overwrite')} disabled={importing}>
+                {importing ? 'Importando…' : 'Sobrescribir'}
               </button>
               <button className="btn btn-primary" onClick={() => doImport('rename')} disabled={importing}>
                 {importing ? 'Importando…' : 'Mantener ambos'}

@@ -243,9 +243,10 @@ Manage the core data model:
 
 ### Importar/Exportar (`/import-export`)
 JSON backup and restore:
-- **Export** — downloads a complete JSON snapshot of every application table and embeds uploaded document files as base64. It supports all users or a selected subset.
+- **Export** — downloads a complete JSON snapshot of the authenticated account and embeds uploaded document files as base64.
 - **Import** — reads both current and legacy JSON exports, shows a preview of record counts, and prompts for a **conflict strategy**:
   - *Skip duplicates* — existing records (same ID) are left unchanged
+  - *Overwrite duplicates* — records with matching IDs are updated with every field from the backup
   - *Keep both* — imported records with conflicting IDs are inserted with a new suffixed ID (`id-2`, `id-3`, …)
   - *Restore all* — for complete version 2 backups, replaces every current record and uploaded document with the backup contents
 
