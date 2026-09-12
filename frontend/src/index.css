@@ -46,6 +46,90 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ── Authentication ────────────────────────────────────── */
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at top, #dbeafe 0, var(--bg) 48%);
+}
+
+.auth-card {
+  width: min(100%, 420px);
+  padding: 40px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+}
+
+.auth-mark {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 18px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 800;
+}
+
+.auth-card h1 { font-size: 24px; }
+.auth-card p { margin: 8px 0 24px; color: var(--text-2); }
+.google-signin { min-height: 44px; display: flex; justify-content: center; }
+.auth-loading { min-height: 44px; color: var(--text-3); }
+.auth-error {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.account-controls {
+  position: fixed;
+  top: 12px;
+  right: 18px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.signed-in-user {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px 3px 3px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--text-2);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+}
+
+.signed-in-user img,
+.signed-in-user > span:first-child {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.signed-in-user > span:first-child {
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.signed-in-user-label { font-size: 12px; font-weight: 600; }
+
 /* ── Layout ────────────────────────────────────────────── */
 .app-shell {
   display: flex;

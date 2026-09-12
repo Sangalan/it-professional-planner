@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { api } from '../api.js';
+import React, { useRef, useState } from 'react';
+import { api, getActiveUserId, setActiveUserId } from '../api.js';
 import useEscapeClose from '../hooks/useEscapeClose.js';
 
 const TABLE_LABELS = {
+  users:          'Usuarios',
   categories:     'Categorías',
   objectives:     'Objetivos',
   milestones:     'Hitos',
@@ -14,31 +15,26 @@ const TABLE_LABELS = {
   repos:          'Proyectos',
   prs:            'PRs',
   work_blocks:    'Bloques de trabajo',
+  reading_list:   'Lista de lectura',
+  documents:      'Documentos',
 };
 
 function summarize(data) {
-  return Object.entries(TABLE_LABELS)
+  const rows = Object.entries(TABLE_LABELS)
     .map(([key, label]) => ({ key, label, count: data[key]?.length || 0 }))
     .filter(r => r.count > 0);
+  const todos = (data.tasks || []).filter(task => !task.is_fixed && (!task.date || (!task.start_time && !task.end_time))).length;
+  if (todos) rows.splice(rows.findIndex(row => row.key === 'tasks') + 1, 0, { key: 'todos', label: 'ToDo', count: todos });
+  return rows;
 }
 
 export default function ImportExport() {
   const fileRef = useRef(null);
-  const [users, setUsers] = useState([]);
-  const [exportMode, setExportMode] = useState('all');
-  const [selectedUserIds, setSelectedUserIds] = useState([]);
   const [pending, setPending] = useState(null);   // parsed JSON waiting for strategy choice
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);     // { stats, strategy } after import
   const [error, setError] = useState('');
   useEscapeClose(() => { if (!importing) setPending(null); }, Boolean(pending));
-
-  useEffect(() => {
-    api.users().then((rows) => {
-      setUsers(rows || []);
-      setSelectedUserIds((rows || []).map(u => u.id));
-    }).catch(() => {});
-  }, []);
 
   async function handleFileChange(e) {
     const file = e.target.files?.[0];
@@ -59,11 +55,17 @@ export default function ImportExport() {
   }
 
   async function doImport(strategy) {
+    if (strategy === 'restore' && !window.confirm(
+      '¿Restaurar la copia completa? Se eliminarán los datos y documentos actuales antes de recuperar la copia.'
+    )) return;
     setImporting(true); setError('');
     try {
+      const previousUserId = getActiveUserId();
       const res = await api.importData({ strategy, ...pending });
+      const importedUserId = res.user_id_map?.[previousUserId] || Object.values(res.user_id_map || {})[0];
+      if (importedUserId) setActiveUserId(importedUserId);
       setPending(null);
-      setResult({ strategy, stats: res.stats });
+      setResult({ strategy, stats: res.stats, todoCount: res.todo_count || 0 });
     } catch (err) {
       setError(`Error al importar: ${err.message}`);
     } finally {
@@ -72,21 +74,10 @@ export default function ImportExport() {
   }
 
   function handleExport() {
-    const params = new URLSearchParams();
-    if (exportMode === 'selected') {
-      params.set('scope', 'selected');
-      for (const id of selectedUserIds) params.append('user_ids', id);
-    } else {
-      params.set('scope', 'all');
-    }
     const a = document.createElement('a');
-    a.href = `/api/export?${params.toString()}`;
-    a.download = `planner-export-${new Date().toISOString().slice(0, 10)}.json`;
+    a.href = '/api/backup';
+    a.download = `planner-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
-  }
-
-  function toggleUserSelection(userId) {
-    setSelectedUserIds(prev => prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]);
   }
 
   return (
@@ -112,9 +103,16 @@ export default function ImportExport() {
           background: 'var(--success-bg, #e6f4ea)', color: 'var(--success, #1e7e34)',
           border: '1px solid var(--success, #1e7e34)' }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>
-            Importación completada · estrategia: {result.strategy === 'skip' ? 'saltar duplicados' : 'mantener ambos'}
+            Importación completada · estrategia: {
+              result.strategy === 'skip' ? 'saltar duplicados'
+                : result.strategy === 'restore' ? 'restauración completa'
+                  : 'mantener ambos'
+            }
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px' }}>
+            {result.todoCount > 0 && (
+              <span style={{ fontSize: 12 }}><strong>ToDo</strong>: {result.todoCount} procesados</span>
+            )}
             {Object.entries(TABLE_LABELS).map(([key, label]) => {
               const ins = result.stats.inserted?.[key] || 0;
               const skp = result.stats.skipped?.[key] || 0;
@@ -163,6 +161,9 @@ export default function ImportExport() {
               <ul style={{ margin: '8px 0 0 16px', padding: 0 }}>
                 <li style={{ marginBottom: 4 }}><strong>Saltar duplicados</strong> — el elemento existente no se modifica.</li>
                 <li><strong>Mantener ambos</strong> — el elemento importado se inserta con un ID nuevo (<code>id-2</code>, <code>id-3</code>…).</li>
+                {pending.version >= 2 && pending.scope === 'all' && (
+                  <li style={{ marginTop: 4 }}><strong>Restaurar todo</strong> — sustituye todos los datos y documentos actuales por los de la copia.</li>
+                )}
               </ul>
             </div>
 
@@ -174,6 +175,11 @@ export default function ImportExport() {
               <button className="btn btn-primary" onClick={() => doImport('rename')} disabled={importing}>
                 {importing ? 'Importando…' : 'Mantener ambos'}
               </button>
+              {pending.version >= 2 && pending.scope === 'all' && (
+                <button className="btn btn-danger" onClick={() => doImport('restore')} disabled={importing}>
+                  {importing ? 'Restaurando…' : 'Restaurar todo'}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -184,43 +190,11 @@ export default function ImportExport() {
         <div className="card-header"><span className="card-title">Exportar datos</span></div>
         <div style={{ padding: '16px 18px' }}>
           <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 16 }}>
-            Descarga una copia JSON de todos los usuarios o solo de usuarios concretos.
+            Descarga una copia JSON completa de tus datos y documentos adjuntos.
           </p>
-          <div style={{ display: 'flex', gap: 14, marginBottom: 10, fontSize: 13 }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="radio" checked={exportMode === 'all'} onChange={() => setExportMode('all')} />
-              Todos los usuarios
-            </label>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="radio" checked={exportMode === 'selected'} onChange={() => setExportMode('selected')} />
-              Usuarios seleccionados
-            </label>
-          </div>
-          {exportMode === 'selected' && (
-            <div style={{ marginBottom: 14, border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
-              {users.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-3)' }}>No hay usuarios disponibles.</div>}
-              {users.map(user => (
-                <label key={user.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, cursor: 'pointer', fontSize: 13 }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedUserIds.includes(user.id)}
-                    onChange={() => toggleUserSelection(user.id)}
-                  />
-                  <span style={{
-                    width: 18, height: 18, borderRadius: '50%', background: user.color, color: '#fff',
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700,
-                  }}>
-                    {(user.name || 'U').charAt(0).toUpperCase()}
-                  </span>
-                  {user.name}
-                </label>
-              ))}
-            </div>
-          )}
           <button
             className="btn btn-primary"
             onClick={handleExport}
-            disabled={exportMode === 'selected' && selectedUserIds.length === 0}
           >
             ⬇ Descargar JSON
           </button>
@@ -232,7 +206,7 @@ export default function ImportExport() {
         <div className="card-header"><span className="card-title">Importar datos</span></div>
         <div style={{ padding: '16px 18px' }}>
           <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 16 }}>
-            Añade datos desde un archivo JSON exportado anteriormente. Los elementos existentes no se sobrescriben — puedes elegir cómo gestionar los duplicados.
+            Añade datos desde una copia JSON anterior o restaura el sistema completo. Las copias antiguas siguen siendo compatibles.
           </p>
           <input ref={fileRef} type="file" accept=".json,application/json"
             style={{ display: 'none' }} onChange={handleFileChange} />

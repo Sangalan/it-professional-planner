@@ -3,5 +3,7 @@ backend/data/
 /frontend/node_modules/
 /backend/node_modules/
 /frontend/dist/
+.env
+.env.deploy
 /.claude/completions/
 /.claude/sessions/

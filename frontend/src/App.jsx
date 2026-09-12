@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
-import { api, getActiveUserId, setActiveUserId } from './api.js';
+import { api, setActiveUserId } from './api.js';
 import { toDateStr, timeToMinutes, formatCountdown, secondsUntilTime, getGapHours } from './utils/dateUtils.js';
 import Dashboard from './views/Dashboard.jsx';
 import NowView from './views/NowView.jsx';
@@ -25,6 +25,7 @@ import { CategoriesProvider } from './components/CatBadge.jsx';
 import TaskModal from './components/TaskModal.jsx';
 import GapPickerDialog from './components/GapPickerDialog.jsx';
 import DailyMoneyPlanning from './components/DailyMoneyPlanning.jsx';
+import AuthGate from './components/AuthGate.jsx';
 
 // Compute total free minutes within 9:00–20:00 by merging task intervals
 function computeFreeHours(tasks) {
@@ -329,9 +330,9 @@ function SectionGuard({ enabled, sectionLabel, children }) {
   );
 }
 
-export default function App() {
+function PlannerApp({ authUser, onLogout }) {
   const [users, setUsers] = useState([]);
-  const [activeUserId, setActiveUserState] = useState(getActiveUserId());
+  const activeUserId = authUser.planner_user_id;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem('sidebar-collapsed') === 'true',
   );
@@ -341,22 +342,9 @@ export default function App() {
   };
 
   useEffect(() => {
+    setActiveUserId(activeUserId);
     api.users().then(setUsers).catch(() => {});
-    const onChanged = (e) => {
-      setActiveUserState(e.detail || getActiveUserId());
-      api.users().then(setUsers).catch(() => {});
-    };
-    window.addEventListener('active-user-changed', onChanged);
-    return () => window.removeEventListener('active-user-changed', onChanged);
-  }, []);
-
-  function switchUser() {
-    if (!users.length) return;
-    const idx = users.findIndex(u => u.id === activeUserId);
-    const next = users[(idx + 1) % users.length];
-    if (!next) return;
-    setActiveUserId(next.id);
-  }
+  }, [activeUserId]);
 
   function toggleSidebar() {
     setSidebarCollapsed(collapsed => {
@@ -437,23 +425,12 @@ export default function App() {
         </aside>
         <main className="main-content">
           <DailyMoneyPlanning userId={activeUserId} />
-          <div style={{ position: 'fixed', top: 12, right: 18, zIndex: 120 }}>
-            <button
-              onClick={switchUser}
-              title={activeUser ? `Usuario activo: ${activeUser.name}. Clic para cambiar.` : 'Cambiar usuario'}
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: '50%',
-                border: '2px solid #fff',
-                boxShadow: 'var(--shadow-md)',
-                background: activeUser?.color || 'var(--accent)',
-                color: '#fff',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-            >
-              {(activeUser?.name || 'U').trim().charAt(0).toUpperCase()}
+          <div className="account-controls">
+            <button type="button" className="signed-in-user" onClick={onLogout} title={`Sesión iniciada como ${authUser.email}. Clic para salir.`}>
+              {authUser.picture
+                ? <img src={authUser.picture} alt="" referrerPolicy="no-referrer" />
+                : <span>{authUser.email.charAt(0).toUpperCase()}</span>}
+              <span className="signed-in-user-label">Salir</span>
             </button>
           </div>
           <Routes key={activeUserId}>
@@ -481,4 +458,8 @@ export default function App() {
       </div>
     </CategoriesProvider>
   );
+}
+
+export default function App() {
+  return <AuthGate><PlannerApp /></AuthGate>;
 }

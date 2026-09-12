@@ -37,6 +37,19 @@ This installs dependencies for the root workspace, the backend, and the frontend
 
 ### 2. Start
 
+Create the local authentication configuration first:
+
+```bash
+cp .env.example .env
+```
+
+Create an **OAuth 2.0 Client ID** of type **Web application** in Google Cloud Console. Add
+`http://localhost:5173` as an authorized JavaScript origin (and the final `https://` origin when
+deploying), then set its client ID, the exact allowed email addresses, and a random session
+secret in `.env`.
+
+Start the app (the backend loads the root `.env` automatically):
+
 ```bash
 npm run dev
 ```
@@ -48,6 +61,15 @@ This starts concurrently:
 Open `http://localhost:5173` in your browser.
 
 > The SQLite database is created automatically at `backend/data/planner.db` and pre-loaded with all plan data on the first run.
+
+### Google authentication
+
+The backend verifies Google ID tokens and only creates a signed, `HttpOnly` session for an
+address listed in `ALLOWED_EMAILS`. API routes and uploaded documents require that session.
+Each Google address is bound to one planner profile; client-supplied profile IDs are ignored and
+backups, restores, API data, and uploaded files are isolated to that authenticated account.
+The allowlist is case-insensitive and comma-separated; restart the backend after changing it.
+Production deployments must use HTTPS so the session cookie is marked `Secure`.
 
 ---
 
@@ -221,10 +243,11 @@ Manage the core data model:
 
 ### Importar/Exportar (`/import-export`)
 JSON backup and restore:
-- **Export** — downloads a complete JSON snapshot of all tables (categories, objectives, milestones, tasks, events, publications, certifications, repos, PRs, work blocks)
-- **Import** — reads a JSON file and shows a preview of record counts; prompts for a **conflict strategy**:
+- **Export** — downloads a complete JSON snapshot of every application table and embeds uploaded document files as base64. It supports all users or a selected subset.
+- **Import** — reads both current and legacy JSON exports, shows a preview of record counts, and prompts for a **conflict strategy**:
   - *Skip duplicates* — existing records (same ID) are left unchanged
   - *Keep both* — imported records with conflicting IDs are inserted with a new suffixed ID (`id-2`, `id-3`, …)
+  - *Restore all* — for complete version 2 backups, replaces every current record and uploaded document with the backup contents
 
 ---
 

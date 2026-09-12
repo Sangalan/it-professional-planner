@@ -28,6 +28,7 @@ function normalise(items, type, icon, label, getDate, getObjId) {
 }
 
 const GROUPS = [
+  { type: 'objective',    icon: '🎯', label: 'Objetivos' },
   { type: 'milestone',    icon: '🏁', label: 'Hitos' },
   { type: 'publication',  icon: '✍️',  label: 'Publicaciones' },
   { type: 'certification',icon: '🏆', label: 'Certificaciones' },
@@ -65,6 +66,7 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
     ]).then(([ms, pubs, certs, repos, prs, evts, objs]) => {
       setObjectives(objs);
       setAllItems([
+        ...normalise(objs, 'objective', '🎯', 'Objetivos', it => it.end_date, it => it.id),
         ...normalise(ms.filter(m => m.id.startsWith('ms-')), 'milestone', '🎯', 'Hitos', it => it.target_date, null),
         ...normalise(pubs,  'publication',   '✍️',  'Publicaciones',   it => it.date,        null).map(it => ({ ...it, icon: getPublicationTypeMeta(it.raw?.type).icon })),
         ...normalise(certs, 'certification', '🏆', 'Certificaciones', it => it.target_date, null),
@@ -133,7 +135,7 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
         date,
         start_time: startTime,
         end_time: endTime,
-        milestone_id: item.id,
+        milestone_id: item.type === 'objective' ? null : item.id,
         objective_id: item.objective_id || (obj?.id ?? null),
         status: 'pending',
       });
@@ -213,7 +215,7 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar hito, publicación, PR…"
+              placeholder="Buscar objetivo, hito, publicación, PR…"
               style={{ width: '100%', fontSize: 13, marginBottom: 10, flexShrink: 0 }}
               autoFocus
             />

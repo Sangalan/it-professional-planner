@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api, getActiveUserId, setActiveUserId } from '../api.js';
+import { api } from '../api.js';
 import { CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
 import { statusLabel } from '../utils/categoryUtils.js';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
@@ -70,7 +70,7 @@ function SectionCard({ title, count, children, onNew }) {
           <span className="card-title">{title} ({count})</span>
           <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{open ? '▲' : '▼'}</span>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={onNew}>+ Nuevo</button>
+        {onNew && <button className="btn btn-primary btn-sm" onClick={onNew}>+ Nuevo</button>}
       </div>
       {open && <div className="card-body">{children}</div>}
     </div>
@@ -920,9 +920,7 @@ export default function Settings() {
   const [editingMilestoneFromSearch, setEditingMilestoneFromSearch] = useState(null);
   const [milestoneGroupsExpanded, setMilestoneGroupsExpanded] = useState({});
   const [users, setUsers] = useState([]);
-  const [creatingUser, setCreatingUser] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
-  const [activeUserId, setActiveUserState] = useState(getActiveUserId());
 
   function loadCats() { api.categories().then(setCats); }
   function loadObjectives() { api.objectives().then(setObjectives); }
@@ -1035,11 +1033,6 @@ export default function Settings() {
 
   useEffect(() => { loadAll(); }, []);
   useEffect(() => {
-    const onChanged = (e) => setActiveUserState(e.detail || getActiveUserId());
-    window.addEventListener('active-user-changed', onChanged);
-    return () => window.removeEventListener('active-user-changed', onChanged);
-  }, []);
-  useEffect(() => {
     const intent = location.state;
     if (!intent?.fromSearch) return;
 
@@ -1100,17 +1093,11 @@ export default function Settings() {
           onDeleted={() => { setEditingMilestoneFromSearch(null); loadAll(); }}
         />
       )}
-      {creatingUser && (
-        <UserDialog
-          onClose={() => setCreatingUser(false)}
-          onSaved={() => { setCreatingUser(false); loadUsers(); setActiveUserId(getActiveUserId()); }}
-        />
-      )}
       {editingUser && (
         <UserDialog
           user={editingUser}
           onClose={() => setEditingUser(null)}
-          onSaved={() => { setEditingUser(null); loadUsers(); setActiveUserId(getActiveUserId()); }}
+          onSaved={() => { setEditingUser(null); loadUsers(); }}
         />
       )}
 
@@ -1128,9 +1115,9 @@ export default function Settings() {
         {cats.map(cat => <CategoryRow key={cat.id} cat={cat} onSaved={loadCats} onDeleted={loadCats} />)}
       </SectionCard>
 
-      <SectionCard title="Usuarios" count={users.length} onNew={() => setCreatingUser(true)}>
+      <SectionCard title="Perfil" count={users.length}>
         <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>
-          Cada usuario tiene su propio espacio de datos. Pulsa el círculo arriba a la derecha para cambiar.
+          Este perfil está vinculado a la cuenta de Google con la que has iniciado sesión.
         </p>
         {users.map(user => (
           <div
@@ -1145,17 +1132,7 @@ export default function Settings() {
               {(user.name || 'U').charAt(0).toUpperCase()}
             </span>
             <div style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{user.name}</div>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveUserId(user.id);
-              }}
-            >
-              Usar
-            </button>
-            {activeUserId === user.id && <span className="badge" style={{ background: '#d1fae5', color: '#065f46' }}>Activo</span>}
+            <span className="badge" style={{ background: '#d1fae5', color: '#065f46' }}>Cuenta actual</span>
           </div>
         ))}
       </SectionCard>

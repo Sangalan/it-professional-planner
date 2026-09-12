@@ -69,6 +69,7 @@ try { db.prepare('ALTER TABLE prs ADD COLUMN user_id TEXT').run(); } catch (_) {
 try { db.prepare('ALTER TABLE documents ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE reading_list ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE users ADD COLUMN content_sections TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE users ADD COLUMN auth_email TEXT').run(); } catch (_) {}
 
 // Documents uploads directory
 const uploadsDir = path.join(dataDir, 'uploads');
@@ -83,7 +84,8 @@ function initSchema() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       color TEXT NOT NULL,
-      content_sections TEXT
+      content_sections TEXT,
+      auth_email TEXT
     );
 
     CREATE TABLE IF NOT EXISTS categories (

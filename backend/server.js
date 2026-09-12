@@ -2,22 +2,158 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 const fs = require('fs');
+const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 const { db, initSchema } = require('./db');
+const { createBackup, importBackup } = require('./backup');
 
 initSchema();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
-app.use((req, _res, next) => {
-  const raw = req.header('x-user-id') || req.query.user_id || 'pepito';
-  req.userId = String(raw || 'pepito').trim() || 'pepito';
+// Backups can contain base64-encoded document uploads, so they can be much
+// larger than regular API payloads.
+app.use(express.json({ limit: '250mb' }));
+
+const uploadsDir = path.join(__dirname, 'data', 'uploads');
+
+// Authentication is configured entirely through environment variables so no
+// Google credentials or allowlisted addresses are shipped to the browser.
+const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();
+const ALLOWED_EMAILS = new Set(
+  String(process.env.ALLOWED_EMAILS || '')
+    .split(',')
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean),
+);
+const SESSION_COOKIE = 'planner_session';
+const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+
+function authIsConfigured() {
+  return !!GOOGLE_CLIENT_ID && SESSION_SECRET.length >= 32 && ALLOWED_EMAILS.size > 0;
+}
+
+function parseCookies(req) {
+  return Object.fromEntries(
+    String(req.headers.cookie || '').split(';').map(part => part.trim()).filter(Boolean).map(part => {
+      const separator = part.indexOf('=');
+      if (separator < 0) return [part, ''];
+      const name = part.slice(0, separator);
+      const rawValue = part.slice(separator + 1);
+      try { return [name, decodeURIComponent(rawValue)]; } catch (_) { return [name, '']; }
+    }),
+  );
+}
+
+function signSession(payload) {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(encoded).digest('base64url');
+  return `${encoded}.${signature}`;
+}
+
+function readSession(token) {
+  if (!token || !SESSION_SECRET) return null;
+  const [encoded, signature, extra] = token.split('.');
+  if (!encoded || !signature || extra) return null;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(encoded).digest();
+  let actual;
+  try { actual = Buffer.from(signature, 'base64url'); } catch (_) { return null; }
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+    if (!payload.email || !payload.exp || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+    if (!ALLOWED_EMAILS.has(String(payload.email).toLowerCase())) return null;
+    return payload;
+  } catch (_) {
+    return null;
+  }
+}
+
+function sessionCookie(value, maxAge = SESSION_TTL_SECONDS) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return `${SESSION_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+app.use('/api/auth', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
   next();
 });
 
-const uploadsDir = path.join(__dirname, 'data', 'uploads');
-app.use('/uploads', express.static(uploadsDir));
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+app.get('/api/auth/config', (_req, res) => {
+  if (!authIsConfigured()) {
+    return res.status(503).json({
+      error: 'Google authentication is not configured',
+      missing: [
+        !GOOGLE_CLIENT_ID && 'GOOGLE_CLIENT_ID',
+        SESSION_SECRET.length < 32 && 'SESSION_SECRET (minimum 32 characters)',
+        ALLOWED_EMAILS.size === 0 && 'ALLOWED_EMAILS',
+      ].filter(Boolean),
+    });
+  }
+  res.json({ clientId: GOOGLE_CLIENT_ID });
+});
+
+app.post('/api/auth/google', async (req, res) => {
+  if (!authIsConfigured()) return res.status(503).json({ error: 'Google authentication is not configured' });
+  const credential = String(req.body?.credential || '');
+  if (!credential) return res.status(400).json({ error: 'Missing Google credential' });
+
+  try {
+    const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: GOOGLE_CLIENT_ID });
+    const profile = ticket.getPayload();
+    const email = String(profile?.email || '').trim().toLowerCase();
+    if (!profile?.email_verified || !ALLOWED_EMAILS.has(email)) {
+      return res.status(403).json({ error: 'Email is not allowed' });
+    }
+    const user = { email, name: profile.name || email, picture: profile.picture || '' };
+    user.planner_user_id = ensureAuthenticatedPlannerUser(user).id;
+    const token = signSession({ ...user, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS });
+    res.setHeader('Set-Cookie', sessionCookie(token));
+    res.json({ user });
+  } catch (_) {
+    res.status(401).json({ error: 'Invalid Google credential' });
+  }
+});
+
+app.post('/api/auth/logout', (_req, res) => {
+  res.setHeader('Set-Cookie', sessionCookie('', 0));
+  res.json({ ok: true });
+});
+
+function requireAuth(req, res, next) {
+  if (!authIsConfigured()) return res.status(503).json({ error: 'Google authentication is not configured' });
+  const session = readSession(parseCookies(req)[SESSION_COOKIE]);
+  if (!session) return res.status(401).json({ error: 'Authentication required' });
+  req.authUser = session;
+  req.plannerUser = ensureAuthenticatedPlannerUser(session);
+  req.userId = req.plannerUser.id;
+  next();
+}
+
+app.use('/api', requireAuth);
+app.get('/uploads/:filename', requireAuth, (req, res) => {
+  const filename = path.basename(String(req.params.filename || ''));
+  const document = db.prepare('SELECT id FROM documents WHERE filename = ? AND user_id = ?').get(filename, req.userId);
+  if (!document) return res.status(404).end();
+  res.sendFile(path.join(uploadsDir, filename));
+});
+app.get('/api/auth/me', (req, res) => {
+  const { email, name, picture } = req.authUser;
+  res.json({ user: { email, name, picture, planner_user_id: req.userId } });
+});
+
+app.use((req, _res, next) => {
+  // The authenticated Google account is the only authority for data ownership.
+  // Ignore the former browser-selected x-user-id/query parameter.
+  req.userId = req.plannerUser.id;
+  next();
+});
 
 const storage = multer.diskStorage({
   destination: uploadsDir,
@@ -48,6 +184,42 @@ function parseContentSections(raw) {
   } catch (_) {
     return { ...DEFAULT_CONTENT_SECTIONS };
   }
+}
+
+function normalizeIdentityName(value) {
+  return String(value || '').trim().toLowerCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function ensureAuthenticatedPlannerUser(authUser) {
+  const email = String(authUser?.email || '').trim().toLowerCase();
+  if (!email) throw new Error('Authenticated user has no email');
+  const linked = db.prepare('SELECT * FROM users WHERE LOWER(auth_email) = ?').get(email);
+  if (linked) return linked;
+
+  const authName = normalizeIdentityName(authUser.name);
+  const unlinked = db.prepare("SELECT * FROM users WHERE auth_email IS NULL OR TRIM(auth_email) = ''").all();
+  const nameMatches = unlinked.filter(user => {
+    const profileName = normalizeIdentityName(user.name);
+    return profileName && (profileName === authName || authName.startsWith(`${profileName} `));
+  });
+  let target = nameMatches.length === 1 ? nameMatches[0] : null;
+  if (!target) target = unlinked.find(user => user.id === 'pepito') || null;
+
+  if (target) {
+    db.prepare('UPDATE users SET name = ?, auth_email = ? WHERE id = ?')
+      .run(String(authUser.name || email).trim(), email, target.id);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(target.id);
+  }
+
+  const base = email.split('@')[0].normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'user';
+  let id = base;
+  let suffix = 2;
+  while (db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) id = `${base}-${suffix++}`;
+  db.prepare('INSERT INTO users (id,name,color,content_sections,auth_email) VALUES (?,?,?,?,?)')
+    .run(id, String(authUser.name || email).trim(), '#2563eb', JSON.stringify(DEFAULT_CONTENT_SECTIONS), email);
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 }
 
 function getUserContentSections(userId) {
@@ -317,22 +489,16 @@ function findClonedTasksForRange(from, to, filters = {}) {
 
 // ── USERS ───────────────────────────────────────────────────────────────────
 app.get('/api/users', (req, res) => {
-  res.json(db.prepare('SELECT * FROM users ORDER BY name COLLATE NOCASE ASC').all());
+  res.json(db.prepare('SELECT * FROM users WHERE id = ?').all(req.userId));
 });
 
 app.post('/api/users', (req, res) => {
-  const { name, color, content_sections } = req.body;
-  if (!name || !color) return res.status(400).json({ error: 'name y color son obligatorios' });
-  const base = String(name).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'user';
-  let id = base;
-  let n = 2;
-  while (db.prepare('SELECT id FROM users WHERE id = ?').get(id)) id = `${base}-${n++}`;
-  db.prepare('INSERT INTO users (id, name, color, content_sections) VALUES (?, ?, ?, ?)').run(id, String(name).trim(), color, JSON.stringify(parseContentSections(content_sections)));
-  res.status(201).json(db.prepare('SELECT * FROM users WHERE id = ?').get(id));
+  res.status(405).json({ error: 'Cada cuenta de Google dispone de un único perfil.' });
 });
 
 app.put('/api/users/:id', (req, res) => {
-  const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (req.params.id !== req.userId) return res.status(403).json({ error: 'No puedes editar otro perfil.' });
+  const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
   if (!current) return res.status(404).json({ error: 'Not found' });
   const { name, color, content_sections } = req.body;
   db.prepare('UPDATE users SET name = COALESCE(?, name), color = COALESCE(?, color), content_sections = COALESCE(?, content_sections) WHERE id = ?')
@@ -1632,6 +1798,26 @@ app.get('/api/dashboard', (req, res) => {
 
 
 // ── EXPORT / IMPORT ──────────────────────────────────────────────────────────
+app.get(['/api/backup', '/api/export'], (req, res) => {
+  const data = createBackup(db, uploadsDir, 'selected', [req.userId]);
+  // This is a complete backup of the authenticated account, even though the
+  // database may contain isolated records for other accounts.
+  data.scope = 'all';
+  const filename = `planner-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.type('application/json').send(JSON.stringify(data, null, 2));
+});
+
+app.post(['/api/restore', '/api/import'], (req, res) => {
+  const { strategy = 'skip', ...data } = req.body || {};
+  try {
+    const result = importBackup(db, uploadsDir, data, strategy, { targetUserId: req.userId });
+    res.json({ ok: true, strategy, ...result });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
 app.get('/api/export', (req, res) => {
   const scope = req.query.scope === 'selected' ? 'selected' : 'all';
   const selectedUserIds = []
@@ -1828,6 +2014,17 @@ app.delete('/api/documents/:id', (req, res) => {
   db.prepare('DELETE FROM documents WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
+
+// Serve the production frontend from the API process. During development Vite
+// still serves the UI because this directory is only created by a build.
+const frontendDistDir = path.join(__dirname, '..', 'frontend', 'dist');
+if (fs.existsSync(frontendDistDir)) {
+  app.use(express.static(frontendDistDir));
+  app.get('*', (req, res) => {
+    if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
+    res.sendFile(path.join(frontendDistDir, 'index.html'));
+  });
+}
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`🚀 API running on http://localhost:${PORT}`));
