@@ -229,22 +229,35 @@ export default function Dashboard() {
             {objHoursData.length === 0 ? (
               <div className="empty-state">Sin horas registradas aún</div>
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={objHoursData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
-                  <YAxis tick={{ fontSize: 11 }} unit="h" />
-                  <Tooltip
-                    formatter={(v, _) => [`${v}h`, 'Horas completadas']}
-                    labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
-                  />
-                  <Bar dataKey="Horas" radius={[4, 4, 0, 0]}>
-                    {objHoursData.map((entry, i) => (
-                      <Cell key={i} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <>
+                <div className="dashboard-chart-visual">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={objHoursData} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} />
+                      <YAxis tick={{ fontSize: 11 }} unit="h" />
+                      <Tooltip
+                        formatter={(v, _) => [`${v}h`, 'Horas completadas']}
+                        labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
+                      />
+                      <Bar dataKey="Horas" radius={[4, 4, 0, 0]}>
+                        {objHoursData.map((entry, i) => (
+                          <Cell key={i} fill={entry.color} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="dashboard-chart-list">
+                  {objHoursData.map(entry => (
+                    <div key={entry.fullName} className="dashboard-chart-list-row">
+                      <span className="dashboard-chart-dot" style={{ background: entry.color }} />
+                      <span>{entry.fullName}</span>
+                      <strong>{entry.Horas}h</strong>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -256,16 +269,29 @@ export default function Dashboard() {
             {pieData.length === 0 ? (
               <div className="empty-state">Sin datos aún</div>
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80}
-                    dataKey="value" nameKey="name" paddingAngle={2}>
-                    {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                  </Pie>
-                  <Tooltip formatter={(v, n) => [v, n]} />
-                  <Legend iconSize={10} iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-                </PieChart>
-              </ResponsiveContainer>
+              <>
+                <div className="dashboard-chart-visual">
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80}
+                        dataKey="value" nameKey="name" paddingAngle={2}>
+                        {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                      </Pie>
+                      <Tooltip formatter={(v, n) => [v, n]} />
+                      <Legend iconSize={10} iconType="circle" wrapperStyle={{ fontSize: 11 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="dashboard-chart-list">
+                  {pieData.map(entry => (
+                    <div key={entry.name} className="dashboard-chart-list-row">
+                      <span className="dashboard-chart-dot" style={{ background: entry.color }} />
+                      <span>{entry.name}</span>
+                      <strong>{entry.value}</strong>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>

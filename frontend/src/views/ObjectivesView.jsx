@@ -39,12 +39,12 @@ function parseCatIds(raw, fallback) {
 function Dialog({ title, onClose, children }) {
   useEscapeClose(onClose);
   return (
-    <div style={{
+    <div className="modal-backdrop" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 300, padding: 20,
     }}>
-      <div style={{
+      <div className="modal-panel" style={{
         background: 'var(--surface)', borderRadius: 12, padding: 28,
         maxWidth: 520, width: '100%', maxHeight: '90vh', overflowY: 'auto',
         boxShadow: 'var(--shadow-md)',

@@ -210,11 +210,11 @@ export default function CalendarContentSummary({ mode, date, weekDays = [], mont
     const dayKeys = weekDays.map(d => toDateStr(d));
 
     return (
-      <div className="card" style={{ overflowX: 'auto' }}>
+      <div className="card responsive-table-card" style={{ overflowX: 'auto' }}>
         <div className="card-header">
           <span className="card-title">Horas por tipo de contenido (Semana)</span>
         </div>
-        <table style={{ width: '100%', minWidth: 900, borderCollapse: 'collapse', fontSize: 12 }}>
+        <table className="responsive-table" style={{ width: '100%', minWidth: 900, borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ background: 'var(--bg)' }}>
               <th style={thSt}>Tipo</th>
@@ -227,10 +227,10 @@ export default function CalendarContentSummary({ mode, date, weekDays = [], mont
           <tbody>
             {typeRows.map(row => (
               <tr key={row.key}>
-                <td style={tdSt}>{row.icon} {row.label}</td>
-                <td style={{ ...tdSt, fontWeight: 700, color: row.total > 0 ? 'var(--accent)' : 'var(--text-3)' }}>{fmtHours(row.total)}</td>
-                {dayKeys.map(dayKey => (
-                  <td key={`${row.key}-${dayKey}`} style={tdSt}>{fmtHours(row.byDay[dayKey] || 0)}</td>
+                <td data-label="Tipo" style={tdSt}>{row.icon} {row.label}</td>
+                <td data-label="Total semana" style={{ ...tdSt, fontWeight: 700, color: row.total > 0 ? 'var(--accent)' : 'var(--text-3)' }}>{fmtHours(row.total)}</td>
+                {dayKeys.map((dayKey, idx) => (
+                  <td data-label={`${DOW_SHORT[idx]} ${weekDays[idx].getDate()}`} key={`${row.key}-${dayKey}`} style={tdSt}>{fmtHours(row.byDay[dayKey] || 0)}</td>
                 ))}
               </tr>
             ))}
@@ -250,11 +250,11 @@ export default function CalendarContentSummary({ mode, date, weekDays = [], mont
   });
 
   return (
-    <div className="card" style={{ overflowX: 'auto' }}>
+    <div className="card responsive-table-card" style={{ overflowX: 'auto' }}>
       <div className="card-header">
         <span className="card-title">Horas por tipo de contenido (Mes)</span>
       </div>
-      <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
+      <table className="responsive-table" style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ background: 'var(--bg)' }}>
             <th style={thSt}>Tipo</th>
@@ -265,10 +265,10 @@ export default function CalendarContentSummary({ mode, date, weekDays = [], mont
         <tbody>
           {monthRows.map(row => (
             <tr key={row.key}>
-              <td style={tdSt}>{row.icon} {row.label}</td>
-              <td style={{ ...tdSt, fontWeight: 700, color: row.total > 0 ? 'var(--accent)' : 'var(--text-3)' }}>{fmtHours(row.total)}</td>
+              <td data-label="Tipo" style={tdSt}>{row.icon} {row.label}</td>
+              <td data-label="Total mes" style={{ ...tdSt, fontWeight: 700, color: row.total > 0 ? 'var(--accent)' : 'var(--text-3)' }}>{fmtHours(row.total)}</td>
               {row.byWeekDay.map((hours, idx) => (
-                <td key={`${row.key}-${idx}`} style={tdSt}>{fmtHours(hours)}</td>
+                <td data-label={DOW_SHORT[idx]} key={`${row.key}-${idx}`} style={tdSt}>{fmtHours(hours)}</td>
               ))}
             </tr>
           ))}

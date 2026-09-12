@@ -102,12 +102,12 @@ function ItemDialog({ item, onClose, onSaved, onDeleted }) {
   }
 
   return (
-    <div style={{
+    <div className="modal-backdrop" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 300, padding: 20,
     }}>
-      <div style={{
+      <div className="modal-panel" style={{
         background: 'var(--surface)', borderRadius: 12, padding: 28,
         maxWidth: 500, width: '100%', maxHeight: '90vh', overflowY: 'auto',
         boxShadow: 'var(--shadow-md)',
@@ -190,6 +190,15 @@ function PendingList({ items, onToggle, onEdit, onReorder }) {
     onReorder(reordered.map(it => it.id));
   }
 
+  function moveItem(index, offset) {
+    const target = index + offset;
+    if (target < 0 || target >= items.length) return;
+    const reordered = [...items];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(target, 0, moved);
+    onReorder(reordered.map(item => item.id));
+  }
+
   return (
     <div>
       {items.map((item, i) => {
@@ -249,9 +258,15 @@ function PendingList({ items, onToggle, onEdit, onReorder }) {
                 )}
               </div>
             </div>
-            <span style={{ fontSize: 11, color: ago > 14 ? '#dc2626' : ago > 7 ? '#92400e' : 'var(--text-3)', whiteSpace: 'nowrap', flexShrink: 0, marginTop: 3 }}>
-              {ago === 0 ? 'Hoy' : `hace ${ago}d`}
-            </span>
+            <div className="reading-row-aside">
+              <span style={{ fontSize: 11, color: ago > 14 ? '#dc2626' : ago > 7 ? '#92400e' : 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                {ago === 0 ? 'Hoy' : `hace ${ago}d`}
+              </span>
+              <div className="reading-mobile-order" aria-label={`Reordenar ${item.title}`}>
+                <button type="button" disabled={i === 0} aria-label={`Subir ${item.title}`} onClick={() => moveItem(i, -1)}>↑</button>
+                <button type="button" disabled={i === items.length - 1} aria-label={`Bajar ${item.title}`} onClick={() => moveItem(i, 1)}>↓</button>
+              </div>
+            </div>
           </div>
         );
       })}

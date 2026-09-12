@@ -161,7 +161,7 @@ function QuickAdd({ objectiveId, moneyMaker = false, onCreated }) {
   );
 }
 
-function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, onEdit, onTaskContextMenu, onColumnDrop, onTaskDrop, onTaskDragStart, onTaskDragEnd, dragColumnRef, dragTaskRef, saving }) {
+function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, onEdit, onTaskContextMenu, onColumnDrop, onMoveColumn, canMoveColumnUp, canMoveColumnDown, onTaskDrop, onTaskDragStart, onTaskDragEnd, dragColumnRef, dragTaskRef, saving }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [completedExpanded, setCompletedExpanded] = useState(false);
   const dropTargetRef = useRef(null);
@@ -241,6 +241,10 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
         onDragEnd={() => { dragColumnRef.current = null; }}
       >
         <span className="todo-column-title">{objective.title}</span>
+        <div className="todo-mobile-column-actions" aria-label={`Reordenar ${objective.title}`}>
+          <button type="button" disabled={!canMoveColumnUp} aria-label={`Mover ${objective.title} hacia arriba`} onClick={event => { event.stopPropagation(); onMoveColumn(-1); }}>↑</button>
+          <button type="button" disabled={!canMoveColumnDown} aria-label={`Mover ${objective.title} hacia abajo`} onClick={event => { event.stopPropagation(); onMoveColumn(1); }}>↓</button>
+        </div>
         <QuickAdd objectiveId={objective.id} moneyMaker={isMoneyObjective(objective)} onCreated={onReload} />
       </header>
 
@@ -316,12 +320,21 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
                 onContextMenu={e => {
                   e.preventDefault();
                   e.stopPropagation();
-                  onTaskContextMenu(task, e);
+                  onTaskContextMenu(task, e, objective.id);
                 }}
               >
                 <div className="todo-card-heading">
                   <div className="todo-card-title"><MoneyMakerIcon task={task} />{task.title}</div>
                   {Number(task.duration_estimated) > 0 && <span className="todo-card-duration">{formatDuration(Number(task.duration_estimated))}</span>}
+                  <button
+                    type="button"
+                    className="todo-mobile-actions"
+                    aria-label={`Acciones para ${task.title}`}
+                    onClick={e => {
+                      e.stopPropagation();
+                      onTaskContextMenu(task, e, objective.id);
+                    }}
+                  >•••</button>
                 </div>
                 {task.status === 'completed' && <div className="todo-card-status">
                   <span className="badge badge-completed">Completada{formatActualDuration(task.actual_seconds) && ` · ${formatActualDuration(task.actual_seconds)}`}</span>
@@ -851,6 +864,22 @@ export default function TodoListView() {
     }
   }
 
+  function moveTaskByOffset(menu, offset) {
+    const list = tasks
+      .filter(task => task.objective_id === menu.objectiveId && isTodoTask(task))
+      .sort(byStoredOrder);
+    const index = list.findIndex(task => task.id === menu.task.id);
+    const target = list[index + offset];
+    if (index < 0 || !target) return;
+    setTaskMenu(null);
+    moveTask(menu.objectiveId, menu.task.id, target.id, offset < 0 ? 'before' : 'after');
+  }
+
+  const taskMenuOrder = taskMenu ? tasks
+    .filter(task => task.objective_id === taskMenu.objectiveId && isTodoTask(task))
+    .sort(byStoredOrder) : [];
+  const taskMenuOrderIndex = taskMenuOrder.findIndex(task => task.id === taskMenu?.task.id);
+
   return (
     <div>
       {searchTerm && <div className="todo-type-search" role="search">
@@ -910,15 +939,18 @@ export default function TodoListView() {
           <div>{deadlineRows.map(deadline => <DeadlineChip key={deadline.id} deadline={deadline} onClick={setEditingDeadline} />)}</div>
         </div>}
         <div className="todo-board">
-          {columns.map(objective => (
+          {columns.map((objective, objectiveIndex) => (
             <TodoColumn
               key={objective.id}
               objective={objective}
               tasks={filteredTasks.filter(task => isTodoTask(task) && (task.objective_id === objective.id || (isMoneyObjective(objective) && isMoneyMakerTask(task)))).sort(byStoredOrder)}
               onReload={load}
               onEdit={setEditing}
-              onTaskContextMenu={(task, event) => setTaskMenu({ task, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 60) })}
+              onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 60) })}
               onColumnDrop={moveColumn}
+              onMoveColumn={offset => moveColumn(objective.id, columns[objectiveIndex + offset]?.id)}
+              canMoveColumnUp={objectiveIndex > 0}
+              canMoveColumnDown={objectiveIndex < columns.length - 1}
               onTaskDrop={moveTask}
               dragColumnRef={dragColumnRef}
               dragTaskRef={dragTaskRef}
@@ -938,6 +970,10 @@ export default function TodoListView() {
           ))}
         </div>
         {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
+          <div className="todo-mobile-order-actions">
+            <button type="button" disabled={taskMenuOrderIndex <= 0} onClick={() => moveTaskByOffset(taskMenu, -1)}>↑ Subir</button>
+            <button type="button" disabled={taskMenuOrderIndex < 0 || taskMenuOrderIndex >= taskMenuOrder.length - 1} onClick={() => moveTaskByOffset(taskMenu, 1)}>↓ Bajar</button>
+          </div>
           <button type="button" disabled={starting} onClick={() => toggleTodoComplete(taskMenu.task)}>
             {taskMenu.task.status === 'completed' ? 'Marcar como pendiente' : 'Completar'}
           </button>

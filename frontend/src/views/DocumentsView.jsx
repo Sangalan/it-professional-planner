@@ -51,8 +51,8 @@ function DetailDialog({ doc, onClose, onSaved, onDeleted }) {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 20 }}>
-      <div style={{ background: 'var(--surface)', borderRadius: 12, padding: 28, maxWidth: 420, width: '100%', boxShadow: 'var(--shadow-md)' }}>
+    <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 20 }}>
+      <div className="modal-panel" style={{ background: 'var(--surface)', borderRadius: 12, padding: 28, maxWidth: 420, width: '100%', boxShadow: 'var(--shadow-md)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h2 style={{ fontSize: 16, fontWeight: 700 }}>{fileIcon(doc.mime_type)} Documento</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-3)', lineHeight: 1 }}>✕</button>
@@ -244,8 +244,8 @@ export default function DocumentsView() {
           {q || fromDate || toDate || filterCats.length > 0 ? 'Sin resultados' : 'Sin documentos. Sube el primero.'}
         </div>
       ) : (
-        <div className="card" style={{ padding: 0 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <div className="card responsive-table-card" style={{ padding: 0 }}>
+          <table className="responsive-table documents-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 <th onClick={() => toggleSort('name')} style={thStyle}>
@@ -271,21 +271,21 @@ export default function DocumentsView() {
                   onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'}
                   onMouseLeave={e => e.currentTarget.style.background = ''}
                 >
-                  <td style={{ padding: '10px 18px', fontWeight: 500 }}>
+                  <td data-label="Nombre" style={{ padding: '10px 18px', fontWeight: 500 }}>
                     {fileIcon(doc.mime_type)} {doc.name}
                   </td>
-                  <td style={{ padding: '10px 18px', color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                  <td data-label="Fecha" style={{ padding: '10px 18px', color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
                     {fmtDate(doc.created_at)}
                   </td>
-                  <td style={{ padding: '10px 18px', color: 'var(--text-3)', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                  <td data-label="Tamaño" style={{ padding: '10px 18px', color: 'var(--text-3)', whiteSpace: 'nowrap', textAlign: 'right' }}>
                     {fmtSize(doc.size)}
                   </td>
-                  <td style={{ padding: '10px 18px' }}>
+                  <td data-label="Categorías" style={{ padding: '10px 18px' }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                       <CategoryBadges ids={doc.category_ids || []} keyPrefix={`${doc.id}-`} />
                     </div>
                   </td>
-                  <td style={{ padding: '10px 18px', textAlign: 'right' }}>
+                  <td data-label="Abrir" style={{ padding: '10px 18px', textAlign: 'right' }}>
                     <button
                       className="btn btn-ghost btn-sm"
                       title="Abrir documento"

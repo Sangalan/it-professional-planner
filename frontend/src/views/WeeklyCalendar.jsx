@@ -287,7 +287,7 @@ export default function WeeklyCalendar() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 12, alignItems: 'start' }}>
+      <div className="page-header calendar-page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 12, alignItems: 'start' }}>
         <div style={{ minWidth: 0 }}>
           <div className="page-title">Semana del {weekLabel}</div>
           <div className="page-subtitle">Vista semanal por bloques horarios</div>
@@ -308,7 +308,7 @@ export default function WeeklyCalendar() {
             </span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+        <div className="calendar-header-actions" style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 6, marginRight: 4 }}>
             <button
               className={`btn btn-sm ${calendarView === 'current' ? 'btn-primary' : 'btn-ghost'}`}
@@ -379,7 +379,67 @@ export default function WeeklyCalendar() {
             ))}
           </div>
 
-          <div style={{ overflowX: 'auto' }}>
+          <div className="mobile-week-list">
+            {days.map(day => {
+              const dateStr = toDateStr(day);
+              const dayTasks = [...(tasksByDate[dateStr] || [])].sort((a, b) =>
+                (a.start_time || '99:99').localeCompare(b.start_time || '99:99'));
+              const dayEvents = eventsByDate[dateStr] || [];
+              const dayDeadlines = deadlines.filter(deadline => deadline.date === dateStr);
+              const availableHours = getGapHours(dayTasks).filter(hour => !isToday(day) || hour >= Math.floor(currentMinutes / 60));
+              return (
+                <section className={`card mobile-week-day${isToday(day) ? ' today' : ''}`} key={dateStr}>
+                  <div className="mobile-week-day-header">
+                    <div>
+                      <strong>{fmtDayOfWeek(day)} {day.getDate()}</strong>
+                      <span>{dayTasks.length} tarea{dayTasks.length === 1 ? '' : 's'}</span>
+                    </div>
+                    <button className="btn btn-primary btn-sm" onClick={() => setCreateFor(dateStr)}>+ Tarea</button>
+                  </div>
+                  {dayDeadlines.map(deadline => (
+                    <DeadlineChip key={deadline.id} deadline={deadline} onClick={setEditDeadline} />
+                  ))}
+                  {dayEvents.map(event => (
+                    <div className="mobile-week-event" key={event.id} style={{ '--item-color': getCatColor(event.category_id) }}>
+                      <span>🎪</span><span>{event.title}</span>
+                    </div>
+                  ))}
+                  {dayTasks.map(task => (
+                    <button
+                      type="button"
+                      className={`mobile-week-task${task.status === 'completed' ? ' completed' : ''}`}
+                      key={task.id}
+                      onClick={() => setEditTask(task)}
+                      style={{ '--item-color': getTaskColor(task) }}
+                    >
+                      <span className="mobile-week-task-time">
+                        {task.start_time ? `${task.start_time}${task.end_time ? `–${task.end_time}` : ''}` : 'Sin hora'}
+                      </span>
+                      <span className="mobile-week-task-copy">
+                        <strong><MoneyMakerIcon task={task} />{task.title}{task.status === 'completed' ? ' ✓' : ''}</strong>
+                        <small>{getMilestoneLabel(task)}</small>
+                      </span>
+                    </button>
+                  ))}
+                  {dayTasks.length === 0 && dayEvents.length === 0 && dayDeadlines.length === 0 && (
+                    <div className="mobile-week-empty">Sin elementos planificados</div>
+                  )}
+                  {availableHours.length > 0 && (
+                    <div className="mobile-week-gaps">
+                      <span>Huecos:</span>
+                      {availableHours.map(hour => (
+                        <button key={hour} onClick={() => setGapDialog({ date: dateStr, hour })}>
+                          {String(hour).padStart(2, '0')}:00
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+
+          <div className="desktop-week-calendar" style={{ overflowX: 'auto' }}>
             <div style={{ minWidth: 700 }}>
               <div style={{
                 background: 'var(--border)',

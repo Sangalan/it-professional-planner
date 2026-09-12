@@ -263,8 +263,8 @@ function SearchEditModal({ item, objectives, onClose, onSaved }) {
   const supportsStatus = item.kind !== 'document';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 20 }}>
-      <div style={{ background: 'var(--surface)', borderRadius: 12, padding: 24, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: 'var(--shadow-md)' }}>
+    <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 20 }}>
+      <div className="modal-panel" style={{ background: 'var(--surface)', borderRadius: 12, padding: 24, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: 'var(--shadow-md)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <h2 style={{ fontSize: 16, fontWeight: 700 }}>
             {item.kind === 'milestone' ? '🏁 Hito' : `Editar ${TYPE_META[item.kind]?.label || item.kind}`}
@@ -719,7 +719,7 @@ export default function Search() {
           />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 12, marginBottom: 12 }}>
+        <div className="search-filter-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 12, marginBottom: 12 }}>
           <div>
             <label style={labelSt}>Desde</label>
             <SpanishDateInput value={from} onChange={setFrom} style={{ width: '100%' }} />

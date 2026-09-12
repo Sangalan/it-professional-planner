@@ -134,10 +134,10 @@ export default function ImportExport() {
 
       {/* Conflict strategy dialog */}
       {pending && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300, padding: 20 }}
           onClick={e => e.target === e.currentTarget && !importing && setPending(null)}>
-          <div style={{ background: 'var(--surface)', borderRadius: 12, padding: 28,
+          <div className="modal-panel" style={{ background: 'var(--surface)', borderRadius: 12, padding: 28,
             maxWidth: 480, width: '100%', boxShadow: 'var(--shadow-md)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h2 style={{ fontSize: 16, fontWeight: 700 }}>Importar datos</h2>

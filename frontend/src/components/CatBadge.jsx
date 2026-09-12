@@ -40,8 +40,8 @@ const PRESET_COLORS = [
 export function ColorPicker({ value, onChange }) {
   return (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-      {PRESET_COLORS.map(c => (
-        <div key={c} onClick={() => onChange(c)} style={{
+      {PRESET_COLORS.map((c, index) => (
+        <div key={`${c}-${index}`} onClick={() => onChange(c)} style={{
           width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer',
           border: value === c ? '3px solid var(--text)' : '2px solid transparent', transition: 'border .1s',
         }} title={c} />

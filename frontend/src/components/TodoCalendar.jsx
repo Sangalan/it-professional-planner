@@ -51,7 +51,7 @@ function MonthGridPicker({ value, onChange }) {
               onClick={() => { onChange({ columns: column + 1, rows: row + 1 }); setOpen(false); }} />;
           }))}
       </div>
-      <small>Mueve el cursor y haz clic para aplicar</small>
+      <small>Selecciona una opción para aplicar</small>
     </div>}
   </div>;
 }
@@ -325,6 +325,16 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
   function saveChangedDay(date) {
     return changeTaskDay(changingDayTask, date);
   }
+  function moveTaskByOffset(task, offset) {
+    const index = detail.findIndex(row => row.id === task.id);
+    const targetIndex = index + offset;
+    if (index < 0 || targetIndex < 0 || targetIndex >= detail.length || reordering) return;
+    const next = [...detail];
+    const [moved] = next.splice(index, 1);
+    next.splice(targetIndex, 0, moved);
+    setTaskMenu(null);
+    onReorder(selected, next.map(row => row.id));
+  }
   const monthRangeTitle = visibleMonthCount === 1
     ? fmtMonthYear(month)
     : `${fmtMonthYear(visibleMonths[0])} – ${fmtMonthYear(visibleMonths[visibleMonths.length - 1])}`;
@@ -335,9 +345,15 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
           <h2>{fmtDate(selected)}</h2>
           <div className="todo-day-completion">{completionPercent}% completado</div>
         </div>
-        <div className="todo-sort-switch" aria-label="Ordenar ToDo">
-          <button type="button" className={sortMode === 'time' ? 'selected' : ''} onClick={() => setSortMode('time')}>⏱ Tiempo</button>
-          <button type="button" className={sortMode === 'importance' ? 'selected' : ''} onClick={() => setSortMode('importance')}>★ Importancia</button>
+        <div className="todo-day-controls">
+          <div className="todo-mobile-day-actions">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCreateTask(selected)}>+ Tarea</button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDeadlineModal({ date: selected })}>+ Fecha límite</button>
+          </div>
+          <div className="todo-sort-switch" aria-label="Ordenar ToDo">
+            <button type="button" className={sortMode === 'time' ? 'selected' : ''} onClick={() => setSortMode('time')}>⏱ Tiempo</button>
+            <button type="button" className={sortMode === 'importance' ? 'selected' : ''} onClick={() => setSortMode('importance')}>★ Importancia</button>
+          </div>
         </div>
       </div>
       {selectedDeadlines.length > 0 && <div className="deadline-detail-list">
@@ -399,6 +415,12 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
         <div className="todo-detail-heading">
           <InlineEstimate task={task} onUpdated={onUpdated} />
           <button className={`todo-detail-title${task.status === 'completed' ? ' done' : ''}`} onClick={() => onEdit(task)}><MoneyMakerIcon task={task} />{task.title}</button>
+          <button type="button" className="todo-mobile-actions" aria-label={`Acciones para ${task.title}`}
+            onClick={event => {
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              setTaskMenu({ task, x: rect.left, y: rect.bottom + 4 });
+            }}>•••</button>
         </div>
         {task.description && <p>{task.description}</p>}
         {task.status === 'completed' && <span className="badge badge-completed">Completada{formatActualDuration(task.actual_seconds) && ` · ${formatActualDuration(task.actual_seconds)}`}</span>}
@@ -459,6 +481,10 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
       <button type="button" onClick={() => { setDeadlineModal({ date: dayMenu.date }); setDayMenu(null); }}>Crear fecha límite</button>
     </div>}
     {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
+      <div className="todo-mobile-order-actions">
+        <button type="button" disabled={sortMode !== 'importance' || detail.findIndex(task => task.id === taskMenu.task.id) <= 0 || reordering} onClick={() => moveTaskByOffset(taskMenu.task, -1)}>↑ Subir</button>
+        <button type="button" disabled={sortMode !== 'importance' || detail.findIndex(task => task.id === taskMenu.task.id) >= detail.length - 1 || reordering} onClick={() => moveTaskByOffset(taskMenu.task, 1)}>↓ Bajar</button>
+      </div>
       <button type="button" onClick={() => { onToggleComplete(taskMenu.task); setTaskMenu(null); }}>
         {taskMenu.task.status === 'completed' ? 'Marcar como pendiente' : 'Completar'}
       </button>

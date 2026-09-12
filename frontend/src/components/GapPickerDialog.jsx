@@ -159,12 +159,12 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
   }, [allItems, search]);
 
   return (
-    <div style={{
+    <div className="modal-backdrop" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 400, padding: 20,
     }}>
-      <div style={{
+      <div className="modal-panel" style={{
         background: 'var(--surface)', borderRadius: 12, padding: 24,
         maxWidth: 500, width: '100%', maxHeight: '85vh',
         display: 'flex', flexDirection: 'column',
@@ -193,16 +193,17 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
         {step === 'slot' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto' }}>
             {gapHours.map(h => (
-              <div key={h}
+              <button type="button" key={h} className="gap-slot-button"
                 onClick={() => { setSelectedHour(h); setStep('milestone'); }}
                 style={{
+                  width: '100%', textAlign: 'left', fontFamily: 'inherit',
                   padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
                   background: '#fef9c3', border: '1px solid #fde047',
                   fontWeight: 600, fontSize: 13, color: '#92400e',
                   display: 'flex', alignItems: 'center', gap: 8,
                 }}>
                 ⏰ {fmtHour(h)}
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -225,26 +226,26 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
               {GROUPS.filter(g => availableTypes.has(g.type)).map(g => {
                 const active = activeTypes.includes(g.type);
                 return (
-                  <span key={g.type} onClick={() => toggleType(g.type)} style={{
+                  <button type="button" className="gap-type-chip" key={g.type} onClick={() => toggleType(g.type)} style={{
                     cursor: 'pointer', fontSize: 11, padding: '3px 9px', borderRadius: 10,
                     background: active ? 'var(--accent)' : 'var(--bg)',
                     color: active ? 'white' : 'var(--text-2)',
                     border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
                     fontWeight: active ? 600 : 400,
-                    userSelect: 'none',
+                    userSelect: 'none', fontFamily: 'inherit',
                   }}>
                     {g.icon} {g.label}
-                  </span>
+                  </button>
                 );
               })}
               {activeTypes.length > 0 && (
-                <span onClick={() => setActiveTypes([])} style={{
+                <button type="button" className="gap-type-chip" onClick={() => setActiveTypes([])} style={{
                   cursor: 'pointer', fontSize: 11, padding: '3px 9px', borderRadius: 10,
                   background: 'var(--bg)', color: 'var(--text-3)',
-                  border: '1px solid var(--border)', userSelect: 'none',
+                  border: '1px solid var(--border)', userSelect: 'none', fontFamily: 'inherit',
                 }}>
                   ✕ Todos
-                </span>
+                </button>
               )}
             </div>
 
@@ -286,9 +287,10 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
                       {group.items.map(item => {
                         const obj = objMap[item.objective_id];
                         return (
-                          <div key={item.id}
+                          <button type="button" key={item.id} className="gap-item-button"
                             onClick={() => pick(item)}
                             style={{
+                              width: '100%', textAlign: 'left', color: 'var(--text)', fontFamily: 'inherit',
                               padding: '8px 12px', borderRadius: 8,
                               cursor: creating ? 'wait' : 'pointer',
                               border: '1px solid var(--border)',
@@ -304,7 +306,7 @@ export default function GapPickerDialog({ date, hour: initialHour, gapHours = []
                               {obj && <span>{obj.title}</span>}
                               {item.date && <span>· {item.date}</span>}
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>

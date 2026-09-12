@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Icono de Plan Maestro</title>
+  <rect width="512" height="512" fill="#2563eb"/>
+  <circle cx="420" cy="92" r="82" fill="#60a5fa" opacity=".32"/>
+  <g>
+    <rect x="112" y="126" width="288" height="276" rx="46" fill="#fff"/>
+    <path d="M112 204h288v-32c0-25-21-46-46-46H158c-25 0-46 21-46 46v32Z" fill="#dbeafe"/>
+    <rect x="166" y="96" width="32" height="82" rx="16" fill="#1e40af"/>
+    <rect x="314" y="96" width="32" height="82" rx="16" fill="#1e40af"/>
+    <circle cx="170" cy="250" r="15" fill="#bfdbfe"/>
+    <circle cx="224" cy="250" r="15" fill="#bfdbfe"/>
+    <circle cx="278" cy="250" r="15" fill="#bfdbfe"/>
+    <path d="M178 321 L228 369 L340 253" fill="none" stroke="#2563eb" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

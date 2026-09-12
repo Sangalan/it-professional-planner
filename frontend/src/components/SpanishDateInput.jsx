@@ -94,6 +94,9 @@ export default function SpanishDateInput({ value, onChange, style, placeholder =
     <div ref={rootRef} style={{ position: 'relative', ...style }}>
       <button
         type="button"
+        className="spanish-date-trigger"
+        aria-haspopup="dialog"
+        aria-expanded={open}
         onClick={() => setOpen(o => !o)}
         style={{
           width: '100%',
@@ -111,7 +114,7 @@ export default function SpanishDateInput({ value, onChange, style, placeholder =
       </button>
 
       {open && createPortal((
-        <div style={{
+        <div className="spanish-date-popup" role="dialog" aria-label="Seleccionar fecha" style={{
           position: 'fixed',
           zIndex: 1000,
           top: popupPos.top,
@@ -124,11 +127,11 @@ export default function SpanishDateInput({ value, onChange, style, placeholder =
           padding: 10,
         }} ref={popupRef}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMonth(m => subMonths(m, 1))}>‹</button>
+            <button type="button" className="btn btn-ghost btn-sm spanish-date-nav" aria-label="Mes anterior" onClick={() => setMonth(m => subMonths(m, 1))}>‹</button>
             <div style={{ fontSize: 13, fontWeight: 700, textTransform: 'capitalize' }}>
               {format(month, 'MMMM yyyy', { locale: es })}
             </div>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMonth(m => addMonths(m, 1))}>›</button>
+            <button type="button" className="btn btn-ghost btn-sm spanish-date-nav" aria-label="Mes siguiente" onClick={() => setMonth(m => addMonths(m, 1))}>›</button>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
@@ -142,6 +145,8 @@ export default function SpanishDateInput({ value, onChange, style, placeholder =
                 <button
                   key={d.toISOString()}
                   type="button"
+                  className="spanish-date-day"
+                  aria-label={format(d, "d 'de' MMMM 'de' yyyy", { locale: es })}
                   onClick={() => pick(d)}
                   style={{
                     border: '1px solid transparent',

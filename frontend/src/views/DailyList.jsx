@@ -230,7 +230,7 @@ export default function DailyList() {
   return (
     <div>
       {/* ── Header ── */}
-      <div className="page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 12, alignItems: 'start' }}>
+      <div className="page-header calendar-page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', columnGap: 12, alignItems: 'start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="page-title" style={{ textTransform: 'capitalize' }}>
             {isToday ? 'Hoy' : dayLabel}
@@ -255,7 +255,7 @@ export default function DailyList() {
             </span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0, marginLeft: 12 }}>
+        <div className="calendar-header-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, marginLeft: 12 }}>
           <div style={{ display: 'flex', gap: 6, marginRight: 4 }}>
             <button
               className={`btn btn-sm ${calendarView === 'current' ? 'btn-primary' : 'btn-ghost'}`}
@@ -347,12 +347,12 @@ export default function DailyList() {
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {gapHours.map(h => (
-                  <span key={h} onClick={() => setGapDialog({ hour: h })} style={{
-                    cursor: 'pointer', fontSize: 12, padding: '3px 10px', borderRadius: 10,
+                  <button type="button" className="daily-gap-button" key={h} onClick={() => setGapDialog({ hour: h })} style={{
+                    cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: '3px 10px', borderRadius: 10,
                     background: '#fef08a', color: '#92400e', border: '1px solid #fde047', fontWeight: 600,
                   }}>
                     {String(h).padStart(2, '0')}:00
-                  </span>
+                  </button>
                 ))}
               </div>
             </div>

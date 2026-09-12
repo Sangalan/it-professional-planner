@@ -73,12 +73,12 @@ function DayDetail({ dateStr, tasks, events, deadlines, getTaskColor, getMilesto
   }
 
   return (
-    <div style={{
+    <div className="modal-backdrop" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,.3)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 200, padding: 20
     }}>
-      <div style={{
+      <div className="modal-panel" style={{
         background: 'var(--surface)', borderRadius: 10, padding: 24,
         maxWidth: 480, width: '100%', maxHeight: '80vh', overflowY: 'auto',
         boxShadow: 'var(--shadow-md)'
@@ -262,7 +262,7 @@ export default function MonthlyCalendar() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr) auto', columnGap: 12, alignItems: 'center' }}>
+      <div className="page-header calendar-page-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 1fr) auto', columnGap: 12, alignItems: 'center' }}>
         <div style={{ minWidth: 0 }}>
           <div className="page-title" style={{ textTransform: 'capitalize' }}>{fmtMonthYear(month)}</div>
           <div className="page-subtitle">Calendario mensual</div>
@@ -283,7 +283,7 @@ export default function MonthlyCalendar() {
             </span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+        <div className="calendar-header-actions" style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 6, marginRight: 4 }}>
             <button
               className={`btn btn-sm ${calendarView === 'current' ? 'btn-primary' : 'btn-ghost'}`}

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { api, setActiveUserId } from './api.js';
 import { toDateStr, timeToMinutes, formatCountdown, secondsUntilTime, getGapHours } from './utils/dateUtils.js';
 import Dashboard from './views/Dashboard.jsx';
@@ -331,11 +331,13 @@ function SectionGuard({ enabled, sectionLabel, children }) {
 }
 
 function PlannerApp({ authUser, onLogout }) {
+  const location = useLocation();
   const [users, setUsers] = useState([]);
   const activeUserId = authUser.planner_user_id;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem('sidebar-collapsed') === 'true',
   );
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const activeUser = users.find(u => u.id === activeUserId) || null;
   const sections = activeUser?.content_sections || {
     clients: true, publications: true, certifications: true, repos: true, prs: true, events: true, reading_list: true, documents: true,
@@ -345,6 +347,34 @@ function PlannerApp({ authUser, onLogout }) {
     setActiveUserId(activeUserId);
     api.users().then(setUsers).catch(() => {});
   }, [activeUserId]);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return undefined;
+    const mobileViewport = window.matchMedia('(max-width: 900px)');
+    if (!mobileViewport.matches) {
+      setMobileMenuOpen(false);
+      return undefined;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = event => {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    };
+    const closeOnDesktop = event => {
+      if (!event.matches) setMobileMenuOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    mobileViewport.addEventListener('change', closeOnDesktop);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+      mobileViewport.removeEventListener('change', closeOnDesktop);
+    };
+  }, [mobileMenuOpen]);
 
   function toggleSidebar() {
     setSidebarCollapsed(collapsed => {
@@ -357,7 +387,25 @@ function PlannerApp({ authUser, onLogout }) {
   return (
     <CategoriesProvider>
       <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
-        <aside className="sidebar" aria-label="Navegación principal">
+        <button
+          type="button"
+          className="mobile-menu-button"
+          aria-label={mobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
+          aria-expanded={mobileMenuOpen}
+          aria-controls="main-navigation"
+          onClick={() => setMobileMenuOpen(open => !open)}
+        >
+          {mobileMenuOpen ? '✕' : '☰'}
+        </button>
+        {mobileMenuOpen && (
+          <button
+            type="button"
+            className="mobile-menu-backdrop"
+            aria-label="Cerrar menú"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+        )}
+        <aside id="main-navigation" className={`sidebar${mobileMenuOpen ? ' mobile-open' : ''}`} aria-label="Navegación principal">
           <div className="sidebar-brand">
             <div className="sidebar-brand-heading">
               <h1>Plan Maestro</h1>
@@ -382,6 +430,7 @@ function PlannerApp({ authUser, onLogout }) {
                 end={item.path === '/'}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
                 title={sidebarCollapsed ? item.label : undefined}
+                onClick={() => setMobileMenuOpen(false)}
               >
                 <span className="icon">{item.icon}</span>
                 <span className="nav-label">{item.label}</span>
@@ -404,6 +453,7 @@ function PlannerApp({ authUser, onLogout }) {
                 to={item.path}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
                 title={sidebarCollapsed ? item.label : undefined}
+                onClick={() => setMobileMenuOpen(false)}
               >
                 <span className="icon">{item.icon}</span>
                 <span className="nav-label">{item.label}</span>
@@ -415,6 +465,7 @@ function PlannerApp({ authUser, onLogout }) {
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+                onClick={() => setMobileMenuOpen(false)}
                 title={sidebarCollapsed ? item.label : undefined}
               >
                 <span className="icon">{item.icon}</span>

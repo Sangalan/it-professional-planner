@@ -17,7 +17,7 @@ export default function ContentMetricsSummary({ title = 'Resumen', metrics = [],
       </button>
 
       {!collapsed && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
+        <div className="content-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
           {metrics.map((m, i) => (
             <div key={`${m.label}-${i}`} className="stat-card" style={{ padding: 12 }}>
               <div className="stat-label">{m.label}</div>

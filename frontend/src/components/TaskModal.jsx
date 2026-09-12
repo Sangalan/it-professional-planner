@@ -155,6 +155,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
 
   return (
     <div
+      className="modal-backdrop"
       style={{
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -162,7 +163,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
       }}
      
     >
-      <div style={{
+      <div className="modal-panel" style={{
         background: 'var(--surface)', borderRadius: 12,
         padding: 28, maxWidth: 520, width: '100%',
         maxHeight: '90vh', overflowY: 'auto',
@@ -294,19 +295,19 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
                     ].map(({ day, label }) => {
                       const active = form.fixed_days.includes(day);
                       return (
-                        <span key={day} onClick={() => {
+                        <button type="button" className="fixed-day-button" key={day} onClick={() => {
                           set('fixed_days', active
                             ? form.fixed_days.filter(d => d !== day)
                             : [...form.fixed_days, day]);
                         }} style={{
-                          cursor: 'pointer', fontSize: 12, padding: '4px 10px', borderRadius: 8,
+                          cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: '4px 10px', borderRadius: 8,
                           background: active ? 'var(--accent)' : 'var(--surface)',
                           color: active ? 'white' : 'var(--text-2)',
                           border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
                           fontWeight: active ? 600 : 400, userSelect: 'none',
                         }}>
                           {label}
-                        </span>
+                        </button>
                       );
                     })}
                   </div>

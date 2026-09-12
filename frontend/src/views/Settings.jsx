@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
@@ -41,12 +41,12 @@ function linkedStatusLabel(status) {
 function Dialog({ title, onClose, children }) {
   useEscapeClose(onClose);
   return (
-    <div style={{
+    <div className="modal-backdrop" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: 300, padding: 20,
     }}>
-      <div style={{
+      <div className="modal-panel" style={{
         background: 'var(--surface)', borderRadius: 12, padding: 28,
         maxWidth: 520, width: '100%', maxHeight: '90vh', overflowY: 'auto',
         boxShadow: 'var(--shadow-md)',
@@ -1052,15 +1052,15 @@ export default function Settings() {
     }
   }, [location.state, location.pathname, navigate, objectives, milestoneItems]);
 
-  const objectiveById = objectives.reduce((acc, obj) => {
+  const objectiveById = useMemo(() => objectives.reduce((acc, obj) => {
     acc[obj.id] = obj;
     return acc;
-  }, {});
-  const milestonesByObj = milestoneItems.reduce((acc, item) => {
+  }, {}), [objectives]);
+  const milestonesByObj = useMemo(() => milestoneItems.reduce((acc, item) => {
     const key = item.objective_id && objectiveById[item.objective_id] ? item.objective_id : '__none__';
     (acc[key] = acc[key] || []).push(item);
     return acc;
-  }, {});
+  }, {}), [milestoneItems, objectiveById]);
   useEffect(() => {
     setMilestoneGroupsExpanded(prev => {
       const next = { ...prev };
