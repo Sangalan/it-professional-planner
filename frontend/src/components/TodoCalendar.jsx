@@ -297,7 +297,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
     try { localStorage.setItem('todo-month-layout', JSON.stringify(next)); } catch (_) { /* The view still works without persistence. */ }
   }
   async function changeTaskDay(task, date) {
-    if (!task || !date || changingDay) return;
+    if (!task || date === undefined || changingDay) return;
     setChangingDay(true);
     setError('');
     try {
@@ -411,7 +411,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
           draggedTaskRef.current = null;
           setDropTarget(null);
         }}
-        onContextMenu={e => { e.preventDefault(); setTaskMenu({ task, x: Math.min(e.clientX, window.innerWidth - 190), y: Math.min(e.clientY, window.innerHeight - 200) }); }}>
+        onContextMenu={e => { e.preventDefault(); setTaskMenu({ task, x: Math.max(8, Math.min(e.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 300)) }); }}>
         <div className="todo-detail-heading">
           <InlineEstimate task={task} onUpdated={onUpdated} />
           <button className={`todo-detail-title${task.status === 'completed' ? ' done' : ''}`} onClick={() => onEdit(task)}><MoneyMakerIcon task={task} />{task.title}</button>
@@ -468,7 +468,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
                   onContextMenu={e => {
                     e.preventDefault();
                     e.stopPropagation();
-                    setTaskMenu({ task, x: Math.min(e.clientX, window.innerWidth - 190), y: Math.min(e.clientY, window.innerHeight - 200) });
+                    setTaskMenu({ task, x: Math.max(8, Math.min(e.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 300)) });
                   }}><MoneyMakerIcon task={task} />{task.title}</span>)}
               </div>;
             })}
@@ -504,6 +504,11 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
         setChangeDayAnchor({ top: taskMenu.y, left: taskMenu.x, right: taskMenu.x + 180 });
         setTaskMenu(null);
       }}>Cambiar día</button>
+      <button type="button" disabled={!taskMenu.task.date || changingDay} onClick={() => {
+        const task = taskMenu.task;
+        setTaskMenu(null);
+        changeTaskDay(task, null);
+      }}>Sin fecha</button>
       <button type="button" onClick={() => { onSetDuration(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
       <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
         title={!moneyPlanningReady ? 'Planifica primero 4h de tareas Money maker' : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}

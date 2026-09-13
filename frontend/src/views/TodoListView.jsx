@@ -4,8 +4,9 @@ import { api, getActiveUserId } from '../api.js';
 import TaskModal from '../components/TaskModal.jsx';
 import TodoCalendar from '../components/TodoCalendar.jsx';
 import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
+import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
-import { fmtDate, toDateStr, startOfMonth, addMonths, getDaysInMonthGrid, isSameMonth, fmtMonthYear, formatDuration, formatActualDuration } from '../utils/dateUtils.js';
+import { fmtDate, toDateStr, startOfMonth, addMonths, addDays, getDaysInMonthGrid, isSameMonth, fmtMonthYear, formatDuration, formatActualDuration } from '../utils/dateUtils.js';
 import { isMoneyMakerTask, isMoneyObjective, isTodoTask } from '../utils/taskUtils.js';
 
 const LAST_ORDER = Number.MAX_SAFE_INTEGER;
@@ -161,7 +162,7 @@ function QuickAdd({ objectiveId, moneyMaker = false, onCreated }) {
   );
 }
 
-function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, onEdit, onTaskContextMenu, onColumnDrop, onMoveColumn, canMoveColumnUp, canMoveColumnDown, onTaskDrop, onTaskDragStart, onTaskDragEnd, dragColumnRef, dragTaskRef, saving }) {
+function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, onEdit, onTaskContextMenu, onColumnDrop, onMoveColumn, canMoveColumnUp, canMoveColumnDown, onTaskDrop, onTaskDragStart, onTaskDragEnd, dragColumnRef, dragTaskRef, saving, mobileCollapsed, onToggleMobile }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [completedExpanded, setCompletedExpanded] = useState(false);
   const dropTargetRef = useRef(null);
@@ -217,7 +218,7 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
 
   return (
     <section
-      className={`todo-column${dragTaskRef.current?.objectiveId === objective.id ? ' task-dragging' : ''}`}
+      className={`todo-column${mobileCollapsed ? ' mobile-collapsed' : ''}${dragTaskRef.current?.objectiveId === objective.id ? ' task-dragging' : ''}`}
       onDragOver={e => {
         if (dragColumnRef.current) e.preventDefault();
         else if (dragTaskRef.current) e.dataTransfer.dropEffect = 'none';
@@ -232,7 +233,7 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
       <header
         className="todo-column-header"
         style={{ '--todo-objective-color': objective.color || 'var(--border)' }}
-        draggable
+        draggable={!mobileCollapsed && !onToggleMobile}
         onDragStart={e => {
           dragTaskRef.current = null;
           dragColumnRef.current = objective.id;
@@ -240,7 +241,12 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
         }}
         onDragEnd={() => { dragColumnRef.current = null; }}
       >
-        <span className="todo-column-title">{objective.title}</span>
+        {onToggleMobile
+          ? <button type="button" className="todo-mobile-column-heading" aria-expanded={!mobileCollapsed} onClick={onToggleMobile}>
+            <span className="todo-mobile-column-toggle" aria-hidden="true">{mobileCollapsed ? '›' : '⌄'}</span>
+            <span className="todo-column-title">{objective.title}</span>
+          </button>
+          : <span className="todo-column-title">{objective.title}</span>}
         <div className="todo-mobile-column-actions" aria-label={`Reordenar ${objective.title}`}>
           <button type="button" disabled={!canMoveColumnUp} aria-label={`Mover ${objective.title} hacia arriba`} onClick={event => { event.stopPropagation(); onMoveColumn(-1); }}>↑</button>
           <button type="button" disabled={!canMoveColumnDown} aria-label={`Mover ${objective.title} hacia abajo`} onClick={event => { event.stopPropagation(); onMoveColumn(1); }}>↓</button>
@@ -350,6 +356,64 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
   );
 }
 
+function TodoChecklistColumn({ objective, tasks, onReload, onEdit, onTaskContextMenu, onToggleComplete, saving, mobileCollapsed, onToggleMobile }) {
+  return (
+    <section className={`todo-column todo-checklist-column${mobileCollapsed ? ' mobile-collapsed' : ''}`}>
+      <header
+        className="todo-column-header todo-checklist-column-header"
+        style={{ '--todo-objective-color': objective.color || 'var(--border)' }}
+      >
+        {onToggleMobile
+          ? <button type="button" className="todo-mobile-column-heading" aria-expanded={!mobileCollapsed} onClick={onToggleMobile}>
+            <span className="todo-mobile-column-toggle" aria-hidden="true">{mobileCollapsed ? '›' : '⌄'}</span>
+            <span className="todo-column-title">{objective.title}</span>
+          </button>
+          : <span className="todo-column-title">{objective.title}</span>}
+        <span className="todo-checklist-count" aria-label={`${tasks.length} tareas`}>{tasks.length}</span>
+        <QuickAdd objectiveId={objective.id} moneyMaker={isMoneyObjective(objective)} onCreated={onReload} />
+      </header>
+      <div className="todo-column-body">
+        {tasks.map(task => (
+          <article
+            key={task.id}
+            data-todo-task-id={task.id}
+            className={`todo-checklist-card${task.status === 'completed' ? ' completed' : ''}`}
+            onClick={() => onEdit(task)}
+            onContextMenu={event => {
+              event.preventDefault();
+              event.stopPropagation();
+              onTaskContextMenu(task, event, objective.id);
+            }}
+          >
+            <label className="todo-checklist-checkbox" onClick={event => event.stopPropagation()}>
+              <input
+                type="checkbox"
+                checked={task.status === 'completed'}
+                disabled={saving}
+                aria-label={`${task.status === 'completed' ? 'Marcar como pendiente' : 'Marcar como completada'}: ${task.title}`}
+                onChange={() => onToggleComplete(task)}
+              />
+            </label>
+            <div className="todo-checklist-content">
+              <div className="todo-card-title"><MoneyMakerIcon task={task} />{task.title}</div>
+              {Number(task.duration_estimated) > 0 && <span className="todo-card-duration">{formatDuration(Number(task.duration_estimated))}</span>}
+            </div>
+            <button
+              type="button"
+              className="todo-mobile-actions"
+              aria-label={`Acciones para ${task.title}`}
+              onClick={event => {
+                event.stopPropagation();
+                onTaskContextMenu(task, event, objective.id);
+              }}
+            >•••</button>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function countdownMinutes(task, now) {
   if (!task?.end_time) return 0;
   const [hours, minutes] = task.end_time.split(':').map(Number);
@@ -422,6 +486,55 @@ function DurationDialog({ task, onClose, onSaved }) {
       <div className="todo-confirm-actions">
         <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
         <button className="btn btn-primary" disabled={saving}>{saving ? 'Guardando…' : 'Guardar'}</button>
+      </div>
+    </form>
+  </div>;
+}
+
+function AssignTodoDayDialog({ task, onClose, onSaved }) {
+  const [date, setDate] = useState(task.date || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const today = toDateStr(new Date());
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = toDateStr(tomorrowDate);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await api.updateTask(task.id, {
+        date: date || null,
+        start_time: null,
+        end_time: null,
+      });
+      onSaved(updated);
+    } catch (_) {
+      setError('No se pudo asignar el día. Vuelve a intentarlo.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="todo-confirm-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
+    <form className="todo-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="todo-assign-day-title" onSubmit={submit}>
+      <h2 id="todo-assign-day-title">{task.date ? 'Cambiar día' : 'Asignar día'}</h2>
+      <p><MoneyMakerIcon task={task} />{task.title}</p>
+      <label className="todo-assign-day-label">Día
+        <SpanishDateInput value={date} onChange={setDate} placeholder="Selecciona un día" style={{ marginTop: 5 }} />
+      </label>
+      <div className="todo-assign-day-shortcuts">
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDate(today)}>Hoy</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDate(tomorrow)}>Mañana</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDate('')}>Sin fecha</button>
+      </div>
+      {error && <div role="alert" className="todo-confirm-error">{error}</div>}
+      <div className="todo-confirm-actions">
+        <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+        <button className="btn btn-primary" disabled={saving}>{saving ? 'Guardando…' : 'Guardar día'}</button>
       </div>
     </form>
   </div>;
@@ -573,9 +686,12 @@ export default function TodoListView() {
   const [editingDeadline, setEditingDeadline] = useState(null);
   const [taskMenu, setTaskMenu] = useState(null);
   const [durationTask, setDurationTask] = useState(null);
+  const [assigningDayTask, setAssigningDayTask] = useState(null);
   const [countdownDialogOpen, setCountdownDialogOpen] = useState(false);
   const [moneyPlanningReady, setMoneyPlanningReady] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [mobileViewport, setMobileViewport] = useState(() => window.matchMedia('(max-width: 900px)').matches);
+  const [expandedObjectiveId, setExpandedObjectiveId] = useState(null);
   const [countdownEnd, setCountdownEnd] = useState(() => {
     try {
       const saved = Number(localStorage.getItem(COUNTDOWN_STORAGE_KEY));
@@ -594,6 +710,20 @@ export default function TodoListView() {
   const activeTaskScrolledPast = useScrolledPast(activeTaskBannerRef, Boolean(moneyPlanningReady && activeTasks.length));
 
   useEffect(() => () => window.clearTimeout(flashTimerRef.current), []);
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 900px)');
+    const update = event => {
+      setMobileViewport(event.matches);
+      if (event.matches) setExpandedObjectiveId(null);
+    };
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (mobileViewport) setExpandedObjectiveId(null);
+  }, [mobileViewport, view]);
 
   const dialogOpen = Boolean(editing || creatingTaskDate || editingDeadline || durationTask || countdownDialogOpen);
 
@@ -765,6 +895,19 @@ export default function TodoListView() {
       .sort(byStoredOrder);
   }, [objectives, filteredTasks]);
 
+  const checklistTasks = useMemo(
+    () => filteredTasks.filter(task => isTodoTask(task) && !task.date),
+    [filteredTasks],
+  );
+
+  const checklistColumns = useMemo(() => {
+    const objectiveIds = new Set(checklistTasks.filter(task => task.objective_id).map(task => task.objective_id));
+    const hasMoneyMakerTodos = checklistTasks.some(task => isMoneyMakerTask(task));
+    return objectives
+      .filter(objective => objective.status !== 'postponed' && (objectiveIds.has(objective.id) || (hasMoneyMakerTodos && isMoneyObjective(objective))))
+      .sort(byStoredOrder);
+  }, [checklistTasks, objectives]);
+
   async function toggleMoneyMaker(task) {
     setTaskMenu(null);
     setError('');
@@ -795,6 +938,21 @@ export default function TodoListView() {
       setError('No se pudo cambiar el estado del ToDo. Vuelve a intentarlo.');
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function changeTodoDay(task, date) {
+    if (!task || saving) return;
+    setTaskMenu(null);
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await api.updateTask(task.id, { date, start_time: null, end_time: null });
+      setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row));
+    } catch (_) {
+      setError('No se pudo cambiar el día del ToDo. Vuelve a intentarlo.');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -908,11 +1066,14 @@ export default function TodoListView() {
             <div className="todo-view-switch">
               <button className={`btn ${view === 'calendar' ? 'btn-primary' : 'btn-ghost'}`} aria-label="Vista de calendario" title="Calendario" onClick={() => setView('calendar')}>📅</button>
               <button className={`btn ${view === 'board' ? 'btn-primary' : 'btn-ghost'}`} aria-label="Vista por objetivos" title="Por objetivos" onClick={() => setView('board')}>🎯</button>
+              <button className={`btn ${view === 'checklist' ? 'btn-primary' : 'btn-ghost'}`} aria-label="Vista checklist" title="Checklist" onClick={() => setView('checklist')}>☑</button>
             </div>
             <button type="button" className={`btn todo-countdown-mode-button${countdownEnd ? ' active' : ''}`}
               onClick={() => setCountdownDialogOpen(true)}>⏱ {countdownEnd ? 'Cambiar contrarreloj' : 'Modo contrarreloj'}</button>
           </div>
-          <div className="page-subtitle">{columns.length} objetivo{columns.length === 1 ? '' : 's'} con tareas ToDo</div>
+          <div className="page-subtitle">{view === 'checklist'
+            ? `${checklistTasks.length} tarea${checklistTasks.length === 1 ? '' : 's'} sin fecha`
+            : `${columns.length} objetivo${columns.length === 1 ? '' : 's'} con tareas ToDo`}</div>
         </div>
       </div>
 
@@ -930,6 +1091,29 @@ export default function TodoListView() {
           onCreateTask={setCreatingTaskDate}
           onReorder={reorderDay} reordering={reordering}
           onUpdated={updated => setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row))} />
+      ) : view === 'checklist' ? (
+        checklistColumns.length === 0 ? (
+          <div className="empty-state card" style={{ padding: 40 }}>{searchTerm ? 'No hay tareas sin fecha que coincidan con la búsqueda' : 'No hay tareas sin fecha'}</div>
+        ) : (
+          <div className="todo-board todo-checklist-board">
+            {checklistColumns.map(objective => (
+              <TodoChecklistColumn
+                key={objective.id}
+                objective={objective}
+                tasks={checklistTasks
+                  .filter(task => task.objective_id === objective.id || (isMoneyObjective(objective) && isMoneyMakerTask(task)))
+                  .sort(byStoredOrder)}
+                onReload={load}
+                onEdit={setEditing}
+                onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 280)) })}
+                onToggleComplete={toggleTodoComplete}
+                saving={starting}
+                mobileCollapsed={mobileViewport && expandedObjectiveId !== objective.id}
+                onToggleMobile={mobileViewport ? () => setExpandedObjectiveId(current => current === objective.id ? null : objective.id) : null}
+              />
+            ))}
+          </div>
+        )
       ) : columns.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>{searchTerm ? 'No hay tareas que coincidan con la búsqueda' : 'No hay objetivos con tareas ToDo'}</div>
       ) : (
@@ -946,7 +1130,7 @@ export default function TodoListView() {
               tasks={filteredTasks.filter(task => isTodoTask(task) && (task.objective_id === objective.id || (isMoneyObjective(objective) && isMoneyMakerTask(task)))).sort(byStoredOrder)}
               onReload={load}
               onEdit={setEditing}
-              onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 60) })}
+              onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 280)) })}
               onColumnDrop={moveColumn}
               onMoveColumn={offset => moveColumn(objective.id, columns[objectiveIndex + offset]?.id)}
               canMoveColumnUp={objectiveIndex > 0}
@@ -966,30 +1150,42 @@ export default function TodoListView() {
               }}
               onTaskDragEnd={endTaskDrag}
               saving={saving}
+              mobileCollapsed={mobileViewport && expandedObjectiveId !== objective.id}
+              onToggleMobile={mobileViewport ? () => setExpandedObjectiveId(current => current === objective.id ? null : objective.id) : null}
             />
           ))}
         </div>
-        {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
-          <div className="todo-mobile-order-actions">
-            <button type="button" disabled={taskMenuOrderIndex <= 0} onClick={() => moveTaskByOffset(taskMenu, -1)}>↑ Subir</button>
-            <button type="button" disabled={taskMenuOrderIndex < 0 || taskMenuOrderIndex >= taskMenuOrder.length - 1} onClick={() => moveTaskByOffset(taskMenu, 1)}>↓ Bajar</button>
-          </div>
-          <button type="button" disabled={starting} onClick={() => toggleTodoComplete(taskMenu.task)}>
-            {taskMenu.task.status === 'completed' ? 'Marcar como pendiente' : 'Completar'}
-          </button>
-          <button type="button" onClick={() => toggleMoneyMaker(taskMenu.task)}>{isMoneyMakerTask(taskMenu.task) ? 'Quitar Money maker' : 'Marcar Money maker 💰'}</button>
-          <button type="button" onClick={() => { setDurationTask(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
-          <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
-            title={!moneyPlanningReady ? 'Planifica primero 4h de tareas Money maker' : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
-            onClick={() => { startTodo(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
-        </div>}
         </>
       )}
+
+      {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
+        <div className="todo-mobile-order-actions">
+          <button type="button" disabled={taskMenuOrderIndex <= 0} onClick={() => moveTaskByOffset(taskMenu, -1)}>↑ Subir</button>
+          <button type="button" disabled={taskMenuOrderIndex < 0 || taskMenuOrderIndex >= taskMenuOrder.length - 1} onClick={() => moveTaskByOffset(taskMenu, 1)}>↓ Bajar</button>
+        </div>
+        <button type="button" disabled={starting} onClick={() => toggleTodoComplete(taskMenu.task)}>
+          {taskMenu.task.status === 'completed' ? 'Marcar como pendiente' : 'Completar'}
+        </button>
+        <button type="button" onClick={() => toggleMoneyMaker(taskMenu.task)}>{isMoneyMakerTask(taskMenu.task) ? 'Quitar Money maker' : 'Marcar Money maker 💰'}</button>
+        <button type="button" disabled={saving || taskMenu.task.date === toDateStr(new Date())}
+          onClick={() => changeTodoDay(taskMenu.task, toDateStr(new Date()))}>Cambiar a Hoy</button>
+        <button type="button" disabled={saving || taskMenu.task.date === toDateStr(addDays(new Date(), 1))}
+          onClick={() => changeTodoDay(taskMenu.task, toDateStr(addDays(new Date(), 1)))}>Cambiar a mañana</button>
+        <button type="button" onClick={() => { setAssigningDayTask(taskMenu.task); setTaskMenu(null); }}>Cambiar día</button>
+        <button type="button" disabled={!taskMenu.task.date || saving} onClick={() => changeTodoDay(taskMenu.task, null)}>Sin fecha</button>
+        <button type="button" onClick={() => { setDurationTask(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
+        <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
+          title={!moneyPlanningReady ? 'Planifica primero 4h de tareas Money maker' : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
+          onClick={() => { startTodo(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
+      </div>}
 
       {draggedTask && dragAnchor && <TodoDropCalendar task={draggedTask} anchor={dragAnchor} onDropDate={assignDate} onDropOutside={endTaskDrag} />}
 
       {durationTask && <DurationDialog task={durationTask} onClose={() => setDurationTask(null)}
         onSaved={updated => { setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row)); setDurationTask(null); }} />}
+
+      {assigningDayTask && <AssignTodoDayDialog task={assigningDayTask} onClose={() => setAssigningDayTask(null)}
+        onSaved={updated => { setTasks(rows => rows.map(row => row.id === updated.id ? { ...row, ...updated } : row)); setAssigningDayTask(null); }} />}
 
       {countdownDialogOpen && <CountdownDialog initialEnd={countdownEnd} onClose={() => setCountdownDialogOpen(false)} onStart={startCountdown} />}
 
