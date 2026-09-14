@@ -871,6 +871,7 @@ input[type="range"] { cursor: pointer; }
 }
 .todo-page-title-row { display: flex; align-items: center; gap: 12px; }
 .todo-view-switch { display: flex; gap: 8px; }
+.todo-checklist-view-icon { font-size: 3em; line-height: 1; }
 .todo-type-search {
   position: fixed;
   z-index: 1100;
@@ -997,8 +998,11 @@ input[type="range"] { cursor: pointer; }
 .todo-checklist-column-header { cursor: default; }
 .todo-checklist-column-header:active { cursor: default; }
 .todo-checklist-count { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: var(--bg); color: var(--text-2); font-size: 11px; font-weight: 700; text-align: center; }
-.todo-checklist-card { display: flex; align-items: center; gap: 9px; min-height: 46px; padding: 7px 9px; margin-bottom: 7px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-sm); cursor: pointer; }
+.todo-checklist-card { position: relative; display: flex; align-items: center; gap: 9px; min-height: 46px; padding: 7px 9px; margin-bottom: 7px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-sm); cursor: grab; }
 .todo-checklist-card:hover { border-color: var(--accent); }
+.todo-checklist-card.dragging { opacity: .45; cursor: grabbing; }
+.todo-checklist-card.drop-before { box-shadow: inset 0 3px 0 var(--accent), var(--shadow-sm); }
+.todo-checklist-card.drop-after { box-shadow: inset 0 -3px 0 var(--accent), var(--shadow-sm); }
 .todo-checklist-checkbox { display: grid; flex: 0 0 32px; width: 32px; height: 32px; place-items: center; cursor: pointer; }
 .todo-checklist-checkbox input { width: 20px; height: 20px; margin: 0; cursor: pointer; accent-color: var(--accent); }
 .todo-checklist-checkbox input:disabled { cursor: wait; }
@@ -1028,7 +1032,8 @@ input[type="range"] { cursor: pointer; }
 .todo-detail-card.exceeds-capacity { padding-right: 10px; border-radius: 6px; background: #fff1f2; }
 .todo-detail-card[draggable="true"] { cursor: grab; }
 .todo-detail-card[draggable="true"]:active { cursor: grabbing; }
-.todo-detail-card.drop-target { border-top-color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
+.todo-detail-card.drop-before { border-top-color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
+.todo-detail-card.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .todo-detail-heading { display: flex; align-items: center; gap: 8px; }
 .todo-detail-title { flex: 1; min-width: 0; background: none; border: 0; padding: 0; text-align: left; font: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
 .todo-detail-card p { font-size: 12px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }

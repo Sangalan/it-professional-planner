@@ -50,6 +50,10 @@ function useScrolledPast(ref, enabled) {
 function byStoredOrder(a, b) {
   const completionOrder = Number(a.status === 'completed') - Number(b.status === 'completed');
   if (completionOrder) return completionOrder;
+  return byTodoOrder(a, b);
+}
+
+function byTodoOrder(a, b) {
   const ao = a.todo_order ?? LAST_ORDER;
   const bo = b.todo_order ?? LAST_ORDER;
   if (ao !== bo) return ao - bo;
@@ -356,7 +360,17 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
   );
 }
 
-function TodoChecklistColumn({ objective, tasks, onReload, onEdit, onTaskContextMenu, onToggleComplete, saving, mobileCollapsed, onToggleMobile }) {
+function TodoChecklistColumn({ objective, tasks, onReload, onEdit, onTaskContextMenu, onToggleComplete, onTaskDrop, saving, mobileCollapsed, onToggleMobile }) {
+  const [draggedTaskId, setDraggedTaskId] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
+  const dropTargetRef = useRef(null);
+
+  function endDrag() {
+    dropTargetRef.current = null;
+    setDraggedTaskId(null);
+    setDropTarget(null);
+  }
+
   return (
     <section className={`todo-column todo-checklist-column${mobileCollapsed ? ' mobile-collapsed' : ''}`}>
       <header
@@ -377,7 +391,35 @@ function TodoChecklistColumn({ objective, tasks, onReload, onEdit, onTaskContext
           <article
             key={task.id}
             data-todo-task-id={task.id}
-            className={`todo-checklist-card${task.status === 'completed' ? ' completed' : ''}`}
+            className={`todo-checklist-card${task.status === 'completed' ? ' completed' : ''}${draggedTaskId === task.id ? ' dragging' : ''}${dropTarget?.id === task.id ? ` drop-${dropTarget.placement}` : ''}`}
+            draggable={!saving && !onToggleMobile && !(isMoneyObjective(objective) && task.objective_id !== objective.id)}
+            onDragStart={event => {
+              setDraggedTaskId(task.id);
+              dropTargetRef.current = null;
+              setDropTarget(null);
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', task.id);
+            }}
+            onDragEnd={endDrag}
+            onDragOver={event => {
+              if (!draggedTaskId || draggedTaskId === task.id) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              const rect = event.currentTarget.getBoundingClientRect();
+              const nextTarget = { id: task.id, placement: event.clientY < rect.top + rect.height / 2 ? 'before' : 'after' };
+              if (dropTargetRef.current?.id === nextTarget.id && dropTargetRef.current.placement === nextTarget.placement) return;
+              dropTargetRef.current = nextTarget;
+              flushSync(() => setDropTarget(nextTarget));
+            }}
+            onDrop={event => {
+              event.preventDefault();
+              event.stopPropagation();
+              const currentDropTarget = dropTargetRef.current;
+              if (draggedTaskId && draggedTaskId !== task.id && currentDropTarget?.id === task.id) {
+                onTaskDrop(objective.id, draggedTaskId, task.id, currentDropTarget.placement);
+              }
+              endDrag();
+            }}
             onClick={() => onEdit(task)}
             onContextMenu={event => {
               event.preventDefault();
@@ -990,8 +1032,8 @@ export default function TodoListView() {
   }
 
   async function moveTask(objectiveId, fromId, toId, placement = 'before') {
-    if (!fromId || fromId === toId) return;
-    const list = tasks.filter(task => task.objective_id === objectiveId && isTodoTask(task)).sort(byStoredOrder);
+    if (!fromId || fromId === toId || reordering) return;
+    const list = tasks.filter(task => task.objective_id === objectiveId && isTodoTask(task)).sort(byTodoOrder);
     const from = list.findIndex(item => item.id === fromId);
     const targetTask = list.find(item => item.id === toId);
     if (from < 0 || !targetTask) return;
@@ -1010,22 +1052,28 @@ export default function TodoListView() {
         : reordered;
     }));
     flashMovedTask(moved.id);
+    setReordering(true);
+    setError('');
     try {
       if (dateChanged) {
         const updated = await api.updateTask(moved.id, { date: targetDate, start_time: null, end_time: null });
-        setTasks(rows => rows.map(item => item.id === moved.id ? { ...item, ...updated } : item));
+        setTasks(rows => rows.map(item => item.id === moved.id
+          ? { ...item, ...updated, todo_order: positions.get(moved.id) }
+          : item));
       }
       await api.reorderTodos(objectiveId, list.map(item => item.id));
     } catch (_) {
       setError('No se pudo guardar el nuevo orden. Se ha restaurado la lista.');
       load();
+    } finally {
+      setReordering(false);
     }
   }
 
   function moveTaskByOffset(menu, offset) {
     const list = tasks
-      .filter(task => task.objective_id === menu.objectiveId && isTodoTask(task))
-      .sort(byStoredOrder);
+      .filter(task => task.objective_id === menu.objectiveId && isTodoTask(task) && (view !== 'checklist' || !task.date))
+      .sort(view === 'checklist' ? byTodoOrder : byStoredOrder);
     const index = list.findIndex(task => task.id === menu.task.id);
     const target = list[index + offset];
     if (index < 0 || !target) return;
@@ -1034,8 +1082,8 @@ export default function TodoListView() {
   }
 
   const taskMenuOrder = taskMenu ? tasks
-    .filter(task => task.objective_id === taskMenu.objectiveId && isTodoTask(task))
-    .sort(byStoredOrder) : [];
+    .filter(task => task.objective_id === taskMenu.objectiveId && isTodoTask(task) && (view !== 'checklist' || !task.date))
+    .sort(view === 'checklist' ? byTodoOrder : byStoredOrder) : [];
   const taskMenuOrderIndex = taskMenuOrder.findIndex(task => task.id === taskMenu?.task.id);
 
   return (
@@ -1066,7 +1114,9 @@ export default function TodoListView() {
             <div className="todo-view-switch">
               <button className={`btn ${view === 'calendar' ? 'btn-primary' : 'btn-ghost'}`} aria-label="Vista de calendario" title="Calendario" onClick={() => setView('calendar')}>📅</button>
               <button className={`btn ${view === 'board' ? 'btn-primary' : 'btn-ghost'}`} aria-label="Vista por objetivos" title="Por objetivos" onClick={() => setView('board')}>🎯</button>
-              <button className={`btn ${view === 'checklist' ? 'btn-primary' : 'btn-ghost'}`} aria-label="Vista checklist" title="Checklist" onClick={() => setView('checklist')}>☑</button>
+              <button className={`btn ${view === 'checklist' ? 'btn-primary' : 'btn-ghost'}`} aria-label="Vista checklist" title="Checklist" onClick={() => setView('checklist')}>
+                <span className="todo-checklist-view-icon" aria-hidden="true">☑</span>
+              </button>
             </div>
             <button type="button" className={`btn todo-countdown-mode-button${countdownEnd ? ' active' : ''}`}
               onClick={() => setCountdownDialogOpen(true)}>⏱ {countdownEnd ? 'Cambiar contrarreloj' : 'Modo contrarreloj'}</button>
@@ -1102,12 +1152,13 @@ export default function TodoListView() {
                 objective={objective}
                 tasks={checklistTasks
                   .filter(task => task.objective_id === objective.id || (isMoneyObjective(objective) && isMoneyMakerTask(task)))
-                  .sort(byStoredOrder)}
+                  .sort(byTodoOrder)}
                 onReload={load}
                 onEdit={setEditing}
                 onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 280)) })}
                 onToggleComplete={toggleTodoComplete}
-                saving={starting}
+                onTaskDrop={moveTask}
+                saving={starting || saving || reordering}
                 mobileCollapsed={mobileViewport && expandedObjectiveId !== objective.id}
                 onToggleMobile={mobileViewport ? () => setExpandedObjectiveId(current => current === objective.id ? null : objective.id) : null}
               />

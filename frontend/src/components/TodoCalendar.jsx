@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { api } from '../api.js';
 import { useCats } from './CatBadge.jsx';
 import DeadlineModal, { DeadlineChip } from './DeadlineModal.jsx';
@@ -159,6 +160,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
   const [dropTarget, setDropTarget] = useState(null);
   const [durationTooltip, setDurationTooltip] = useState(null);
   const draggedTaskRef = useRef(null);
+  const dropTargetRef = useRef(null);
   const categories = useCats();
   const visibleMonthCount = monthLayout.columns * monthLayout.rows;
   const visibleMonths = useMemo(() => Array.from({ length: visibleMonthCount }, (_, index) => addMonths(month, index)), [month, visibleMonthCount]);
@@ -380,35 +382,49 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
           <span>Completadas ({completedCount})</span><span>{completedExpanded ? '▲' : '▼'}</span>
         </button>}
         {(task.status !== 'completed' || completedExpanded) && <>
-        <article className={`todo-detail-card${dropTarget?.id === task.id ? ' drop-target' : ''}${uncompletableTaskIds.has(task.id) ? ' exceeds-capacity' : ''}`} style={objectiveColor(task) ? { '--todo-objective-color': objectiveColor(task) } : undefined}
+        <article className={`todo-detail-card${dropTarget?.id === task.id ? ` drop-${dropTarget.placement}` : ''}${uncompletableTaskIds.has(task.id) ? ' exceeds-capacity' : ''}`} style={objectiveColor(task) ? { '--todo-objective-color': objectiveColor(task) } : undefined}
         onMouseEnter={event => showDurationTooltip(event, task)} onMouseLeave={() => hideDurationTooltip(task.id)}
         draggable={sortMode === 'importance' && !reordering}
         onDragStart={event => {
           draggedTaskRef.current = task;
+          dropTargetRef.current = null;
           setDropTarget(null);
           event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData('text/plain', task.id);
         }}
-        onDragEnd={() => { draggedTaskRef.current = null; setDropTarget(null); }}
+        onDragEnd={() => { draggedTaskRef.current = null; dropTargetRef.current = null; setDropTarget(null); }}
         onDragOver={event => {
           const dragged = draggedTaskRef.current;
-          if (reordering || sortMode !== 'importance' || !dragged || dragged.id === task.id || dragged.date !== task.date) return;
+          const sameCompletionGroup = Boolean(dragged?.status === 'completed') === Boolean(task.status === 'completed');
+          if (reordering || sortMode !== 'importance' || !dragged || dragged.id === task.id || dragged.date !== task.date || !sameCompletionGroup) {
+            if (dropTargetRef.current) {
+              dropTargetRef.current = null;
+              flushSync(() => setDropTarget(null));
+            }
+            return;
+          }
           event.preventDefault();
           event.dataTransfer.dropEffect = 'move';
           const rect = event.currentTarget.getBoundingClientRect();
-          setDropTarget({ id: task.id, placement: event.clientY < rect.top + rect.height / 2 ? 'before' : 'after' });
+          const nextTarget = { id: task.id, placement: event.clientY < rect.top + rect.height / 2 ? 'before' : 'after' };
+          if (dropTargetRef.current?.id === nextTarget.id && dropTargetRef.current.placement === nextTarget.placement) return;
+          dropTargetRef.current = nextTarget;
+          flushSync(() => setDropTarget(nextTarget));
         }}
         onDrop={event => {
           event.preventDefault();
           const dragged = draggedTaskRef.current;
-          const placement = dropTarget?.id === task.id ? dropTarget.placement : 'before';
-          if (!reordering && sortMode === 'importance' && dragged && dragged.id !== task.id && dragged.date === task.date) {
+          const currentDropTarget = dropTargetRef.current;
+          const placement = currentDropTarget?.id === task.id ? currentDropTarget.placement : 'before';
+          const sameCompletionGroup = Boolean(dragged?.status === 'completed') === Boolean(task.status === 'completed');
+          if (!reordering && sortMode === 'importance' && dragged && dragged.id !== task.id && dragged.date === task.date && sameCompletionGroup) {
             const next = detail.filter(row => row.id !== dragged.id);
             const targetIndex = next.findIndex(row => row.id === task.id);
             next.splice(targetIndex + (placement === 'after' ? 1 : 0), 0, dragged);
             onReorder(selected, next.map(row => row.id));
           }
           draggedTaskRef.current = null;
+          dropTargetRef.current = null;
           setDropTarget(null);
         }}
         onContextMenu={e => { e.preventDefault(); setTaskMenu({ task, x: Math.max(8, Math.min(e.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 300)) }); }}>
