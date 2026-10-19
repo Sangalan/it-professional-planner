@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ArchiveButton from '../components/ArchiveButton.jsx';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtShortDate } from '../utils/dateUtils.js';
@@ -154,6 +155,7 @@ export function DetailDialog({ pr, objectives, onClose, onSaved, onDeleted }) {
             </button>
           ) : <span />}
           <div style={{ display: 'flex', gap: 8 }}>
+            {!isNew && <ArchiveButton kind="pr" id={pr.id} onArchived={() => { onDeleted(); onClose(); }} disabled={saving || deleting} />}
             <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
             <button className="btn btn-primary" onClick={save} disabled={saving || !form.title.trim()}>{saving ? 'Guardando…' : isNew ? 'Crear' : 'Guardar'}</button>
           </div>

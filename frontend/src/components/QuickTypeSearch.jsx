@@ -14,7 +14,7 @@ export function useQuickTypeSearch(enabled = true) {
       const isEditing = target instanceof HTMLElement && (
         target.matches('input, textarea, select') || target.isContentEditable
       );
-      if (isEditing || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return;
+      if (isEditing || event.defaultPrevented || event.isComposing || target?.closest?.('[role="dialog"], .modal-backdrop') || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return;
       setQuery(event.key);
       event.preventDefault();
     }
@@ -38,17 +38,11 @@ export default function QuickTypeSearch({ query, onQueryChange, label }) {
     if (!query) return undefined;
     inputRef.current?.focus();
 
-    function close(event) {
-      if (!inputRef.current?.contains(event.target)) onQueryChange('');
-    }
-
-    document.addEventListener('pointerdown', close);
-    return () => document.removeEventListener('pointerdown', close);
-  }, [query, onQueryChange]);
+  }, [query]);
 
   if (!query) return null;
   return (
-    <div style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 250, width: 'min(520px, calc(100vw - 32px))' }}>
+    <div style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 250, width: 'min(520px, calc(100vw - 32px))', display: 'flex', gap: 8 }}>
       <input
         ref={inputRef}
         type="search"
@@ -62,8 +56,9 @@ export default function QuickTypeSearch({ query, onQueryChange, label }) {
         }}
         placeholder={`Filtrar ${label}…`}
         aria-label={`Filtrar ${label}`}
-        style={{ width: '100%', padding: '12px 16px', fontSize: 16, background: 'var(--surface)', boxShadow: 'var(--shadow-md)', border: '1px solid var(--border)', borderRadius: 10 }}
+        style={{ width: '100%', minWidth: 0, padding: '12px 16px', fontSize: 16, background: 'var(--surface)', boxShadow: 'var(--shadow-md)', border: '1px solid var(--border)', borderRadius: 10 }}
       />
+      <button type="button" className="btn btn-ghost" aria-label="Cerrar búsqueda" title="Cerrar búsqueda" onClick={() => onQueryChange('')} style={{ flexShrink: 0, minWidth: 44, background: 'var(--surface)', boxShadow: 'var(--shadow-md)' }}>✕</button>
     </div>
   );
 }

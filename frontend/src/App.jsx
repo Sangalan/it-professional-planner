@@ -21,6 +21,7 @@ import DocumentsView from './views/DocumentsView.jsx';
 import Search from './views/Search.jsx';
 import Settings from './views/Settings.jsx';
 import ImportExport from './views/ImportExport.jsx';
+import NotepadView from './views/NotepadView.jsx';
 import { CategoriesProvider } from './components/CatBadge.jsx';
 import TaskModal from './components/TaskModal.jsx';
 import GapPickerDialog from './components/GapPickerDialog.jsx';
@@ -303,6 +304,7 @@ const navContent = [
 ];
 
 const navTools = [
+  { path: '/notepad',       icon: '📝', label: 'Bloc de notas' },
   { path: '/search',        icon: '🔍', label: 'Búsqueda' },
   { path: '/settings',      icon: '⚙️',  label: 'Configuración' },
   { path: '/import-export', icon: '💾', label: 'Importar/Exportar' },
@@ -502,6 +504,7 @@ function PlannerApp({ authUser, onLogout }) {
             <Route path="/documents" element={<SectionGuard enabled={sections.documents} sectionLabel="Documentos"><DocumentsView /></SectionGuard>} />
             <Route path="/events" element={<SectionGuard enabled={sections.events} sectionLabel="Eventos"><EventsView /></SectionGuard>} />
             <Route path="/search"     element={<Search />} />
+            <Route path="/notepad"    element={<NotepadView />} />
             <Route path="/import-export" element={<ImportExport />} />
             <Route path="/settings"      element={<Settings />} />
           </Routes>

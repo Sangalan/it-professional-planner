@@ -135,7 +135,7 @@ function TodoDayPicker({ task, anchor, onSelect, onClose }) {
   </aside>;
 }
 
-export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPlanningReady, onEdit, onUpdated, onStart, onToggleComplete, onSetDuration, onCreateTask, onReorder, reordering }) {
+export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPlanningReady, moneyRequiredMinutes = 240, onEdit, onUpdated, onStart, onToggleComplete, onSetDuration, onCreateTask, onReorder, reordering }) {
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [monthLayout, setMonthLayout] = useState(() => {
     try {
@@ -348,7 +348,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
           <div className="todo-day-completion">{completionPercent}% completado</div>
         </div>
         <div className="todo-day-controls">
-          <div className="todo-mobile-day-actions">
+          <div className="todo-day-actions">
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCreateTask(selected)}>+ Tarea</button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDeadlineModal({ date: selected })}>+ Fecha límite</button>
           </div>
@@ -427,15 +427,15 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
           dropTargetRef.current = null;
           setDropTarget(null);
         }}
-        onContextMenu={e => { e.preventDefault(); setTaskMenu({ task, x: Math.max(8, Math.min(e.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 300)) }); }}>
+        onContextMenu={e => { e.preventDefault(); setTaskMenu({ task, x: Math.max(8, Math.min(e.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 400)) }); }}>
         <div className="todo-detail-heading">
           <InlineEstimate task={task} onUpdated={onUpdated} />
           <button className={`todo-detail-title${task.status === 'completed' ? ' done' : ''}`} onClick={() => onEdit(task)}><MoneyMakerIcon task={task} />{task.title}</button>
-          <button type="button" className="todo-mobile-actions" aria-label={`Acciones para ${task.title}`}
+          <button type="button" className="todo-task-actions" aria-label={`Acciones para ${task.title}`}
             onClick={event => {
               event.stopPropagation();
               const rect = event.currentTarget.getBoundingClientRect();
-              setTaskMenu({ task, x: rect.left, y: rect.bottom + 4 });
+              setTaskMenu({ task, x: Math.max(8, Math.min(rect.left, window.innerWidth - 190)), y: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 400)) });
             }}>•••</button>
         </div>
         {task.description && <p>{task.description}</p>}
@@ -484,7 +484,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
                   onContextMenu={e => {
                     e.preventDefault();
                     e.stopPropagation();
-                    setTaskMenu({ task, x: Math.max(8, Math.min(e.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 300)) });
+                    setTaskMenu({ task, x: Math.max(8, Math.min(e.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 400)) });
                   }}><MoneyMakerIcon task={task} />{task.title}</span>)}
               </div>;
             })}
@@ -496,8 +496,8 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
       <button type="button" onClick={() => { onCreateTask(dayMenu.date); setDayMenu(null); }}>Crear tarea</button>
       <button type="button" onClick={() => { setDeadlineModal({ date: dayMenu.date }); setDayMenu(null); }}>Crear fecha límite</button>
     </div>}
-    {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
-      <div className="todo-mobile-order-actions">
+    {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y, maxHeight: `calc(100dvh - ${taskMenu.y + 8}px)` }} onMouseDown={e => e.stopPropagation()}>
+      <div className="todo-order-actions">
         <button type="button" disabled={sortMode !== 'importance' || detail.findIndex(task => task.id === taskMenu.task.id) <= 0 || reordering} onClick={() => moveTaskByOffset(taskMenu.task, -1)}>↑ Subir</button>
         <button type="button" disabled={sortMode !== 'importance' || detail.findIndex(task => task.id === taskMenu.task.id) >= detail.length - 1 || reordering} onClick={() => moveTaskByOffset(taskMenu.task, 1)}>↓ Bajar</button>
       </div>
@@ -527,7 +527,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
       }}>Sin fecha</button>
       <button type="button" onClick={() => { onSetDuration(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
       <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
-        title={!moneyPlanningReady ? 'Planifica primero 4h de tareas Money maker' : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
+        title={!moneyPlanningReady ? `Planifica primero ${moneyRequiredMinutes / 60}h de tareas Money maker` : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
         onClick={() => { onStart(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
     </div>}
     {changingDayTask && changeDayAnchor && <TodoDayPicker task={changingDayTask} anchor={changeDayAnchor} onSelect={saveChangedDay}

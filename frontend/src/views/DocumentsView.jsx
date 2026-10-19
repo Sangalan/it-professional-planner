@@ -6,6 +6,7 @@ import ContentSearchFilters from '../components/ContentSearchFilters.jsx';
 import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
 import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
+import DocumentPreview from '../components/DocumentPreview.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const thStyle = { padding: '9px 18px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
@@ -110,6 +111,9 @@ export default function DocumentsView() {
   const [sortDir, setSortDir] = useState('desc');
   const [uploading, setUploading] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const [quickQuery, setQuickQuery] = useQuickTypeSearch(!selected && !uploading);
   const fileRef = useRef();
   const cats = useCats();
@@ -142,19 +146,30 @@ export default function DocumentsView() {
     return <span style={{ color: 'var(--accent)', marginLeft: 4 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
 
-  async function handleUpload(e) {
-    const files = Array.from(e.target.files);
+  async function uploadFiles(files) {
     if (!files.length) return;
     setUploading(true);
-    for (const file of files) {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('name', file.name);
-      await api.uploadDocument(fd);
+    setUploadError('');
+    try {
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('name', file.name);
+        await api.uploadDocument(fd);
+      }
+      await load();
+    } catch (_) {
+      setUploadError('No se pudieron subir los documentos. Vuelve a intentarlo.');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
     }
-    setUploading(false);
-    e.target.value = '';
-    load();
+  }
+
+  function drop(event) {
+    event.preventDefault();
+    setDragging(false);
+    if (!uploading) uploadFiles(Array.from(event.dataTransfer.files || []));
   }
 
   const usedCatIds = [...new Set(docs.flatMap(d => d.category_ids || []))];
@@ -209,7 +224,7 @@ export default function DocumentsView() {
           <div className="page-subtitle">{visible.length} archivos</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <input type="file" ref={fileRef} style={{ display: 'none' }} multiple onChange={handleUpload} />
+          <input type="file" ref={fileRef} style={{ display: 'none' }} multiple onChange={event => uploadFiles(Array.from(event.target.files || []))} />
           <button className="btn btn-primary btn-sm" onClick={() => fileRef.current.click()} disabled={uploading}>
             {uploading ? 'Subiendo…' : '+ Subir'}
           </button>
@@ -238,6 +253,9 @@ export default function DocumentsView() {
         availableCatIds={usedCatIds}
       />
 
+      {uploadError && <p role="alert" className="project-form-error">{uploadError}</p>}
+      <div className={`document-drop-target ${dragging ? 'is-dragging' : ''}`} onDragOver={event => { event.preventDefault(); if (!uploading) setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={drop}>
+      {dragging && <div className="document-drop-hint">Suelta aquí los documentos</div>}
       {visible.length === 0 ? (
         <div className="empty-state card" style={{ padding: 40 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>📁</div>
@@ -288,10 +306,10 @@ export default function DocumentsView() {
                   <td data-label="Abrir" style={{ padding: '10px 18px', textAlign: 'right' }}>
                     <button
                       className="btn btn-ghost btn-sm"
-                      title="Abrir documento"
-                      onClick={e => { e.stopPropagation(); window.open('/uploads/' + doc.filename, '_blank'); }}
+                      title="Visualizar documento" aria-label={`Visualizar ${doc.name}`}
+                      onClick={e => { e.stopPropagation(); setPreview(doc); }}
                       style={{ fontSize: 13, padding: '2px 10px' }}
-                    >↗</button>
+                    >◉</button>
                   </td>
                 </tr>
               ))}
@@ -300,6 +318,8 @@ export default function DocumentsView() {
         </div>
       )}
 
+      </div>
+      {preview && <DocumentPreview doc={preview} onClose={() => setPreview(null)} />}
       {selected && (
         <DetailDialog
           doc={selected}

@@ -44,6 +44,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
   const [saving, setSaving] = useState(false);
   const [cloning, setCloning] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState('');
   const [fixedSectionCollapsed, setFixedSectionCollapsed] = useState(true);
 
@@ -367,6 +368,18 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
               </button>
             ) : <span />}
             <div style={{ display: 'flex', gap: 10 }}>
+              {isEdit && <button type="button" className="btn btn-ghost" disabled={saving || deleting || archiving} onClick={async () => {
+                setArchiving(true);
+                setError('');
+                try {
+                  await api.setArchived('task', initial.id, true);
+                  (onDeleted || onSave)();
+                } catch (err) {
+                  setError(err.message || 'No se pudo archivar la tarea.');
+                } finally {
+                  setArchiving(false);
+                }
+              }}>{archiving ? 'Archivando…' : 'Archivar'}</button>}
               <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
               {canCloneRecurringTask && (
                 <button
@@ -379,7 +392,7 @@ export default function TaskModal({ initial = {}, onSave, onClose, onDeleted }) 
                   {cloning ? 'Creando…' : 'Clonar'}
                 </button>
               )}
-              <button type="submit" className="btn btn-primary" disabled={saving}>
+              <button type="submit" className="btn btn-primary" disabled={saving || archiving}>
                 {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : (isTodo ? 'Crear ToDo' : 'Crear tarea')}
               </button>
             </div>

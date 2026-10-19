@@ -1,7 +1,9 @@
+import IndependentVisibility from '../components/IndependentVisibility.jsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate, formatDuration } from '../utils/dateUtils.js';
 import { statusLabel } from '../utils/categoryUtils.js';
+import { DetailDialog as RepoDetailDialog } from './ReposView.jsx';
 import TaskModal from '../components/TaskModal.jsx';
 import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
 import { CategoryBadges } from '../components/CatBadge.jsx';
@@ -126,6 +128,7 @@ function SearchEditModal({ item, objectives, onClose, onSaved }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteWarning, setDeleteWarning] = useState(null);
   const [form, setForm] = useState({
+    show_independent: Number(raw.show_independent) === 1 ? 1 : 0,
     title: raw.title || raw.name || '',
     notes: raw.notes || '',
     status: raw.status || '',
@@ -223,6 +226,7 @@ function SearchEditModal({ item, objectives, onClose, onSaved }) {
         });
       } else if (item.kind === 'milestone') {
         await api.updateMilestone(item.id, {
+          show_independent: form.show_independent,
           title: form.title,
           description: form.description || null,
           target_date: form.date || null,
@@ -364,6 +368,7 @@ function SearchEditModal({ item, objectives, onClose, onSaved }) {
 
         {item.kind === 'milestone' && (
           <>
+            <IndependentVisibility value={form.show_independent} onChange={value => set('show_independent', value)} />
             <div style={{ marginBottom: 12 }}>
               <label style={labelSt}>Descripción</label>
               <textarea value={form.description} onChange={e => set('description', e.target.value)} rows={3} style={textareaSt} />
@@ -889,7 +894,11 @@ export default function Search() {
           onDeleted={() => { setEditTask(null); doSearch(); }}
         />
       )}
-      {editItem && (
+      {editItem?.kind === 'repo' && (
+        <RepoDetailDialog repo={editItem.raw} objectives={objectives}
+          onClose={() => setEditItem(null)} onSaved={doSearch} onDeleted={doSearch} />
+      )}
+      {editItem && editItem.kind !== 'repo' && (
         <SearchEditModal
           item={editItem}
           objectives={objectives}

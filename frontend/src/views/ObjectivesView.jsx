@@ -1,6 +1,9 @@
+import ProjectTypeSelector from '../components/ProjectTypeSelector.jsx';
+import IndependentVisibility from '../components/IndependentVisibility.jsx';
+import { getIndependentItems } from '../utils/independentItems.js';
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { fmtDate, fmtShortDate } from '../utils/dateUtils.js';
+import { fmtShortDate } from '../utils/dateUtils.js';
 import { statusLabel } from '../utils/categoryUtils.js';
 import CatBadge, { CategoryBadges, CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
 import TaskModal from '../components/TaskModal.jsx';
@@ -75,6 +78,8 @@ function ObjectiveDialog({ obj, onClose, onSaved }) {
     type: obj?.type || 'objective',
   });
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState('');
 
   function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
@@ -99,6 +104,36 @@ function ObjectiveDialog({ obj, onClose, onSaved }) {
       setError(e.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(`¿Eliminar objetivo "${obj.title}" y todas sus tareas, hitos, proyectos y elementos asociados?`)) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await api.deleteObjective(obj.id);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo eliminar el objetivo.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function archive() {
+    if (!window.confirm('¿Archivar este objetivo?')) return;
+    setArchiving(true);
+    setError('');
+    try {
+      await api.setArchived('objective', obj.id, true);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo archivar el objetivo.');
+    } finally {
+      setArchiving(false);
     }
   }
 
@@ -158,11 +193,17 @@ function ObjectiveDialog({ obj, onClose, onSaved }) {
         <ColorPicker value={form.color || '#2563eb'} onChange={v => set('color', v)} />
       </div>
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? 'Guardando…' : 'Guardar'}
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        {!isNew ? <button className="btn btn-ghost" onClick={remove} disabled={saving || deleting} style={{ color: '#dc2626', borderColor: '#dc2626' }}>
+          {deleting ? 'Eliminando…' : 'Eliminar objetivo'}
+        </button> : <span />}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {!isNew && <button className="btn btn-ghost" onClick={archive} disabled={saving || deleting || archiving}>{archiving ? 'Archivando…' : 'Archivar'}</button>}
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving || deleting || archiving}>
+            {saving ? 'Guardando…' : 'Guardar'}
+          </button>
+        </div>
       </div>
     </Dialog>
   );
@@ -196,7 +237,7 @@ function MilestoneTypeDialog({ onClose, onPick }) {
 }
 
 function CreateClassicMilestoneDialog({ objectiveId, onClose, onSaved }) {
-  const [form, setForm] = useState({ title: '', description: '', target_date: '', status: 'not_started' });
+  const [form, setForm] = useState({ title: '', description: '', target_date: '', status: 'not_started', show_independent: 0 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
@@ -221,6 +262,7 @@ function CreateClassicMilestoneDialog({ objectiveId, onClose, onSaved }) {
         </div>
       </div>
       <div style={fieldW}><label style={labelSt}>Descripción</label><input type="text" value={form.description} onChange={e => set('description', e.target.value)} style={{ width: '100%' }} /></div>
+      <IndependentVisibility value={form.show_independent} onChange={value => set('show_independent', value)} />
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : 'Crear'}</button></div>
     </Dialog>
@@ -324,10 +366,12 @@ function CreateCertificationDialog({ objectiveId, item, onClose, onSaved }) {
 function CreateRepoDialog({ objectiveId, item, onClose, onSaved }) {
   const isNew = !item;
   const [form, setForm] = useState({
+    show_independent: Number(item?.show_independent) === 1 ? 1 : 0,
+    independent_color: item?.independent_color || null,
     title: item?.title || '',
     target_date: item?.target_date || '',
     type: item?.type || 'sangalan',
-    status: item?.status || 'not_started',
+    status: item?.status === 'finished' ? 'completed' : (item?.status || 'not_started'),
     url: item?.url || '',
     notes: item?.notes || '',
   });
@@ -346,14 +390,16 @@ function CreateRepoDialog({ objectiveId, item, onClose, onSaved }) {
   }
   return (
     <Dialog title={isNew ? 'Nuevo proyecto' : 'Editar proyecto'} onClose={onClose}>
+      <ProjectTypeSelector value={form.type} onChange={value => set('type', value)} defaultGitType="sangalan" />
       <div style={fieldW}><label style={labelSt}>Título *</label><input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} autoFocus /></div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-        <div><label style={labelSt}>Tipo</label><select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}><option value="client">Cliente</option><option value="sangalan">Sangalan</option><option value="personal">Personal</option></select></div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginBottom: 14 }}>
+
         <div><label style={labelSt}>Fecha objetivo</label><SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} /></div>
-        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En desarrollo</option><option value="completed">Publicado ✓</option><option value="postponed">Postpuesto</option><option value="discarded">Descartado</option></select></div>
+        <div><label style={labelSt}>Estado</label><select value={form.status} onChange={e => set('status', e.target.value)} style={{ width: '100%' }}><option value="not_started">No iniciado</option><option value="in_progress">En desarrollo</option><option value="completed">Completado</option><option value="published">Publicado</option><option value="postponed">Postpuesto</option><option value="discarded">Descartado</option></select></div>
       </div>
-      <div style={fieldW}><label style={labelSt}>URL GitHub</label><input type="url" value={form.url} onChange={e => set('url', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} /></div>
+      <div style={fieldW}><label style={labelSt}>{form.type === 'notes' ? 'Enlace (opcional)' : 'URL GitHub'}</label><input type="url" value={form.url} onChange={e => set('url', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} /></div>
       <div style={fieldW}><label style={labelSt}>Notas</label><input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ width: '100%' }} /></div>
+      <IndependentVisibility value={form.show_independent} onChange={value => set('show_independent', value)} color={form.independent_color} onColorChange={value => set('independent_color', value)} />
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : (isNew ? 'Crear' : 'Guardar')}</button></div>
     </Dialog>
@@ -538,11 +584,13 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
                 <div style={{ width: 22, flexShrink: 0 }} />
               )}
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
-                <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>
-                  <MoneyMakerIcon task={task} />{task.title}
+                <div className="objective-task-heading">
+                  <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}>
+                    <MoneyMakerIcon task={task} />{task.title}
+                  </div>
+                  {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
                 </div>
                 <div className="task-meta">
-                  {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
                   {task.start_time && <span className="task-time" style={{ fontSize: 10 }}>{task.start_time}</span>}
                   <CatBadge id={task.category_id} />
                 </div>
@@ -567,7 +615,7 @@ function SinHitoRow({ objId, orphanCount, orphanDone, onUpdate, onTaskMoved, ver
 }
 
 const LINKED_STATUS_ICONS = {
-  not_started: '⚪', in_progress: '🔵', completed: '✅', published: '✅',
+  not_started: '⚪', in_progress: '🔵', completed: '✅', published: '✅', finished: '✅',
   merged: '✅', closed: '🔴', failed: '🔴', review: '🟡', pending: '⚪', draft: '🔵',
   cancelled: '🔴',
   discarded: '⚫',
@@ -576,7 +624,7 @@ const LINKED_STATUS_ICONS = {
 
 const LINKED_STATUS_LABELS = {
   not_started: 'No iniciado', in_progress: 'En progreso', completed: 'Completado',
-  published: 'Publicado', merged: 'Merged', closed: 'Cerrada',
+  published: 'Publicado', finished: 'Completado', merged: 'Merged', closed: 'Cerrada',
   failed: 'Fallida', review: 'En review', pending: 'Pendiente', draft: 'Borrador',
   cancelled: 'Cancelado',
   discarded: 'Descartado',
@@ -589,14 +637,17 @@ function daysLeft(dateStr) {
   return Math.round((new Date(dateStr + 'T12:00:00') - new Date(today + 'T12:00:00')) / 86400000);
 }
 
-function EditClassicMilestoneDialog({ milestone, onClose, onSaved }) {
+export function EditClassicMilestoneDialog({ milestone, onClose, onSaved }) {
   const [form, setForm] = useState({
+    show_independent: Number(milestone?.show_independent) === 1 ? 1 : 0,
     title: milestone?.title || '',
     description: milestone?.description || '',
     target_date: milestone?.date || milestone?.target_date || '',
     status: milestone?.status || 'not_started',
   });
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState('');
 
   function set(f, v) { setForm(prev => ({ ...prev, [f]: v })); }
@@ -607,6 +658,7 @@ function EditClassicMilestoneDialog({ milestone, onClose, onSaved }) {
     setError('');
     try {
       await api.updateMilestone(milestone.id, {
+        show_independent: form.show_independent,
         title: form.title,
         description: form.description,
         target_date: form.target_date || null,
@@ -618,6 +670,36 @@ function EditClassicMilestoneDialog({ milestone, onClose, onSaved }) {
       setError(e.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(`¿Eliminar hito "${milestone.title}"?`)) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await api.deleteMilestone(milestone.id);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo eliminar el hito.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function archive() {
+    if (!window.confirm('¿Archivar este hito?')) return;
+    setArchiving(true);
+    setError('');
+    try {
+      await api.setArchived('milestone', milestone.id, true);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo archivar el hito.');
+    } finally {
+      setArchiving(false);
     }
   }
 
@@ -647,10 +729,17 @@ function EditClassicMilestoneDialog({ milestone, onClose, onSaved }) {
         <label style={labelSt}>Descripción</label>
         <input type="text" value={form.description} onChange={e => set('description', e.target.value)} style={{ width: '100%' }} />
       </div>
+      <IndependentVisibility value={form.show_independent} onChange={value => set('show_independent', value)} />
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-        <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : 'Guardar'}</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        <button className="btn btn-ghost" onClick={remove} disabled={deleting || saving} style={{ color: '#dc2626', borderColor: '#dc2626' }}>
+          {deleting ? 'Eliminando…' : 'Eliminar hito'}
+        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost" onClick={archive} disabled={saving || deleting || archiving}>{archiving ? 'Archivando…' : 'Archivar'}</button>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving || deleting || archiving}>{saving ? 'Guardando…' : 'Guardar'}</button>
+        </div>
       </div>
     </Dialog>
   );
@@ -672,6 +761,7 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
     ? 'Aprobada'
     : (days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d restantes`);
   const isSimple = item.type === 'milestone';
+  const projectDone = item.type === 'repo' && ['completed', 'published', 'finished'].includes(item.status);
 
   async function fetchTasks() {
     const data = await api.tasks({ milestone_id: item.id });
@@ -726,10 +816,10 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
       )}
       {editingLinked && item.type === 'repo' && (
         <RepoDetailDialog
-          repo={item}
+          repo={{ ...item, type: item.project_type || 'personal' }}
           objectives={objectives}
           onClose={() => setEditingLinked(false)}
-          onSaved={() => { setEditingLinked(false); onUpdate(); }}
+          onSaved={onUpdate}
           onDeleted={() => { setEditingLinked(false); onUpdate(); }}
         />
       )}
@@ -754,17 +844,27 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
       <div className="milestone-row" style={{ paddingLeft: 12, cursor: 'pointer', flexWrap: 'wrap', gap: 6 }} onClick={toggleExpanded}>
         <span style={{ fontSize: 13 }}>{isSimple ? (STATUS_ICONS[item.status] || '⚪') : (LINKED_STATUS_ICONS[item.status] || '⚪')}</span>
         <div className="milestone-title" style={{ fontSize: 13 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span>{item.title}</span>
-            {item.icon && <span>{item.icon}</span>}
+          <div className="milestone-heading" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="milestone-main-line">
+              <span className="milestone-name">{item.title}</span>
+              {item.icon && <span>{item.icon}</span>}
+              {pct !== null && (
+                <div className="milestone-inline-progress">
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span>{item.task_done}/{item.task_total} · {pct}%</span>
+                </div>
+              )}
+            </div>
             {certStatsLabel && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{certStatsLabel}</span>}
             <div className="milestone-hover-actions" style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 4 }}>
-              <button
+              {!projectDone && <button
                 className="btn btn-ghost btn-sm"
                 onClick={e => { e.stopPropagation(); onAddTask(item); }}
               >
                 + Tarea
-              </button>
+              </button>}
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={e => {
@@ -773,24 +873,15 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
                   else setEditingLinked(true);
                 }}
               >
-                ✎ Editar hito
+                ✎ Editar {item.type === 'repo' ? 'proyecto' : 'hito'}
               </button>
             </div>
           </div>
-          {hasDate && <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{fmtDate(item.date)}</div>}
-          {pct !== null && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-              <div className="progress-bar" style={{ flex: 1, maxWidth: 120, height: 4 }}>
-                <div className="progress-fill" style={{ width: `${pct}%` }} />
-              </div>
-              <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{item.task_done}/{item.task_total} · {pct}%</span>
-            </div>
-          )}
         </div>
         {hasDate && (
-          <div>
-            <div className="milestone-date">{fmtShortDate(item.date)}</div>
-            <div className={`milestone-days ${cls}`}>{dayLabel}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, whiteSpace: 'nowrap' }}>
+            <span className={`milestone-days ${cls}`} style={{ whiteSpace: 'nowrap' }}>{dayLabel}</span>
+            <span className="milestone-date" style={{ whiteSpace: 'nowrap' }}>{fmtShortDate(item.date)}</span>
           </div>
         )}
         {!isSimple && (
@@ -824,9 +915,11 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
                 <div style={{ width: 22, flexShrink: 0 }} />
               )}
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
-                <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}><MoneyMakerIcon task={task} />{task.title}</div>
-                <div className="task-meta">
+                <div className="objective-task-heading">
+                  <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}><MoneyMakerIcon task={task} />{task.title}</div>
                   {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
+                </div>
+                <div className="task-meta">
                   {task.start_time && <span className="task-time" style={{ fontSize: 10 }}>{task.start_time}</span>}
                   <CatBadge id={task.category_id} style={{ fontSize: 10 }} />
                 </div>
@@ -850,7 +943,7 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
   );
 }
 
-function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter }) {
+function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter, version }) {
   const [expanded, setExpanded] = useState(false);
   const [newTaskFor, setNewTaskFor] = useState(null); // milestone-like object
   const [mvVersion, setMvVersion] = useState(0);
@@ -877,7 +970,7 @@ function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter }) {
       const certStatsById = buildCertificationStatsMap(certs, objectiveTasks);
       setContentItems([
         ...certs.map(c => ({ ...c, type: 'certification', icon: '🏆', date: c.target_date, certStats: certStatsById[c.id] })),
-        ...repos.map(r => ({ ...r, type: 'repo',          icon: '📦', date: r.target_date })),
+        ...repos.map(r => ({ ...r, project_type: r.type, type: 'repo',          icon: '📦', date: r.target_date })),
         ...prs.map(p =>   ({ ...p, type: 'pr',            icon: '🔀', date: p.end_date })),
         ...pubs.map(p =>  ({ ...p, type: 'publication',   icon: '✍️',  date: p.date })),
         ...evts
@@ -887,7 +980,7 @@ function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter }) {
       setContentLoaded(true);
     });
     return () => { cancelled = true; };
-  }, [expanded, obj.id, contentRefreshKey]);
+  }, [expanded, obj.id, contentRefreshKey, version]);
 
   function handleUpdateAndRefresh() {
     setContentRefreshKey(v => v + 1);
@@ -908,8 +1001,8 @@ function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter }) {
     if (milestoneStatusFilter === 'discarded') return item.status === 'discarded';
     return item.status !== 'discarded';
   }).sort((a, b) => {
-    const aDone = ['completed', 'published', 'merged', 'closed', 'failed', 'cancelled', 'discarded', 'postponed'].includes(a.status) ? 1 : 0;
-    const bDone = ['completed', 'published', 'merged', 'closed', 'failed', 'cancelled', 'discarded', 'postponed'].includes(b.status) ? 1 : 0;
+    const aDone = ['completed', 'published', 'finished', 'merged', 'closed', 'failed', 'cancelled', 'discarded', 'postponed'].includes(a.status) ? 1 : 0;
+    const bDone = ['completed', 'published', 'finished', 'merged', 'closed', 'failed', 'cancelled', 'discarded', 'postponed'].includes(b.status) ? 1 : 0;
     if (aDone !== bDone) return aDone - bDone;
     if (!a.date && !b.date) return 0;
     if (!a.date) return 1;
@@ -1025,14 +1118,13 @@ function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter }) {
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-              {days != null && <span className={`milestone-days ${days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok'}`}>{days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}</span>}
-              {obj.end_date && <span className="task-time">{obj.end_date}</span>}
               <span className="task-time">{obj.task_count - obj.done_count} tareas restantes</span>
             </div>
           )}
           {(() => { const ids = obj.category_ids?.length ? obj.category_ids : (obj.category_id ? [obj.category_id] : []); return ids.length > 0 && <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><CategoryBadges ids={ids} keyPrefix={`${obj.id}-`} /></div>; })()}
         </div>
         <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+          {obj.end_date && <div className="objective-deadline"><span className={`milestone-days ${days < 0 ? 'overdue' : days <= 14 ? 'soon' : 'ok'}`}>{days < 0 ? `${Math.abs(days)}d vencido` : days === 0 ? 'Hoy' : `${days}d`}</span><span className="task-time">{obj.end_date}</span></div>}
           <div className="obj-pct" style={{ color }}>{pct}%</div>
           <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {expanded ? '▲' : '▼'} {statusLabel(obj.status)}
@@ -1075,7 +1167,7 @@ function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter }) {
               onUpdate={handleUpdateAndRefresh}
               onAddTask={setNewTaskFor}
               onTaskMoved={handleTaskMoved}
-              version={mvVersion}
+              version={`${mvVersion}:${version}`}
             />
           ))}
           {contentLoaded && obj.orphan_count > 0 && (
@@ -1097,57 +1189,79 @@ function ObjectiveCard({ obj, objectives, onUpdate, milestoneStatusFilter }) {
 
 export default function ObjectivesView() {
   const [objectives, setObjectives] = useState([]);
+  const [independentItems, setIndependentItems] = useState([]);
+  const [loadError, setLoadError] = useState('');
+  const [newIndependentTask, setNewIndependentTask] = useState(null);
+  const [version, setVersion] = useState(0);
   const [creatingObjective, setCreatingObjective] = useState(false);
   const [milestoneStatusFilter, setMilestoneStatusFilter] = useState('active');
   const [quickQuery, setQuickQuery] = useQuickTypeSearch(!creatingObjective);
 
   async function loadAll() {
-    const [objectivesData, events, tasks, repos, certifications, publications, prs] = await Promise.all([
-      api.objectives(),
-      api.events(),
-      api.tasks(),
-      api.repos(),
-      api.certifications(),
-      api.publications(),
-      api.prs(),
-    ]);
+    try {
+      const [objectivesData, events, tasks, repos, certifications, publications, prs, milestones] = await Promise.all([
+        api.objectives({ include_archived: '1' }),
+        api.events(),
+        api.tasks(),
+        api.repos(),
+        api.certifications(),
+        api.publications(),
+        api.prs(),
+        api.milestones(),
+      ]);
 
-    const cancelledEventIds = new Set(
-      events.filter(e => e.status === 'cancelled').map(e => e.id)
-    );
-    const excludedItemIds = new Set([
-      ...objectivesData.flatMap(obj => (obj.milestones || []).filter(m => ['discarded', 'failed'].includes(m.status)).map(m => m.id)),
-      ...repos.filter(r => ['postponed', 'discarded', 'failed'].includes(r.status)).map(r => r.id),
-      ...certifications.filter(c => ['postponed', 'discarded', 'failed'].includes(c.status)).map(c => c.id),
-      ...publications.filter(p => ['postponed', 'discarded', 'failed'].includes(p.status)).map(p => p.id),
-      ...prs.filter(p => ['postponed', 'discarded', 'failed'].includes(p.status)).map(p => p.id),
-      ...events.filter(e => ['postponed', 'discarded', 'failed'].includes(e.status)).map(e => e.id),
-    ]);
-    const effectiveObjectives = objectivesData.map(obj => {
-      const objectiveTasks = tasks.filter(
-        t => t.objective_id === obj.id && !isFixedTask(t) && !cancelledEventIds.has(t.milestone_id) && !excludedItemIds.has(t.milestone_id)
+      const cancelledEventIds = new Set(
+        events.filter(e => e.status === 'cancelled').map(e => e.id)
       );
-      const taskCount = objectiveTasks.length;
-      const doneCount = objectiveTasks.filter(t => t.status === 'completed').length;
-      const percentageCompleted = taskCount > 0 ? Math.round((doneCount / taskCount) * 100) : 0;
-      return {
-        ...obj,
-        task_count: taskCount,
-        done_count: doneCount,
-        percentage_completed: percentageCompleted,
-      };
-    });
+      const excludedItemIds = new Set([
+        ...objectivesData.flatMap(obj => (obj.milestones || []).filter(m => ['discarded', 'failed'].includes(m.status)).map(m => m.id)),
+        ...repos.filter(r => ['postponed', 'discarded', 'failed'].includes(r.status)).map(r => r.id),
+        ...certifications.filter(c => ['postponed', 'discarded', 'failed'].includes(c.status)).map(c => c.id),
+        ...publications.filter(p => ['postponed', 'discarded', 'failed'].includes(p.status)).map(p => p.id),
+        ...prs.filter(p => ['postponed', 'discarded', 'failed'].includes(p.status)).map(p => p.id),
+        ...events.filter(e => ['postponed', 'discarded', 'failed'].includes(e.status)).map(e => e.id),
+      ]);
+      const effectiveObjectives = objectivesData.map(obj => {
+        const objectiveTasks = tasks.filter(
+          t => t.objective_id === obj.id && !isFixedTask(t) && !cancelledEventIds.has(t.milestone_id) && !excludedItemIds.has(t.milestone_id)
+        );
+        const taskCount = objectiveTasks.length;
+        const doneCount = objectiveTasks.filter(t => t.status === 'completed').length;
+        const percentageCompleted = taskCount > 0 ? Math.round((doneCount / taskCount) * 100) : 0;
+        return {
+          ...obj,
+          task_count: taskCount,
+          done_count: doneCount,
+          percentage_completed: percentageCompleted,
+        };
+      });
 
-    setObjectives(effectiveObjectives);
+      setObjectives(effectiveObjectives);
+      setIndependentItems(getIndependentItems(effectiveObjectives, milestones, repos, tasks));
+      setVersion(value => value + 1);
+      setLoadError('');
+    } catch (_) {
+      setLoadError('No se pudieron cargar los objetivos, proyectos e hitos.');
+    }
   }
 
   useEffect(() => { loadAll(); }, []);
 
-  const activeObjectives = objectives.filter(o => !['postponed', 'discarded', 'failed'].includes(o.status));
+  const activeObjectives = objectives.filter(o => !o.archived_at && !['postponed', 'discarded', 'failed'].includes(o.status));
   const totalTasks = activeObjectives.reduce((s, o) => s + (o.task_count || 0), 0);
   const doneTasks  = activeObjectives.reduce((s, o) => s + (o.done_count  || 0), 0);
   const globalPct  = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
-  const visibleObjectives = objectives.filter(obj => matchesQuickQuery(obj.title, quickQuery));
+  const visibleObjectives = objectives.filter(obj => {
+    if (!matchesQuickQuery(obj.title, quickQuery)) return false;
+    if (milestoneStatusFilter === 'active') return !obj.archived_at && obj.status === 'in_progress';
+    if (milestoneStatusFilter === 'archived') return Boolean(obj.archived_at);
+    if (milestoneStatusFilter === 'discarded') return !obj.archived_at && obj.status === 'discarded';
+    return true;
+  });
+
+  const visibleIndependentItems = independentItems.filter(item => !['active', 'archived'].includes(milestoneStatusFilter) && matchesQuickQuery(item.title, quickQuery))
+    .filter(item => milestoneStatusFilter === 'all' || (milestoneStatusFilter === 'discarded' ? item.status === 'discarded' : !['discarded', 'failed'].includes(item.status)))
+    .sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || a.title.localeCompare(b.title, 'es'));
 
   return (
     <div>
@@ -1166,13 +1280,14 @@ export default function ObjectivesView() {
         />
       )}
 
-      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="objetivos" />
+      <QuickTypeSearch query={quickQuery} onQueryChange={setQuickQuery} label="objetivos, proyectos e hitos" />
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <select value={milestoneStatusFilter} onChange={e => setMilestoneStatusFilter(e.target.value)} aria-label="Filtrar elementos por estado">
           <option value="active">Elementos activos</option>
           <option value="all">Todos</option>
           <option value="discarded">Descartado</option>
+          <option value="archived">Archivados</option>
         </select>
       </div>
 
@@ -1199,10 +1314,21 @@ export default function ObjectivesView() {
         </div>
       </div>
 
-      {visibleObjectives.map(obj => <ObjectiveCard key={obj.id} obj={obj} objectives={objectives} onUpdate={loadAll} milestoneStatusFilter={milestoneStatusFilter} />)}
-      {quickQuery.trim() && visibleObjectives.length === 0 && (
+      {loadError && <div role="alert" style={{ color: 'var(--danger)', marginBottom: 12 }}>{loadError} <button className="btn btn-ghost btn-sm" onClick={loadAll}>Reintentar</button></div>}
+      {visibleIndependentItems.length > 0 && <section className="independent-section" aria-label="Proyectos e hitos independientes">
+        <h2 className="independent-section-heading">Proyectos e hitos independientes</h2>
+        {visibleIndependentItems.map(item => <div className="card" key={`${item.type}:${item.id}`} style={{ marginBottom: 12, padding: '10px 14px', borderLeft: `4px solid ${item.color || 'var(--accent)'}` }}>
+          <span className="independent-parent-label">{item.type === 'repo' ? 'Proyecto' : 'Hito'}{item.parent_title ? ` · Objetivo: ${item.parent_title}` : ' · Sin objetivo padre'}</span>
+          <AnyMilestoneRow item={item} objectives={objectives} onUpdate={loadAll} onAddTask={setNewIndependentTask} onTaskMoved={loadAll} version={version} />
+        </div>)}
+      </section>}
+      {newIndependentTask && <TaskModal initial={{ objective_id: newIndependentTask.objective_id || null, milestone_id: newIndependentTask.id }}
+        onClose={() => setNewIndependentTask(null)} onSave={() => { setNewIndependentTask(null); loadAll(); }} />}
+
+      {visibleObjectives.map(obj => <ObjectiveCard key={obj.id} obj={obj} objectives={objectives} onUpdate={loadAll} milestoneStatusFilter={milestoneStatusFilter} version={version} />)}
+      {visibleObjectives.length === 0 && visibleIndependentItems.length === 0 && (
         <div className="card" style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)' }}>
-          Ningún objetivo coincide con “{quickQuery}”.
+          {quickQuery.trim() ? `Ningún objetivo, proyecto o hito coincide con “${quickQuery}”.` : milestoneStatusFilter === 'active' ? 'No hay objetivos en curso.' : milestoneStatusFilter === 'archived' ? 'No hay objetivos archivados.' : 'No hay elementos con este filtro.'}
         </div>
       )}
     </div>

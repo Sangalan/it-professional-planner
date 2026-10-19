@@ -1,3 +1,6 @@
+import { getIndependentItems, asTodoColumn, matchesTodoColumn } from '../utils/independentItems.js';
+import { DetailDialog as RepoDetailDialog } from './ReposView.jsx';
+import { EditClassicMilestoneDialog } from './ObjectivesView.jsx';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { api, getActiveUserId } from '../api.js';
@@ -91,7 +94,7 @@ function groupTodos(tasks) {
   ];
 }
 
-function QuickAdd({ objectiveId, moneyMaker = false, onCreated }) {
+function QuickAdd({ objectiveId, milestoneId = null, moneyMaker = false, onCreated }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
@@ -126,6 +129,7 @@ function QuickAdd({ objectiveId, moneyMaker = false, onCreated }) {
       await api.createTask({
         title: title.trim(),
         objective_id: objectiveId,
+        milestone_id: milestoneId,
         date: null,
         start_time: null,
         end_time: null,
@@ -166,7 +170,7 @@ function QuickAdd({ objectiveId, moneyMaker = false, onCreated }) {
   );
 }
 
-function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, onEdit, onTaskContextMenu, onColumnDrop, onMoveColumn, canMoveColumnUp, canMoveColumnDown, onTaskDrop, onTaskDragStart, onTaskDragEnd, dragColumnRef, dragTaskRef, saving, mobileCollapsed, onToggleMobile }) {
+function TodoColumn({ onEditColumn, objective, tasks, draggedTaskId, flashedTaskId, onReload, onEdit, onTaskContextMenu, onColumnDrop, onMoveColumn, canMoveColumnUp, canMoveColumnDown, onTaskDrop, onTaskDragStart, onTaskDragEnd, dragColumnRef, dragTaskRef, saving, mobileViewport, collapsed, onToggleColumn }) {
   const [dropTarget, setDropTarget] = useState(null);
   const [completedExpanded, setCompletedExpanded] = useState(false);
   const dropTargetRef = useRef(null);
@@ -222,7 +226,7 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
 
   return (
     <section
-      className={`todo-column${mobileCollapsed ? ' mobile-collapsed' : ''}${dragTaskRef.current?.objectiveId === objective.id ? ' task-dragging' : ''}`}
+      className={`todo-column${collapsed ? ' collapsed' : ''}${dragTaskRef.current?.objectiveId === objective.id ? ' task-dragging' : ''}`}
       onDragOver={e => {
         if (dragColumnRef.current) e.preventDefault();
         else if (dragTaskRef.current) e.dataTransfer.dropEffect = 'none';
@@ -237,7 +241,7 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
       <header
         className="todo-column-header"
         style={{ '--todo-objective-color': objective.color || 'var(--border)' }}
-        draggable={!mobileCollapsed && !onToggleMobile}
+        draggable={!saving && !mobileViewport}
         onDragStart={e => {
           dragTaskRef.current = null;
           dragColumnRef.current = objective.id;
@@ -245,17 +249,16 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
         }}
         onDragEnd={() => { dragColumnRef.current = null; }}
       >
-        {onToggleMobile
-          ? <button type="button" className="todo-mobile-column-heading" aria-expanded={!mobileCollapsed} onClick={onToggleMobile}>
-            <span className="todo-mobile-column-toggle" aria-hidden="true">{mobileCollapsed ? '›' : '⌄'}</span>
-            <span className="todo-column-title">{objective.title}</span>
-          </button>
-          : <span className="todo-column-title">{objective.title}</span>}
-        <div className="todo-mobile-column-actions" aria-label={`Reordenar ${objective.title}`}>
+        <button type="button" className="todo-column-heading" aria-expanded={!collapsed} onClick={onToggleColumn}>
+          <span className="todo-column-toggle" aria-hidden="true">{collapsed ? '›' : '⌄'}</span>
+          <span className="todo-column-title">{objective.title}{objective.milestone_id && <small className="independent-parent-label">{objective.column_kind === 'repo' ? 'Proyecto' : 'Hito'}{objective.parent_title ? ` · ${objective.parent_title}` : ''}</small>}</span>
+        </button>
+        <div className="todo-column-actions" aria-label={`Reordenar ${objective.title}`}>
           <button type="button" disabled={!canMoveColumnUp} aria-label={`Mover ${objective.title} hacia arriba`} onClick={event => { event.stopPropagation(); onMoveColumn(-1); }}>↑</button>
           <button type="button" disabled={!canMoveColumnDown} aria-label={`Mover ${objective.title} hacia abajo`} onClick={event => { event.stopPropagation(); onMoveColumn(1); }}>↓</button>
         </div>
-        <QuickAdd objectiveId={objective.id} moneyMaker={isMoneyObjective(objective)} onCreated={onReload} />
+        {onEditColumn && <button className="todo-independent-edit" type="button" aria-label={`Editar ${objective.title}`} onClick={event => { event.stopPropagation(); onEditColumn(); }}>✎</button>}
+        <QuickAdd milestoneId={objective.milestone_id || null} objectiveId={objective.milestone_id ? objective.objective_id || null : objective.id} moneyMaker={isMoneyObjective(objective)} onCreated={onReload} />
       </header>
 
       <div className="todo-column-body">
@@ -338,7 +341,7 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
                   {Number(task.duration_estimated) > 0 && <span className="todo-card-duration">{formatDuration(Number(task.duration_estimated))}</span>}
                   <button
                     type="button"
-                    className="todo-mobile-actions"
+                    className="todo-task-actions"
                     aria-label={`Acciones para ${task.title}`}
                     onClick={e => {
                       e.stopPropagation();
@@ -360,7 +363,7 @@ function TodoColumn({ objective, tasks, draggedTaskId, flashedTaskId, onReload, 
   );
 }
 
-function TodoChecklistColumn({ objective, tasks, onReload, onEdit, onTaskContextMenu, onToggleComplete, onTaskDrop, saving, mobileCollapsed, onToggleMobile }) {
+function TodoChecklistColumn({ onEditColumn, objective, tasks, onReload, onEdit, onTaskContextMenu, onToggleComplete, onTaskDrop, saving, mobileViewport, collapsed, onToggleColumn }) {
   const [draggedTaskId, setDraggedTaskId] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const dropTargetRef = useRef(null);
@@ -372,19 +375,18 @@ function TodoChecklistColumn({ objective, tasks, onReload, onEdit, onTaskContext
   }
 
   return (
-    <section className={`todo-column todo-checklist-column${mobileCollapsed ? ' mobile-collapsed' : ''}`}>
+    <section className={`todo-column todo-checklist-column${collapsed ? ' collapsed' : ''}`}>
       <header
         className="todo-column-header todo-checklist-column-header"
         style={{ '--todo-objective-color': objective.color || 'var(--border)' }}
       >
-        {onToggleMobile
-          ? <button type="button" className="todo-mobile-column-heading" aria-expanded={!mobileCollapsed} onClick={onToggleMobile}>
-            <span className="todo-mobile-column-toggle" aria-hidden="true">{mobileCollapsed ? '›' : '⌄'}</span>
-            <span className="todo-column-title">{objective.title}</span>
-          </button>
-          : <span className="todo-column-title">{objective.title}</span>}
+        <button type="button" className="todo-column-heading" aria-expanded={!collapsed} onClick={onToggleColumn}>
+          <span className="todo-column-toggle" aria-hidden="true">{collapsed ? '›' : '⌄'}</span>
+          <span className="todo-column-title">{objective.title}{objective.milestone_id && <small className="independent-parent-label">{objective.column_kind === 'repo' ? 'Proyecto' : 'Hito'}{objective.parent_title ? ` · ${objective.parent_title}` : ''}</small>}</span>
+        </button>
         <span className="todo-checklist-count" aria-label={`${tasks.length} tareas`}>{tasks.length}</span>
-        <QuickAdd objectiveId={objective.id} moneyMaker={isMoneyObjective(objective)} onCreated={onReload} />
+        {onEditColumn && <button className="todo-independent-edit" type="button" aria-label={`Editar ${objective.title}`} onClick={event => { event.stopPropagation(); onEditColumn(); }}>✎</button>}
+        <QuickAdd milestoneId={objective.milestone_id || null} objectiveId={objective.milestone_id ? objective.objective_id || null : objective.id} moneyMaker={isMoneyObjective(objective)} onCreated={onReload} />
       </header>
       <div className="todo-column-body">
         {tasks.map(task => (
@@ -392,7 +394,7 @@ function TodoChecklistColumn({ objective, tasks, onReload, onEdit, onTaskContext
             key={task.id}
             data-todo-task-id={task.id}
             className={`todo-checklist-card${task.status === 'completed' ? ' completed' : ''}${draggedTaskId === task.id ? ' dragging' : ''}${dropTarget?.id === task.id ? ` drop-${dropTarget.placement}` : ''}`}
-            draggable={!saving && !onToggleMobile && !(isMoneyObjective(objective) && task.objective_id !== objective.id)}
+            draggable={!saving && !mobileViewport && !(isMoneyObjective(objective) && task.objective_id !== objective.id)}
             onDragStart={event => {
               setDraggedTaskId(task.id);
               dropTargetRef.current = null;
@@ -442,7 +444,7 @@ function TodoChecklistColumn({ objective, tasks, onReload, onEdit, onTaskContext
             </div>
             <button
               type="button"
-              className="todo-mobile-actions"
+              className="todo-task-actions"
               aria-label={`Acciones para ${task.title}`}
               onClick={event => {
                 event.stopPropagation();
@@ -711,6 +713,8 @@ function TodoDropCalendar({ task, anchor, onDropDate, onDropOutside }) {
 
 export default function TodoListView() {
   const [objectives, setObjectives] = useState([]);
+  const [independentItems, setIndependentItems] = useState([]);
+  const [editingIndependent, setEditingIndependent] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [editing, setEditing] = useState(null);
   const [creatingTaskDate, setCreatingTaskDate] = useState(null);
@@ -731,9 +735,11 @@ export default function TodoListView() {
   const [assigningDayTask, setAssigningDayTask] = useState(null);
   const [countdownDialogOpen, setCountdownDialogOpen] = useState(false);
   const [moneyPlanningReady, setMoneyPlanningReady] = useState(false);
+  const [moneyRequiredMinutes, setMoneyRequiredMinutes] = useState(240);
   const [searchTerm, setSearchTerm] = useState('');
   const [mobileViewport, setMobileViewport] = useState(() => window.matchMedia('(max-width: 900px)').matches);
   const [expandedObjectiveId, setExpandedObjectiveId] = useState(null);
+  const [collapsedDesktopColumns, setCollapsedDesktopColumns] = useState({});
   const [countdownEnd, setCountdownEnd] = useState(() => {
     try {
       const saved = Number(localStorage.getItem(COUNTDOWN_STORAGE_KEY));
@@ -767,7 +773,15 @@ export default function TodoListView() {
     if (mobileViewport) setExpandedObjectiveId(null);
   }, [mobileViewport, view]);
 
-  const dialogOpen = Boolean(editing || creatingTaskDate || editingDeadline || durationTask || countdownDialogOpen);
+  function toggleColumn(id) {
+    if (mobileViewport) {
+      setExpandedObjectiveId(current => current === id ? null : id);
+    } else {
+      setCollapsedDesktopColumns(current => ({ ...current, [id]: !current[id] }));
+    }
+  }
+
+  const dialogOpen = Boolean(editingIndependent || editing || creatingTaskDate || editingDeadline || durationTask || countdownDialogOpen);
 
   useEffect(() => {
     const beginSearch = event => {
@@ -852,14 +866,21 @@ export default function TodoListView() {
   }
 
   async function load() {
-    const [objectiveRows, taskRows, nowData, moneyStatus] = await Promise.all([
-      api.objectives(), api.tasks(), api.tasksNow(), api.moneyPlanningToday(),
-    ]);
-    setObjectives(objectiveRows);
-    setTasks(taskRows);
-    setActiveTasks(nowData.activeTasks || (nowData.current ? [nowData.current] : []));
-    setMoneyPlanningReady(Boolean(moneyStatus.ready));
-    setLoading(false);
+    try {
+      const [objectiveRows, taskRows, nowData, moneyStatus, milestones, repos] = await Promise.all([
+        api.objectives(), api.tasks(), api.tasksNow(), api.moneyPlanningToday(), api.milestones(), api.repos(),
+      ]);
+      setObjectives(objectiveRows);
+      setIndependentItems(getIndependentItems(objectiveRows, milestones, repos, taskRows));
+      setTasks(taskRows);
+      setActiveTasks(nowData.activeTasks || (nowData.current ? [nowData.current] : []));
+      setMoneyPlanningReady(Boolean(moneyStatus.ready));
+      setMoneyRequiredMinutes(moneyStatus.requiredMinutes);
+    } catch (_) {
+      setError('No se pudo cargar Todo list. Vuelve a intentarlo.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -868,10 +889,11 @@ export default function TodoListView() {
       if (!event.detail?.userId || event.detail.userId === getActiveUserId()) load();
     };
     window.addEventListener('tasks-changed', refresh);
-    return () => window.removeEventListener('tasks-changed', refresh);
+    window.addEventListener('money-planning-config-changed', refresh);
+    return () => { window.removeEventListener('tasks-changed', refresh); window.removeEventListener('money-planning-config-changed', refresh); };
   }, []);
   useEffect(() => {
-    const updateMoneyStatus = event => setMoneyPlanningReady(Boolean(event.detail?.ready));
+    const updateMoneyStatus = event => { setMoneyPlanningReady(Boolean(event.detail?.ready)); setMoneyRequiredMinutes(event.detail?.requiredMinutes ?? 240); };
     window.addEventListener('money-planning-status-changed', updateMoneyStatus);
     return () => window.removeEventListener('money-planning-status-changed', updateMoneyStatus);
   }, []);
@@ -890,7 +912,7 @@ export default function TodoListView() {
     const duration = Number(task?.duration_estimated);
     if (!task || !(duration > 0) || starting) return;
     if (!moneyPlanningReady) {
-      setError('Planifica al menos 4h de tareas Money maker antes de comenzar un ToDo.');
+      setError(`Planifica al menos ${moneyRequiredMinutes / 60}h de tareas Money maker antes de comenzar un ToDo.`);
       return;
     }
     setStarting(true);
@@ -929,13 +951,18 @@ export default function TodoListView() {
     return tasks.filter(task => normalizeSearchText(`${task.title || ''} ${task.description || ''}`).includes(query));
   }, [searchTerm, tasks]);
 
+  const allColumns = useMemo(() => [...objectives, ...independentItems.map(asTodoColumn)], [objectives, independentItems]);
+  const findColumn = id => allColumns.find(column => column.id === id);
+  const visibleIndependentColumn = (column, rows) => column.milestone_id && !['postponed', 'discarded', 'failed'].includes(column.status)
+    && (!searchTerm.trim() || normalizeSearchText(column.title).includes(normalizeSearchText(searchTerm.trim())) || rows.some(task => matchesTodoColumn(task, column)));
+
   const columns = useMemo(() => {
     const todoObjectiveIds = new Set(filteredTasks.filter(task => isTodoTask(task) && task.objective_id).map(task => task.objective_id));
     const hasMoneyMakerTodos = filteredTasks.some(task => isTodoTask(task) && isMoneyMakerTask(task));
-    return objectives
-      .filter(objective => objective.status !== 'postponed' && (todoObjectiveIds.has(objective.id) || (hasMoneyMakerTodos && isMoneyObjective(objective))))
+    return allColumns
+      .filter(objective => visibleIndependentColumn(objective, filteredTasks.filter(isTodoTask)) || (!objective.milestone_id && objective.status !== 'postponed' && (todoObjectiveIds.has(objective.id) || (hasMoneyMakerTodos && isMoneyObjective(objective)))))
       .sort(byStoredOrder);
-  }, [objectives, filteredTasks]);
+  }, [allColumns, filteredTasks, searchTerm]);
 
   const checklistTasks = useMemo(
     () => filteredTasks.filter(task => isTodoTask(task) && !task.date),
@@ -945,10 +972,10 @@ export default function TodoListView() {
   const checklistColumns = useMemo(() => {
     const objectiveIds = new Set(checklistTasks.filter(task => task.objective_id).map(task => task.objective_id));
     const hasMoneyMakerTodos = checklistTasks.some(task => isMoneyMakerTask(task));
-    return objectives
-      .filter(objective => objective.status !== 'postponed' && (objectiveIds.has(objective.id) || (hasMoneyMakerTodos && isMoneyObjective(objective))))
+    return allColumns
+      .filter(objective => visibleIndependentColumn(objective, checklistTasks) || (!objective.milestone_id && objective.status !== 'postponed' && (objectiveIds.has(objective.id) || (hasMoneyMakerTodos && isMoneyObjective(objective)))))
       .sort(byStoredOrder);
-  }, [checklistTasks, objectives]);
+  }, [checklistTasks, allColumns, searchTerm]);
 
   async function toggleMoneyMaker(task) {
     setTaskMenu(null);
@@ -1028,12 +1055,17 @@ export default function TodoListView() {
     next.splice(to, 0, moved);
     const positions = new Map(next.map((item, index) => [item.id, index]));
     setObjectives(rows => rows.map(item => positions.has(item.id) ? { ...item, todo_order: positions.get(item.id) } : item));
-    await api.reorderTodoObjectives(next.map(item => item.id));
+    setIndependentItems(rows => rows.map(item => positions.has(`${item.type}:${item.id}`) ? { ...item, todo_order: positions.get(`${item.type}:${item.id}`) } : item));
+    try { await api.reorderTodoColumns(next.map(item => ({ kind: item.column_kind || 'objective', id: item.source_id || item.id }))); }
+    catch (_) { setError('No se pudo guardar el orden de las columnas.'); load(); }
   }
 
   async function moveTask(objectiveId, fromId, toId, placement = 'before') {
     if (!fromId || fromId === toId || reordering) return;
-    const list = tasks.filter(task => task.objective_id === objectiveId && isTodoTask(task)).sort(byTodoOrder);
+    const column = findColumn(objectiveId);
+    if (!column) return;
+    const parentId = column.milestone_id ? column.objective_id : column.id;
+    const list = tasks.filter(task => isTodoTask(task) && (parentId ? task.objective_id === parentId : task.milestone_id === column.milestone_id)).sort(byTodoOrder);
     const from = list.findIndex(item => item.id === fromId);
     const targetTask = list.find(item => item.id === toId);
     if (from < 0 || !targetTask) return;
@@ -1061,7 +1093,7 @@ export default function TodoListView() {
           ? { ...item, ...updated, todo_order: positions.get(moved.id) }
           : item));
       }
-      await api.reorderTodos(objectiveId, list.map(item => item.id));
+      await api.reorderTodos(parentId, list.map(item => item.id), parentId ? null : column.milestone_id);
     } catch (_) {
       setError('No se pudo guardar el nuevo orden. Se ha restaurado la lista.');
       load();
@@ -1072,7 +1104,7 @@ export default function TodoListView() {
 
   function moveTaskByOffset(menu, offset) {
     const list = tasks
-      .filter(task => task.objective_id === menu.objectiveId && isTodoTask(task) && (view !== 'checklist' || !task.date))
+      .filter(task => matchesTodoColumn(task, findColumn(menu.objectiveId)) && isTodoTask(task) && (view !== 'checklist' || !task.date))
       .sort(view === 'checklist' ? byTodoOrder : byStoredOrder);
     const index = list.findIndex(task => task.id === menu.task.id);
     const target = list[index + offset];
@@ -1082,9 +1114,46 @@ export default function TodoListView() {
   }
 
   const taskMenuOrder = taskMenu ? tasks
-    .filter(task => task.objective_id === taskMenu.objectiveId && isTodoTask(task) && (view !== 'checklist' || !task.date))
+    .filter(task => matchesTodoColumn(task, findColumn(taskMenu.objectiveId)) && isTodoTask(task) && (view !== 'checklist' || !task.date))
     .sort(view === 'checklist' ? byTodoOrder : byStoredOrder) : [];
   const taskMenuOrderIndex = taskMenuOrder.findIndex(task => task.id === taskMenu?.task.id);
+
+  function renderColumn(objective) {
+    const objectiveIndex = columns.findIndex(column => column.id === objective.id);
+    return (
+            <TodoColumn
+              key={objective.id}
+              objective={objective}
+              tasks={filteredTasks.filter(task => isTodoTask(task) && matchesTodoColumn(task, objective)).sort(byStoredOrder)}
+              onEditColumn={objective.milestone_id ? () => setEditingIndependent(independentItems.find(item => item.id === objective.source_id && item.type === objective.column_kind)) : null}
+              onReload={load}
+              onEdit={setEditing}
+              onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 400)) })}
+              onColumnDrop={moveColumn}
+              onMoveColumn={offset => moveColumn(objective.id, columns[objectiveIndex + offset]?.id)}
+              canMoveColumnUp={objectiveIndex > 0}
+              canMoveColumnDown={objectiveIndex < columns.length - 1}
+              onTaskDrop={moveTask}
+              dragColumnRef={dragColumnRef}
+              dragTaskRef={dragTaskRef}
+              draggedTaskId={draggedTask?.id}
+              flashedTaskId={flashedTaskId}
+              onTaskDragStart={(task, event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                const anchor = { top: rect.top, left: rect.left, right: rect.right };
+                dragSessionRef.current += 1;
+                dragAnchorRef.current = anchor;
+                setDragAnchor(anchor);
+                setDraggedTask(task);
+              }}
+              onTaskDragEnd={endTaskDrag}
+              saving={saving || starting || reordering}
+              mobileViewport={mobileViewport}
+              collapsed={mobileViewport ? expandedObjectiveId !== objective.id : Boolean(collapsedDesktopColumns[objective.id])}
+              onToggleColumn={() => toggleColumn(objective.id)}
+            />
+    );
+  }
 
   return (
     <div>
@@ -1123,11 +1192,11 @@ export default function TodoListView() {
           </div>
           <div className="page-subtitle">{view === 'checklist'
             ? `${checklistTasks.length} tarea${checklistTasks.length === 1 ? '' : 's'} sin fecha`
-            : `${columns.length} objetivo${columns.length === 1 ? '' : 's'} con tareas ToDo`}</div>
+            : `${columns.length} columna${columns.length === 1 ? '' : 's'} de objetivos, proyectos e hitos`}</div>
         </div>
       </div>
 
-      {error && <div role="alert" style={{ color: 'var(--danger)', marginBottom: 12 }}>{error}</div>}
+      {error && <div role="alert" style={{ color: 'var(--danger)', marginBottom: 12 }}>{error} <button className="btn btn-ghost btn-sm" onClick={() => { setError(''); load(); }}>Reintentar</button></div>}
       {saving && <div role="status">Guardando fecha…</div>}
       {loading ? (
         <div className="empty-state card">Cargando…</div>
@@ -1135,6 +1204,7 @@ export default function TodoListView() {
         <TodoCalendar tasks={filteredTasks} objectives={objectives} onEdit={setEditing}
           countdownEnd={countdownEnd}
           moneyPlanningReady={moneyPlanningReady}
+          moneyRequiredMinutes={moneyRequiredMinutes}
           onStart={startTodo}
           onToggleComplete={toggleTodoComplete}
           onSetDuration={setDurationTask}
@@ -1150,17 +1220,19 @@ export default function TodoListView() {
               <TodoChecklistColumn
                 key={objective.id}
                 objective={objective}
+                onEditColumn={objective.milestone_id ? () => setEditingIndependent(independentItems.find(item => item.id === objective.source_id && item.type === objective.column_kind)) : null}
                 tasks={checklistTasks
-                  .filter(task => task.objective_id === objective.id || (isMoneyObjective(objective) && isMoneyMakerTask(task)))
+                  .filter(task => matchesTodoColumn(task, objective))
                   .sort(byTodoOrder)}
                 onReload={load}
                 onEdit={setEditing}
-                onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 280)) })}
+                onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 400)) })}
                 onToggleComplete={toggleTodoComplete}
                 onTaskDrop={moveTask}
                 saving={starting || saving || reordering}
-                mobileCollapsed={mobileViewport && expandedObjectiveId !== objective.id}
-                onToggleMobile={mobileViewport ? () => setExpandedObjectiveId(current => current === objective.id ? null : objective.id) : null}
+                mobileViewport={mobileViewport}
+                collapsed={mobileViewport ? expandedObjectiveId !== objective.id : Boolean(collapsedDesktopColumns[objective.id])}
+                onToggleColumn={() => toggleColumn(objective.id)}
               />
             ))}
           </div>
@@ -1174,43 +1246,22 @@ export default function TodoListView() {
           <div>{deadlineRows.map(deadline => <DeadlineChip key={deadline.id} deadline={deadline} onClick={setEditingDeadline} />)}</div>
         </div>}
         <div className="todo-board">
-          {columns.map((objective, objectiveIndex) => (
-            <TodoColumn
-              key={objective.id}
-              objective={objective}
-              tasks={filteredTasks.filter(task => isTodoTask(task) && (task.objective_id === objective.id || (isMoneyObjective(objective) && isMoneyMakerTask(task)))).sort(byStoredOrder)}
-              onReload={load}
-              onEdit={setEditing}
-              onTaskContextMenu={(task, event, objectiveId) => setTaskMenu({ task, objectiveId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 280)) })}
-              onColumnDrop={moveColumn}
-              onMoveColumn={offset => moveColumn(objective.id, columns[objectiveIndex + offset]?.id)}
-              canMoveColumnUp={objectiveIndex > 0}
-              canMoveColumnDown={objectiveIndex < columns.length - 1}
-              onTaskDrop={moveTask}
-              dragColumnRef={dragColumnRef}
-              dragTaskRef={dragTaskRef}
-              draggedTaskId={draggedTask?.id}
-              flashedTaskId={flashedTaskId}
-              onTaskDragStart={(task, event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                const anchor = { top: rect.top, left: rect.left, right: rect.right };
-                dragSessionRef.current += 1;
-                dragAnchorRef.current = anchor;
-                setDragAnchor(anchor);
-                setDraggedTask(task);
-              }}
-              onTaskDragEnd={endTaskDrag}
-              saving={saving}
-              mobileCollapsed={mobileViewport && expandedObjectiveId !== objective.id}
-              onToggleMobile={mobileViewport ? () => setExpandedObjectiveId(current => current === objective.id ? null : objective.id) : null}
-            />
-          ))}
+          {columns.map(renderColumn)}
         </div>
         </>
       )}
 
-      {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y }} onMouseDown={e => e.stopPropagation()}>
-        <div className="todo-mobile-order-actions">
+      {view === 'calendar' && columns.some(column => column.milestone_id) && <section className="independent-section" aria-label="Proyectos e hitos independientes">
+        <h2 className="independent-section-heading">Proyectos e hitos independientes</h2>
+        <div className="todo-board">{columns.filter(column => column.milestone_id).map(renderColumn)}</div>
+      </section>}
+      {editingIndependent?.type === 'repo' && <RepoDetailDialog repo={{ ...editingIndependent, type: editingIndependent.project_type }} objectives={objectives}
+        onClose={() => setEditingIndependent(null)} onSaved={load} onDeleted={() => { setEditingIndependent(null); load(); }} />}
+      {editingIndependent?.type === 'milestone' && <EditClassicMilestoneDialog milestone={editingIndependent}
+        onClose={() => setEditingIndependent(null)} onSaved={() => { setEditingIndependent(null); load(); }} />}
+
+      {taskMenu && <div className="todo-task-context-menu" style={{ left: taskMenu.x, top: taskMenu.y, maxHeight: `calc(100dvh - ${taskMenu.y + 8}px)` }} onMouseDown={e => e.stopPropagation()}>
+        <div className="todo-order-actions">
           <button type="button" disabled={taskMenuOrderIndex <= 0} onClick={() => moveTaskByOffset(taskMenu, -1)}>↑ Subir</button>
           <button type="button" disabled={taskMenuOrderIndex < 0 || taskMenuOrderIndex >= taskMenuOrder.length - 1} onClick={() => moveTaskByOffset(taskMenu, 1)}>↓ Bajar</button>
         </div>
@@ -1226,7 +1277,7 @@ export default function TodoListView() {
         <button type="button" disabled={!taskMenu.task.date || saving} onClick={() => changeTodoDay(taskMenu.task, null)}>Sin fecha</button>
         <button type="button" onClick={() => { setDurationTask(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
         <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
-          title={!moneyPlanningReady ? 'Planifica primero 4h de tareas Money maker' : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
+          title={!moneyPlanningReady ? `Planifica primero ${moneyRequiredMinutes / 60}h de tareas Money maker` : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
           onClick={() => { startTodo(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
       </div>}
 

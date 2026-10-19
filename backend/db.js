@@ -50,6 +50,7 @@ try { db.prepare('ALTER TABLE milestones ADD COLUMN billed_amount REAL DEFAULT 0
 try { db.prepare('ALTER TABLE objectives ADD COLUMN category_ids TEXT').run(); } catch (_) {}
 
 try { db.prepare('ALTER TABLE documents ADD COLUMN category_ids TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE documents ADD COLUMN repo_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE categories ADD COLUMN text_color TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE categories ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE objectives ADD COLUMN user_id TEXT').run(); } catch (_) {}
@@ -60,6 +61,9 @@ try { db.prepare('ALTER TABLE tasks ADD COLUMN todo_day_order INTEGER').run(); }
 try { db.prepare('ALTER TABLE tasks ADD COLUMN todo_order_date TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE tasks ADD COLUMN is_money_maker INTEGER DEFAULT 0').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE objectives ADD COLUMN todo_order INTEGER').run(); } catch (_) {}
+for (const table of ['objectives', 'milestones', 'tasks', 'events', 'publications', 'certifications', 'repos', 'prs']) {
+  try { db.prepare(`ALTER TABLE ${table} ADD COLUMN archived_at TEXT`).run(); } catch (_) {}
+}
 try { db.prepare('ALTER TABLE work_blocks ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE events ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE publications ADD COLUMN user_id TEXT').run(); } catch (_) {}
@@ -70,6 +74,7 @@ try { db.prepare('ALTER TABLE documents ADD COLUMN user_id TEXT').run(); } catch
 try { db.prepare('ALTER TABLE reading_list ADD COLUMN user_id TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE users ADD COLUMN content_sections TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE users ADD COLUMN auth_email TEXT').run(); } catch (_) {}
+try { db.prepare('ALTER TABLE users ADD COLUMN money_required_minutes INTEGER NOT NULL DEFAULT 240').run(); } catch (_) {}
 
 // Documents uploads directory
 const uploadsDir = path.join(dataDir, 'uploads');
@@ -85,7 +90,8 @@ function initSchema() {
       name TEXT NOT NULL,
       color TEXT NOT NULL,
       content_sections TEXT,
-      auth_email TEXT
+      auth_email TEXT,
+      money_required_minutes INTEGER NOT NULL DEFAULT 240
     );
 
     CREATE TABLE IF NOT EXISTS categories (
@@ -113,7 +119,8 @@ function initSchema() {
       type TEXT DEFAULT 'objective',
       category_ids TEXT,
       user_id TEXT,
-      todo_order INTEGER
+      todo_order INTEGER,
+      archived_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS milestones (
@@ -126,7 +133,8 @@ function initSchema() {
       status TEXT DEFAULT 'not_started',
       weight INTEGER DEFAULT 10,
       billed_amount REAL DEFAULT 0,
-      user_id TEXT
+      user_id TEXT,
+      archived_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
@@ -157,7 +165,8 @@ function initSchema() {
       user_id TEXT,
       todo_order INTEGER,
       todo_day_order INTEGER,
-      todo_order_date TEXT
+      todo_order_date TEXT,
+      archived_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS work_blocks (
@@ -254,6 +263,7 @@ function initSchema() {
       size INTEGER,
       created_at TEXT DEFAULT (datetime('now')),
       category_ids TEXT,
+      repo_id TEXT,
       user_id TEXT
     );
 
@@ -277,7 +287,56 @@ function initSchema() {
       color TEXT NOT NULL DEFAULT '#dc2626',
       user_id TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS notepad_tabs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT 'Nueva pestaña',
+      content TEXT NOT NULL DEFAULT '',
+      position INTEGER NOT NULL DEFAULT 0,
+      revision INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      deleted_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_notepad_tabs_user_position
+      ON notepad_tabs (user_id, position);
+
+    CREATE TABLE IF NOT EXISTS notepad_images (
+      id TEXT PRIMARY KEY,
+      tab_id TEXT NOT NULL REFERENCES notepad_tabs(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      data_base64 TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      unreferenced_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_notepad_images_tab ON notepad_images (tab_id);
   `);
+
+  for (const table of ['objectives', 'milestones', 'tasks', 'events', 'publications', 'certifications', 'repos', 'prs']) {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some(column => column.name === 'archived_at')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN archived_at TEXT`);
+    }
+  }
+
+  const notepadColumns = db.prepare('PRAGMA table_info(notepad_tabs)').all().map(column => column.name);
+  if (!notepadColumns.includes('deleted_at')) db.exec('ALTER TABLE notepad_tabs ADD COLUMN deleted_at TEXT');
+  const notepadImageColumns = db.prepare('PRAGMA table_info(notepad_images)').all().map(column => column.name);
+  if (!notepadImageColumns.includes('unreferenced_at')) db.exec('ALTER TABLE notepad_images ADD COLUMN unreferenced_at TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_notepad_images_unreferenced ON notepad_images (unreferenced_at)');
+
+  if (!db.prepare('PRAGMA table_info(repos)').all().some(column => column.name === 'notebook')) {
+    db.exec("ALTER TABLE repos ADD COLUMN notebook TEXT NOT NULL DEFAULT '{}'");
+  }
+  if (!db.prepare('PRAGMA table_info(repos)').all().some(column => column.name === 'independent_color')) {
+    db.exec('ALTER TABLE repos ADD COLUMN independent_color TEXT');
+  }
+
+  for (const table of ['repos', 'milestones']) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
+    if (!columns.includes('show_independent')) db.exec(`ALTER TABLE ${table} ADD COLUMN show_independent INTEGER NOT NULL DEFAULT 0`);
+    if (!columns.includes('todo_order')) db.exec(`ALTER TABLE ${table} ADD COLUMN todo_order INTEGER`);
+  }
 
   const timingColumns = db.prepare('PRAGMA table_info(tasks)').all().map(column => column.name);
   for (const [name, definition] of Object.entries({

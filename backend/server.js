@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const { db, initSchema } = require('./db');
 const { createBackup, importBackup } = require('./backup');
+const { readDocxText, readLegacyDocText } = require('./docx-preview');
 
 initSchema();
 
@@ -247,6 +248,10 @@ function getHiddenTaskRefs(userId, includeInactive = false) {
   const hiddenObjectiveIds = !sections.clients
     ? db.prepare("SELECT id FROM objectives WHERE user_id = ? AND type = 'client'").all(userId).map(r => r.id)
     : [];
+  hiddenObjectiveIds.push(...db.prepare('SELECT id FROM objectives WHERE user_id = ? AND archived_at IS NOT NULL').all(userId).map(r => r.id));
+  for (const table of ['milestones', 'events', 'publications', 'certifications', 'repos', 'prs']) {
+    hiddenMilestoneIds.push(...db.prepare(`SELECT id FROM ${table} WHERE user_id = ? AND archived_at IS NOT NULL`).all(userId).map(r => r.id));
+  }
 
   if (includeInactive) {
     const inactiveStatuses = ['postponed', 'discarded', 'failed'];
@@ -271,12 +276,14 @@ function filterVisibleTaskRows(tasks, refs) {
   const hiddenMilestones = new Set(refs.hiddenMilestoneIds);
   const hiddenObjectives = new Set(refs.hiddenObjectiveIds);
   return tasks.filter(task =>
+    !task.archived_at &&
     (!task.milestone_id || !hiddenMilestones.has(task.milestone_id)) &&
     (!task.objective_id || !hiddenObjectives.has(task.objective_id))
   );
 }
 
 function applyTaskVisibility(sql, params, refs) {
+  sql += ' AND archived_at IS NULL';
   if (refs.hiddenMilestoneIds.length) {
     sql += ` AND (milestone_id IS NULL OR milestone_id NOT IN (${refs.hiddenMilestoneIds.map(() => '?').join(',')}))`;
     params.push(...refs.hiddenMilestoneIds);
@@ -296,8 +303,13 @@ function computeTaskProgress(objectiveId) {
   if (!objectiveId) return 0;
   const all = db.prepare(`
     SELECT status FROM tasks
-    WHERE objective_id = ? AND is_fixed = 0
-      AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND milestones.status IN ('discarded', 'failed'))
+    WHERE objective_id = ? AND is_fixed = 0 AND archived_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND (milestones.status IN ('discarded', 'failed') OR milestones.archived_at IS NOT NULL))
+      AND NOT EXISTS (SELECT 1 FROM events WHERE events.id = tasks.milestone_id AND events.archived_at IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.id = tasks.milestone_id AND publications.archived_at IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.archived_at IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.archived_at IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM prs WHERE prs.id = tasks.milestone_id AND prs.archived_at IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.status IN ('postponed', 'discarded', 'failed'))
       AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.status IN ('postponed', 'discarded', 'failed'))
       AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.id = tasks.milestone_id AND publications.status IN ('postponed', 'discarded', 'failed'))
@@ -310,9 +322,14 @@ function computeTaskProgress(objectiveId) {
 }
 
 function computeGlobalTaskProgress() {
-  const eligible = `is_fixed = 0
-    AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = tasks.objective_id AND objectives.status IN ('postponed', 'discarded', 'failed'))
-    AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND milestones.status IN ('discarded', 'failed'))
+  const eligible = `is_fixed = 0 AND archived_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = tasks.objective_id AND (objectives.status IN ('postponed', 'discarded', 'failed') OR objectives.archived_at IS NOT NULL))
+    AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND (milestones.status IN ('discarded', 'failed') OR milestones.archived_at IS NOT NULL))
+    AND NOT EXISTS (SELECT 1 FROM events WHERE events.id = tasks.milestone_id AND events.archived_at IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.id = tasks.milestone_id AND publications.archived_at IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.archived_at IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.archived_at IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM prs WHERE prs.id = tasks.milestone_id AND prs.archived_at IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.status IN ('postponed', 'discarded', 'failed'))
     AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.status IN ('postponed', 'discarded', 'failed'))
     AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.id = tasks.milestone_id AND publications.status IN ('postponed', 'discarded', 'failed'))
@@ -356,7 +373,7 @@ function expandFixedTasks(from, to, filters = {}) {
 
 function computeMilestoneProgress(milestoneId) {
   if (!milestoneId) return 0;
-  const all = db.prepare('SELECT status FROM tasks WHERE milestone_id = ? AND is_fixed = 0').all(milestoneId);
+  const all = db.prepare('SELECT status FROM tasks WHERE milestone_id = ? AND is_fixed = 0 AND archived_at IS NULL').all(milestoneId);
   if (!all.length) return 0;
   const done = all.filter(t => t.status === 'completed').length;
   return Math.round((done / all.length) * 100);
@@ -424,9 +441,10 @@ function isTodoTask(task) {
 }
 
 function getDailyMoneyPlanningStatus(userId, date = new Date().toISOString().slice(0, 10)) {
+  const requiredMinutes = db.prepare('SELECT money_required_minutes FROM users WHERE id = ?').get(userId)?.money_required_minutes ?? 240;
   const objective = db.prepare('SELECT id, title FROM objectives WHERE user_id = ?').all(userId)
     .find(row => String(row.title || '').trim().toLocaleLowerCase('en-US').replace(/[!?.]+$/g, '').trim() === "let's make some money");
-  if (!objective) return { ready: false, moneyMinutes: 0, requiredMinutes: 240 };
+  if (!objective) return { ready: false, moneyMinutes: 0, requiredMinutes };
 
   const refs = getHiddenTaskRefs(userId, true);
   const regular = db.prepare('SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND user_id = ?').all(date, userId);
@@ -441,7 +459,7 @@ function getDailyMoneyPlanningStatus(userId, date = new Date().toISOString().sli
   const moneyMinutes = todayTasks
     .filter(task => task.objective_id === objective.id || task.is_money_maker)
     .reduce((sum, task) => sum + Math.max(0, Number(task.duration_estimated) || 0), 0);
-  return { ready: moneyMinutes >= 240, moneyMinutes, requiredMinutes: 240 };
+  return { ready: moneyMinutes >= requiredMinutes, moneyMinutes, requiredMinutes };
 }
 
 function minutesBetweenTimes(start, end) {
@@ -487,7 +505,7 @@ function filterScheduledOriginalsWithClones(tasks) {
 }
 
 function findClonedTasksForRange(from, to, filters = {}) {
-  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND is_cloned = 1 AND cloned_from IS NOT NULL AND date BETWEEN ? AND ? AND user_id = ?';
+  let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND is_cloned = 1 AND archived_at IS NULL AND cloned_from IS NOT NULL AND date BETWEEN ? AND ? AND user_id = ?';
   const params = [from, to, filters.user_id || 'pepito'];
   if (filters.objective_id) { sql += ' AND objective_id = ?'; params.push(filters.objective_id); }
   if (filters.milestone_id) { sql += ' AND milestone_id = ?'; params.push(filters.milestone_id); }
@@ -495,6 +513,187 @@ function findClonedTasksForRange(from, to, filters = {}) {
   sql += ' ORDER BY date, start_time';
   return db.prepare(sql).all(...params);
 }
+
+// ── NOTEPAD ─────────────────────────────────────────────────────────────────
+const notepadSubscribers = new Map();
+const notepadImageReference = /!\[Imagen\]\(\/api\/notepad\/images\/([A-Za-z0-9-]+)\)/g;
+
+function referencedNotepadImages(tabs) {
+  const owners = new Map();
+  for (const tab of tabs) {
+    for (const match of tab.content.matchAll(notepadImageReference)) {
+      const key = `${tab.user_id}:${match[1]}`;
+      if (!owners.has(key)) owners.set(key, tab.id);
+    }
+  }
+  return owners;
+}
+
+function reconcileNotepadImages(userId = null) {
+  const where = userId ? ' WHERE user_id = ?' : '';
+  const params = userId ? [userId] : [];
+  // Include notes in the trash: they can still be restored during retention.
+  const references = referencedNotepadImages(db.prepare(`SELECT id, user_id, content FROM notepad_tabs${where}`).all(...params));
+  const images = db.prepare(`SELECT id, user_id, unreferenced_at FROM notepad_images${where}`).all(...params);
+  const markReferenced = db.prepare('UPDATE notepad_images SET unreferenced_at = NULL WHERE id = ? AND user_id = ?');
+  const markUnreferenced = db.prepare("UPDATE notepad_images SET unreferenced_at = datetime('now') WHERE id = ? AND user_id = ? AND unreferenced_at IS NULL");
+  db.transaction(() => {
+    for (const image of images) {
+      if (references.has(`${image.user_id}:${image.id}`)) {
+        if (image.unreferenced_at) markReferenced.run(image.id, image.user_id);
+      } else if (!image.unreferenced_at) {
+        markUnreferenced.run(image.id, image.user_id);
+      }
+    }
+  })();
+}
+
+function purgeExpiredNotepadTabs() {
+  const expiring = db.prepare("SELECT id FROM notepad_tabs WHERE deleted_at IS NOT NULL AND deleted_at <= datetime('now', '-30 days')").all();
+  if (!expiring.length) return;
+  const expiringIds = new Set(expiring.map(tab => tab.id));
+  const survivingTabs = db.prepare("SELECT id, user_id, content FROM notepad_tabs WHERE deleted_at IS NULL OR deleted_at > datetime('now', '-30 days')").all();
+  const survivingReferences = referencedNotepadImages(survivingTabs);
+  const images = db.prepare('SELECT id, tab_id, user_id FROM notepad_images').all();
+  const moveImage = db.prepare('UPDATE notepad_images SET tab_id = ? WHERE id = ? AND user_id = ?');
+  db.transaction(() => {
+    for (const image of images) {
+      if (!expiringIds.has(image.tab_id)) continue;
+      const survivingTabId = survivingReferences.get(`${image.user_id}:${image.id}`);
+      if (survivingTabId) moveImage.run(survivingTabId, image.id, image.user_id);
+    }
+    db.prepare("DELETE FROM notepad_tabs WHERE deleted_at IS NOT NULL AND deleted_at <= datetime('now', '-30 days')").run();
+  })();
+}
+
+function maintainNotepad() {
+  purgeExpiredNotepadTabs();
+  reconcileNotepadImages();
+  db.prepare("DELETE FROM notepad_images WHERE unreferenced_at IS NOT NULL AND unreferenced_at <= datetime('now', '-30 days')").run();
+}
+
+maintainNotepad();
+setInterval(maintainNotepad, 60 * 60 * 1000).unref();
+
+function notifyNotepad(userId, clientId) {
+  const message = `event: change\ndata: ${JSON.stringify({ client_id: clientId || null })}\n\n`;
+  for (const response of notepadSubscribers.get(userId) || []) response.write(message);
+}
+
+app.get('/api/notepad/tabs', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(db.prepare('SELECT * FROM notepad_tabs WHERE user_id = ? AND deleted_at IS NULL ORDER BY position, rowid').all(req.userId));
+});
+
+app.get('/api/notepad/trash', (req, res) => {
+  maintainNotepad();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(db.prepare('SELECT id, title, deleted_at FROM notepad_tabs WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, rowid DESC').all(req.userId));
+});
+
+app.get('/api/notepad/events', (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  res.write(': connected\n\n');
+  if (!notepadSubscribers.has(req.userId)) notepadSubscribers.set(req.userId, new Set());
+  const subscribers = notepadSubscribers.get(req.userId);
+  subscribers.add(res);
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 25000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    subscribers.delete(res);
+    if (!subscribers.size) notepadSubscribers.delete(req.userId);
+  });
+});
+
+app.post('/api/notepad/tabs', (req, res) => {
+  const id = crypto.randomUUID();
+  const position = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM notepad_tabs WHERE user_id = ?').get(req.userId).next;
+  db.prepare('INSERT INTO notepad_tabs (id, user_id, title, position) VALUES (?, ?, ?, ?)')
+    .run(id, req.userId, 'Nueva pestaña', position);
+  const tab = db.prepare('SELECT * FROM notepad_tabs WHERE id = ?').get(id);
+  res.status(201).json(tab);
+  notifyNotepad(req.userId, req.body?.client_id);
+});
+
+app.put('/api/notepad/tabs/:id', (req, res) => {
+  const { title, content, revision, client_id: clientId } = req.body || {};
+  if (typeof title !== 'string' || typeof content !== 'string' || !Number.isInteger(revision)) {
+    return res.status(400).json({ error: 'Datos de la pestaña no válidos' });
+  }
+  if (!title.trim() || title.length > 120) return res.status(400).json({ error: 'El título debe tener entre 1 y 120 caracteres' });
+  const result = db.prepare(`UPDATE notepad_tabs SET title = ?, content = ?, revision = revision + 1,
+    updated_at = datetime('now') WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND revision = ?`)
+    .run(title, content, req.params.id, req.userId, revision);
+  if (!result.changes) {
+    const current = db.prepare('SELECT * FROM notepad_tabs WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(req.params.id, req.userId);
+    return current ? res.status(409).json({ error: 'La pestaña cambió en otra ventana', current })
+      : res.status(404).json({ error: 'Pestaña no encontrada' });
+  }
+  const tab = db.prepare('SELECT * FROM notepad_tabs WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  reconcileNotepadImages(req.userId);
+  res.json(tab);
+  notifyNotepad(req.userId, clientId);
+});
+
+app.delete('/api/notepad/tabs/:id', (req, res) => {
+  const result = db.prepare("UPDATE notepad_tabs SET deleted_at = datetime('now'), revision = revision + 1 WHERE id = ? AND user_id = ? AND deleted_at IS NULL").run(req.params.id, req.userId);
+  if (!result.changes) return res.status(404).json({ error: 'Pestaña no encontrada' });
+  res.json({ ok: true });
+  notifyNotepad(req.userId, req.query.client_id);
+});
+
+app.post('/api/notepad/tabs/:id/restore', (req, res) => {
+  purgeExpiredNotepadTabs();
+  const result = db.prepare("UPDATE notepad_tabs SET deleted_at = NULL, revision = revision + 1 WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL").run(req.params.id, req.userId);
+  if (!result.changes) return res.status(404).json({ error: 'Pestaña no encontrada en la papelera' });
+  const tab = db.prepare('SELECT * FROM notepad_tabs WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  res.json(tab);
+  notifyNotepad(req.userId, req.body?.client_id);
+});
+
+const notepadImageSignatures = {
+  'image/png': buffer => buffer.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')),
+  'image/jpeg': buffer => buffer.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex')),
+  'image/gif': buffer => ['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii')),
+  'image/webp': buffer => buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP',
+};
+
+app.post('/api/notepad/tabs/:id/images', (req, res) => {
+  if (!db.prepare('SELECT id FROM notepad_tabs WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(req.params.id, req.userId)) {
+    return res.status(404).json({ error: 'Pestaña no encontrada' });
+  }
+  const { mime_type: mimeType, data_base64: encoded } = req.body || {};
+  if (!Object.hasOwn(notepadImageSignatures, mimeType) || typeof encoded !== 'string'
+    || encoded.length > 14_000_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    return res.status(400).json({ error: 'Imagen no válida' });
+  }
+  const image = Buffer.from(encoded, 'base64');
+  if (!image.length || image.length > 10 * 1024 * 1024 || !notepadImageSignatures[mimeType](image)) {
+    return res.status(400).json({ error: 'Imagen no válida o demasiado grande' });
+  }
+  const id = crypto.randomUUID();
+  db.prepare("INSERT INTO notepad_images (id, tab_id, user_id, mime_type, data_base64, unreferenced_at) VALUES (?, ?, ?, ?, ?, datetime('now'))")
+    .run(id, req.params.id, req.userId, mimeType, encoded);
+  res.status(201).json({ id });
+});
+
+app.get('/api/notepad/images/:id', (req, res) => {
+  const image = db.prepare('SELECT mime_type, data_base64 FROM notepad_images WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  if (!image || !Object.hasOwn(notepadImageSignatures, image.mime_type)) return res.status(404).end();
+  res.set({
+    'Content-Type': image.mime_type,
+    'Content-Disposition': 'inline',
+    'Cache-Control': 'private, max-age=86400',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.send(Buffer.from(image.data_base64, 'base64'));
+});
 
 // ── USERS ───────────────────────────────────────────────────────────────────
 app.get('/api/users', (req, res) => {
@@ -509,9 +708,12 @@ app.put('/api/users/:id', (req, res) => {
   if (req.params.id !== req.userId) return res.status(403).json({ error: 'No puedes editar otro perfil.' });
   const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
   if (!current) return res.status(404).json({ error: 'Not found' });
-  const { name, color, content_sections } = req.body;
-  db.prepare('UPDATE users SET name = COALESCE(?, name), color = COALESCE(?, color), content_sections = COALESCE(?, content_sections) WHERE id = ?')
-    .run(name ?? null, color ?? null, content_sections !== undefined ? JSON.stringify(parseContentSections(content_sections)) : null, req.params.id);
+  const { name, color, content_sections, money_required_minutes } = req.body;
+  if (money_required_minutes !== undefined && (!Number.isInteger(money_required_minutes) || money_required_minutes < 0 || money_required_minutes > 1440 || money_required_minutes % 15 !== 0)) {
+    return res.status(400).json({ error: 'Las horas diarias deben estar entre 0 y 24, en intervalos de 15 minutos.' });
+  }
+  db.prepare('UPDATE users SET name = COALESCE(?, name), color = COALESCE(?, color), content_sections = COALESCE(?, content_sections), money_required_minutes = COALESCE(?, money_required_minutes) WHERE id = ?')
+    .run(name ?? null, color ?? null, content_sections !== undefined ? JSON.stringify(parseContentSections(content_sections)) : null, money_required_minutes ?? null, req.params.id);
   res.json(db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id));
 });
 
@@ -733,12 +935,12 @@ app.get('/api/tasks/now', (req, res) => {
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
 
   const tracked = db.prepare(`SELECT * FROM tasks
-    WHERE user_id = ? AND is_fixed = 0 AND status != 'completed'
+    WHERE user_id = ? AND is_fixed = 0 AND archived_at IS NULL AND status != 'completed'
       AND (timer_started_at IS NOT NULL OR (status = 'in_progress' AND date = ?))
     ORDER BY CASE WHEN timer_started_at IS NOT NULL THEN 0 ELSE 1 END,
       COALESCE(timer_started_at, date || 'T' || start_time) DESC`).all(req.userId, today);
   const scheduledActive = tasks.filter(t => t.status !== 'completed' && t.start_time <= timeStr && t.end_time > timeStr);
-  const activeTasks = [...tracked];
+  const activeTasks = filterVisibleTaskRows(tracked, refs);
   scheduledActive.forEach(task => {
     if (!activeTasks.some(activeTask => activeTask.id === task.id)) activeTasks.push(task);
   });
@@ -761,8 +963,9 @@ app.post('/api/tasks/:id/timer', (req, res) => {
   const now = new Date();
   if (action === 'start') {
     if (task.status === 'completed') return res.status(409).json({ error: 'La tarea ya está completada' });
-    if (isTodoTask(task) && !getDailyMoneyPlanningStatus(req.userId).ready) {
-      return res.status(409).json({ error: 'Planifica al menos 4h de tareas Money maker antes de comenzar un ToDo' });
+    const moneyStatus = isTodoTask(task) ? getDailyMoneyPlanningStatus(req.userId) : null;
+    if (moneyStatus && !moneyStatus.ready) {
+      return res.status(409).json({ error: `Planifica al menos ${moneyStatus.requiredMinutes / 60}h de tareas Money maker antes de comenzar un ToDo` });
     }
     db.prepare(`UPDATE tasks SET timer_started_at = COALESCE(timer_started_at, ?),
       original_estimate_minutes = COALESCE(original_estimate_minutes, duration_estimated), status = 'in_progress'
@@ -840,6 +1043,10 @@ app.post('/api/tasks', (req, res) => {
   const effectiveDate = date || (isFixed ? fixed_start_date : null);
   const effectiveStatus = normalizeTaskStatus('pending', isFixed, 'pending');
   if (!title) return res.status(400).json({ error: 'title es obligatorio' });
+  if (milestone_id) {
+    const project = db.prepare('SELECT status FROM repos WHERE id = ? AND user_id = ?').get(milestone_id, req.userId);
+    if (project && ['completed', 'published', 'finished'].includes(project.status)) return res.status(409).json({ error: 'No se pueden añadir tareas a un proyecto completado' });
+  }
   if (isFixed && !effectiveDate) return res.status(400).json({ error: 'fixed_start_date es obligatoria para tareas fijas' });
   const effectiveStartTime = effectiveDate ? (start_time || null) : null;
   const effectiveEndTime = effectiveDate ? (end_time || null) : null;
@@ -895,11 +1102,14 @@ app.post('/api/tasks/todo-day-reorder', (req, res) => {
 });
 
 app.post('/api/tasks/todo-reorder', (req, res) => {
-  const { objective_id, ids } = req.body;
-  if (!objective_id || !Array.isArray(ids)) return res.status(400).json({ error: 'objective_id e ids son obligatorios' });
-  const update = db.prepare('UPDATE tasks SET todo_order = ? WHERE id = ? AND objective_id = ? AND user_id = ?');
-  const tx = db.transaction(() => ids.forEach((id, index) => update.run(index, id, objective_id, req.userId)));
-  tx();
+  const { objective_id, milestone_id, ids } = req.body;
+  if ((!objective_id && !milestone_id) || !Array.isArray(ids)) return res.status(400).json({ error: 'Indica el objetivo o hito y las tareas' });
+  const scope = milestone_id ? 'milestone_id' : 'objective_id';
+  const scopeId = milestone_id || objective_id;
+  const allowed = new Set(db.prepare(`SELECT id FROM tasks WHERE ${scope} = ? AND user_id = ?`).all(scopeId, req.userId).map(task => task.id));
+  if (ids.some(id => !allowed.has(id))) return res.status(400).json({ error: 'Las tareas deben pertenecer al mismo objetivo o hito' });
+  const update = db.prepare(`UPDATE tasks SET todo_order = ? WHERE id = ? AND ${scope} = ? AND user_id = ?`);
+  db.transaction(() => ids.forEach((id, index) => update.run(index, id, scopeId, req.userId)))();
   res.json({ ok: true });
 });
 
@@ -1063,11 +1273,44 @@ app.delete('/api/deadlines/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── ARCHIVE ──────────────────────────────────────────────────────────────────
+const archiveTables = { objective: 'objectives', milestone: 'milestones', task: 'tasks', event: 'events', publication: 'publications', certification: 'certifications', repo: 'repos', pr: 'prs' };
+
+app.get('/api/archive', (req, res) => {
+  const archived = {};
+  for (const [kind, table] of Object.entries(archiveTables)) {
+    archived[kind] = db.prepare(`SELECT id, title, archived_at FROM ${table} WHERE user_id = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC`).all(req.userId);
+  }
+  res.json(archived);
+});
+
+app.put('/api/archive/:kind/:id', (req, res) => {
+  const table = archiveTables[req.params.kind];
+  if (!table) return res.status(400).json({ error: 'Tipo de elemento inválido' });
+  const row = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND user_id = ?`).get(req.params.id, req.userId);
+  if (!row) return res.status(404).json({ error: 'Elemento no encontrado' });
+  if (req.body?.archived === false) {
+    db.prepare(`UPDATE ${table} SET archived_at = NULL WHERE id = ? AND user_id = ?`).run(req.params.id, req.userId);
+  } else if (req.body?.archived === true) {
+    db.prepare(`UPDATE ${table} SET archived_at = COALESCE(archived_at, datetime('now')) WHERE id = ? AND user_id = ?`).run(req.params.id, req.userId);
+    if (req.params.kind === 'task') {
+      db.prepare("UPDATE tasks SET timer_started_at = NULL, status = CASE WHEN status = 'in_progress' THEN 'pending' ELSE status END WHERE id = ? AND user_id = ?")
+        .run(req.params.id, req.userId);
+    }
+  } else {
+    return res.status(400).json({ error: 'Indica si quieres archivar o restaurar el elemento' });
+  }
+  if (req.params.kind === 'task') recomputeForTask(row.milestone_id, row.objective_id);
+  else if (row.objective_id) recomputeForTask(null, row.objective_id);
+  res.json({ ok: true });
+});
+
 // ── OBJECTIVES ───────────────────────────────────────────────────────────────
 app.get('/api/objectives', (req, res) => {
-  const { type } = req.query;
+  const { type, include_archived } = req.query;
   let sql = 'SELECT * FROM objectives WHERE user_id = ?';
   const params = [req.userId];
+  if (include_archived !== '1') sql += ' AND archived_at IS NULL';
   if (!isSectionEnabled(req.userId, 'clients')) sql += " AND type != 'client'";
   if (type) { sql += ' AND type = ?'; params.push(type); }
   sql += " ORDER BY CASE WHEN status = 'postponed' THEN 1 ELSE 0 END, priority, start_date";
@@ -1075,14 +1318,20 @@ app.get('/api/objectives', (req, res) => {
   for (const obj of objectives) {
     try { obj.category_ids = obj.category_ids ? JSON.parse(obj.category_ids) : (obj.category_id ? [obj.category_id] : []); } catch (_) { obj.category_ids = obj.category_id ? [obj.category_id] : []; }
     obj.milestones = db.prepare(`
-      SELECT * FROM milestones WHERE objective_id = ? AND user_id = ?
+      SELECT * FROM milestones WHERE objective_id = ? AND user_id = ? AND archived_at IS NULL
       ORDER BY
         CASE WHEN status = 'completed' THEN 1 ELSE 0 END ASC,
         target_date ASC NULLS LAST
     `).all(obj.id, req.userId);
     const objectiveTaskRows = db.prepare(`
       SELECT status FROM tasks
-      WHERE objective_id = ? AND is_fixed = 0 AND user_id = ?
+      WHERE objective_id = ? AND is_fixed = 0 AND user_id = ? AND archived_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND milestones.archived_at IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM events WHERE events.id = tasks.milestone_id AND events.archived_at IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.id = tasks.milestone_id AND publications.archived_at IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.archived_at IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.archived_at IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM prs WHERE prs.id = tasks.milestone_id AND prs.archived_at IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM milestones WHERE milestones.id = tasks.milestone_id AND milestones.status IN ('discarded', 'failed'))
         AND NOT EXISTS (SELECT 1 FROM repos WHERE repos.id = tasks.milestone_id AND repos.status IN ('postponed', 'discarded', 'failed'))
         AND NOT EXISTS (SELECT 1 FROM certifications WHERE certifications.id = tasks.milestone_id AND certifications.status IN ('postponed', 'discarded', 'failed'))
@@ -1092,12 +1341,12 @@ app.get('/api/objectives', (req, res) => {
     `).all(obj.id, req.userId);
     obj.task_count = objectiveTaskRows.length;
     obj.done_count = objectiveTaskRows.filter(t => t.status === 'completed').length;
-    const orphanRows = db.prepare("SELECT status FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND (milestone_id IS NULL OR milestone_id = '') AND user_id = ?").all(obj.id, req.userId);
+    const orphanRows = db.prepare("SELECT status FROM tasks WHERE objective_id = ? AND is_fixed = 0 AND (milestone_id IS NULL OR milestone_id = '') AND user_id = ? AND archived_at IS NULL").all(obj.id, req.userId);
     obj.orphan_count = orphanRows.length;
     obj.orphan_done  = orphanRows.filter(t => t.status === 'completed').length;
     for (const m of obj.milestones) {
       m.days_remaining = daysRemaining(m.target_date);
-      const mTasks = db.prepare('SELECT status FROM tasks WHERE milestone_id = ? AND is_fixed = 0 AND user_id = ?').all(m.id, req.userId);
+      const mTasks = db.prepare('SELECT status FROM tasks WHERE milestone_id = ? AND is_fixed = 0 AND user_id = ? AND archived_at IS NULL').all(m.id, req.userId);
       m.task_total = mTasks.length;
       m.task_done  = mTasks.filter(t => t.status === 'completed').length;
       m.percentage_completed = m.task_total > 0
@@ -1131,20 +1380,31 @@ app.post('/api/objectives', (req, res) => {
 });
 
 app.post('/api/objectives/todo-reorder', (req, res) => {
-  const { ids } = req.body;
-  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids debe ser un array' });
-  const update = db.prepare('UPDATE objectives SET todo_order = ? WHERE id = ? AND user_id = ?');
-  const tx = db.transaction(() => ids.forEach((id, index) => update.run(index, id, req.userId)));
-  tx();
+  const { ids, items } = req.body;
+  const entries = items === undefined && Array.isArray(ids) ? ids.map(id => ({ kind: 'objective', id })) : items;
+  const tables = { objective: 'objectives', repo: 'repos', milestone: 'milestones' };
+  if (!Array.isArray(entries) || entries.some(item => !item || !Object.hasOwn(tables, item.kind) || typeof item.id !== 'string')) return res.status(400).json({ error: 'Orden de columnas inválido' });
+  if (entries.some(item => !db.prepare(`SELECT id FROM ${tables[item.kind]} WHERE id = ? AND user_id = ?`).get(item.id, req.userId))) return res.status(404).json({ error: 'Elemento no encontrado' });
+  db.transaction(() => entries.forEach((item, index) => db.prepare(`UPDATE ${tables[item.kind]} SET todo_order = ? WHERE id = ? AND user_id = ?`).run(index, item.id, req.userId)))();
   res.json({ ok: true });
 });
 
 app.delete('/api/objectives/:id', (req, res) => {
-  const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE objective_id = ? AND user_id = ?').get(req.params.id, req.userId).n;
-  if (tasks > 0) return res.status(409).json({ error: `Este objetivo tiene ${tasks} tareas asignadas` });
-  const milestones = db.prepare('SELECT COUNT(*) as n FROM milestones WHERE objective_id = ? AND user_id = ?').get(req.params.id, req.userId).n;
-  if (milestones > 0) return res.status(409).json({ error: `Este objetivo tiene ${milestones} hitos asociados. Elimínalos primero.` });
-  db.prepare('DELETE FROM objectives WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
+  const objective = db.prepare('SELECT id FROM objectives WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  if (!objective) return res.status(404).json({ error: 'Objetivo no encontrado' });
+  const childTables = ['milestones', 'events', 'publications', 'certifications', 'repos', 'prs'];
+  const childTaskScopes = childTables.map(table => `milestone_id IN (SELECT id FROM ${table} WHERE objective_id = ? AND user_id = ?)`);
+  const taskScope = `user_id = ? AND (objective_id = ? OR ${childTaskScopes.join(' OR ')})`;
+  const taskParams = [req.userId, req.params.id, ...childTables.flatMap(() => [req.params.id, req.userId])];
+  const pendingTasks = db.prepare(`SELECT COUNT(*) as n FROM tasks WHERE ${taskScope} AND COALESCE(status, 'pending') != 'completed'`).get(...taskParams).n;
+  if (pendingTasks > 0) return res.status(409).json({ error: `Este objetivo tiene ${pendingTasks} tareas pendientes` });
+  db.transaction(() => {
+    db.prepare(`DELETE FROM tasks WHERE ${taskScope}`).run(...taskParams);
+    for (const table of childTables) {
+      db.prepare(`DELETE FROM ${table} WHERE objective_id = ? AND user_id = ?`).run(req.params.id, req.userId);
+    }
+    db.prepare('DELETE FROM objectives WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
+  })();
   res.json({ ok: true });
 });
 
@@ -1187,17 +1447,20 @@ app.put('/api/objectives/:id', (req, res) => {
 
 // ── MILESTONES ───────────────────────────────────────────────────────────────
 app.get('/api/milestones', (req, res) => {
-  const ms = db.prepare('SELECT * FROM milestones WHERE user_id = ? ORDER BY target_date').all(req.userId);
+  const ms = db.prepare('SELECT * FROM milestones WHERE user_id = ? AND archived_at IS NULL AND (objective_id IS NULL OR objective_id NOT IN (SELECT id FROM objectives WHERE archived_at IS NOT NULL AND user_id = ?)) ORDER BY target_date').all(req.userId, req.userId);
   ms.forEach(m => { m.days_remaining = daysRemaining(m.target_date); });
   res.json(ms);
 });
 
 app.post('/api/milestones', (req, res) => {
-  const { objective_id, title, description, target_date, weight, status, billed_amount } = req.body;
-  if (!title || !objective_id) return res.status(400).json({ error: 'title y objective_id son obligatorios' });
+  const { objective_id, title, description, target_date, weight, status, billed_amount, show_independent } = req.body;
+  if (typeof title !== 'string' || !title.trim() || !objective_id) return res.status(400).json({ error: 'El título y el objetivo son obligatorios' });
+  let independent;
+  try { independent = independentFlag(show_independent); } catch (error) { return res.status(400).json({ error: error.message }); }
+  if (!db.prepare('SELECT id FROM objectives WHERE id = ? AND user_id = ?').get(objective_id, req.userId)) return res.status(400).json({ error: 'Objetivo no encontrado' });
   const id = 'ms-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-  db.prepare('INSERT INTO milestones (id,objective_id,title,description,target_date,percentage_completed,status,weight,billed_amount,user_id) VALUES (?,?,?,?,?,0,?,?,?,?)')
-    .run(id, objective_id, title, description || '', target_date || null, status || 'not_started', weight ?? 10, billed_amount ?? 0, req.userId);
+  db.prepare('INSERT INTO milestones (id,objective_id,title,description,target_date,percentage_completed,status,weight,billed_amount,user_id,show_independent) VALUES (?,?,?,?,?,0,?,?,?,?,?)')
+    .run(id, objective_id, title, description || '', target_date || null, status || 'not_started', weight ?? 10, billed_amount ?? 0, req.userId, independent ?? 0);
   res.status(201).json(db.prepare('SELECT * FROM milestones WHERE id = ? AND user_id = ?').get(id, req.userId));
 });
 
@@ -1230,24 +1493,29 @@ app.delete('/api/milestones/:id', (req, res) => {
 });
 
 app.put('/api/milestones/:id', (req, res) => {
-  const { title, description, target_date, status, billed_amount } = req.body;
+  const { title, description, target_date, status, billed_amount, show_independent } = req.body;
+  if (title !== undefined && (typeof title !== 'string' || !title.trim())) return res.status(400).json({ error: 'El título es obligatorio' });
+  let independent;
+  try { independent = independentFlag(show_independent); } catch (error) { return res.status(400).json({ error: error.message }); }
+  if (!db.prepare('SELECT id FROM milestones WHERE id = ? AND user_id = ?').get(req.params.id, req.userId)) return res.status(404).json({ error: 'Hito no encontrado' });
   // percentage_completed and weight are no longer manually set — always computed from tasks
   const pct = computeMilestoneProgress(req.params.id);
-  const ms  = db.prepare('SELECT status FROM milestones WHERE id = ?').get(req.params.id);
+  const ms  = db.prepare('SELECT status FROM milestones WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   // Honor the user-selected status; only fall back to stored value if status is not provided.
   const savedStatus = status !== undefined ? status : (ms?.status || 'not_started');
   db.prepare(`UPDATE milestones SET
     title                = COALESCE(@title,       title),
     description          = COALESCE(@description, description),
-    target_date          = COALESCE(@target_date, target_date),
+    target_date          = CASE WHEN @hasTargetDate THEN @target_date ELSE target_date END,
     billed_amount        = COALESCE(@billed_amount, billed_amount),
+    show_independent     = COALESCE(@independent, show_independent),
     status               = @status,
     percentage_completed = @pct
-    WHERE id = @id`).run({
+    WHERE id = @id AND user_id = @uid`).run({
       title: title ?? null, description: description ?? null,
-      target_date: target_date ?? null,
+      target_date: target_date || null, hasTargetDate: Number(target_date !== undefined),
       billed_amount: billed_amount !== undefined ? Number(billed_amount) : null,
-      status: savedStatus, pct, id: req.params.id,
+      status: savedStatus, pct, independent, uid: req.userId, id: req.params.id,
     });
   res.json(db.prepare('SELECT * FROM milestones WHERE id = ? AND user_id = ?').get(req.params.id, req.userId));
 });
@@ -1256,7 +1524,7 @@ app.put('/api/milestones/:id', (req, res) => {
 app.get('/api/events', (req, res) => {
   if (!isSectionEnabled(req.userId, 'events')) return res.json([]);
   const { from, to, objective_id } = req.query;
-  let sql = 'SELECT * FROM events WHERE user_id = ?';
+  let sql = 'SELECT * FROM events WHERE user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = events.objective_id AND objectives.archived_at IS NOT NULL)';
   const params = [req.userId];
   if (from)         { sql += ' AND end_date >= ?';    params.push(from); }
   if (to)           { sql += ' AND start_date <= ?';  params.push(to); }
@@ -1331,7 +1599,7 @@ app.delete('/api/events/:id', (req, res) => {
 app.get('/api/publications', (req, res) => {
   if (!isSectionEnabled(req.userId, 'publications')) return res.json([]);
   const { from, to, objective_id } = req.query;
-  let sql = 'SELECT * FROM publications WHERE user_id = ?';
+  let sql = 'SELECT * FROM publications WHERE user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = publications.objective_id AND objectives.archived_at IS NOT NULL)';
   const params = [req.userId];
   if (from)        { sql += ' AND date >= ?';        params.push(from); }
   if (to)          { sql += ' AND date <= ?';        params.push(to); }
@@ -1401,7 +1669,7 @@ app.delete('/api/publications/:id', (req, res) => {
 app.get('/api/certifications', (req, res) => {
   if (!isSectionEnabled(req.userId, 'certifications')) return res.json([]);
   const { objective_id } = req.query;
-  let sql = 'SELECT * FROM certifications WHERE user_id = ?';
+  let sql = 'SELECT * FROM certifications WHERE user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = certifications.objective_id AND objectives.archived_at IS NOT NULL)';
   const params = [req.userId];
   if (objective_id) { sql += ' AND objective_id = ?'; params.push(objective_id); }
   sql += ' ORDER BY target_date';
@@ -1456,10 +1724,71 @@ app.delete('/api/certifications/:id', (req, res) => {
 });
 
 // ── REPOS ─────────────────────────────────────────────────────────────────────
+function independentFlag(value) {
+  if (value === undefined) return null;
+  if (![true, false, 0, 1].includes(value)) throw new Error('Mostrar independiente debe ser una casilla válida');
+  return Number(value);
+}
+
+function isNotebookDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + 'T00:00:00Z');
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function serializeNotebook(value, previousNotebook = null) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Contenido del proyecto inválido');
+  const { photos = [], notes = [], tables = [], widgets = [] } = value;
+  if (![photos, notes, tables, widgets].every(Array.isArray)) throw new Error('Contenido del proyecto inválido');
+  if (photos.length > 100) throw new Error('El proyecto admite un máximo de 100 fotos');
+  const idsAreUnique = items => items.every(item => item && typeof item.id === 'string' && item.id.length > 0)
+    && new Set(items.map(item => item.id)).size === items.length;
+  if (![photos, notes, tables, widgets].every(idsAreUnique)) throw new Error('Identificadores inválidos');
+  let previousPhotos = [];
+  try { previousPhotos = JSON.parse(previousNotebook || '{}').photos || []; } catch (_) { /* Invalid legacy data does not bypass the upload limit. */ }
+  if (!Array.isArray(previousPhotos)) previousPhotos = [];
+  for (const photo of photos) {
+    if (typeof photo.name !== 'string' || typeof photo.src !== 'string'
+      || !/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(photo.src)
+      || (Buffer.byteLength(photo.src.split(',')[1], 'base64') > 800 * 1024
+        && !previousPhotos.some(previous => previous.id === photo.id && previous.src === photo.src))) throw new Error('Foto inválida (máximo 800 KB; PNG, JPEG, GIF o WebP)');
+    if (photo.labels !== undefined && (!Array.isArray(photo.labels) || !idsAreUnique(photo.labels)
+      || photo.labels.some(label => typeof label.text !== 'string' || label.text.length > 500
+        || ![label.x, label.y].every(position => typeof position === 'number' && Number.isFinite(position) && position >= 0 && position <= 100)))) throw new Error('Etiqueta de foto inválida');
+  }
+  for (const note of notes) {
+    if (typeof note.title !== 'string' || typeof note.text !== 'string' || (note.list !== undefined && typeof note.list !== 'string')) throw new Error('Nota inválida');
+  }
+  for (const widget of widgets) {
+    if (typeof widget.title !== 'string' || typeof widget.text !== 'string') throw new Error('Widget inválido');
+  }
+  for (const table of tables) {
+    if (typeof table.name !== 'string' || !Array.isArray(table.columns) || !Array.isArray(table.rows)
+      || !idsAreUnique(table.columns) || !idsAreUnique(table.rows)) throw new Error('Tabla inválida');
+    for (const column of table.columns) {
+      if (typeof column.name !== 'string' || !column.name.trim()
+        || !['text', 'number', 'date', 'checkbox'].includes(column.type)) throw new Error('Indica la cabecera y el tipo de cada columna');
+    }
+    for (const row of table.rows) {
+      if (!row.cells || typeof row.cells !== 'object' || Array.isArray(row.cells)) throw new Error('Fila inválida');
+      if (Object.keys(row.cells).some(key => !table.columns.some(column => column.id === key))) throw new Error('La fila contiene una columna desconocida');
+      for (const column of table.columns) {
+        const cell = row.cells[column.id];
+        if (cell === undefined || cell === '') continue;
+        if (column.type === 'checkbox' ? typeof cell !== 'boolean'
+          : column.type === 'number' ? typeof cell !== 'number' || !Number.isFinite(cell)
+          : typeof cell !== 'string' || (column.type === 'date' && !isNotebookDate(cell))) throw new Error('Tipo de celda inválido');
+      }
+    }
+  }
+  const serialized = JSON.stringify({ photos, notes, tables, widgets });
+  return serialized;
+}
+
 app.get('/api/repos', (req, res) => {
   if (!isSectionEnabled(req.userId, 'repos')) return res.json([]);
   const { objective_id } = req.query;
-  let sql = 'SELECT * FROM repos WHERE user_id = ?';
+  let sql = 'SELECT * FROM repos WHERE user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = repos.objective_id AND objectives.archived_at IS NOT NULL)';
   const params = [req.userId];
   if (objective_id) { sql += ' AND objective_id = ?'; params.push(objective_id); }
   sql += ' ORDER BY target_date';
@@ -1469,23 +1798,48 @@ app.get('/api/repos', (req, res) => {
 });
 
 app.post('/api/repos', (req, res) => {
-  const { title, target_date, type, status, notes, objective_id, url, category_id, category_ids } = req.body;
-  if (!title) return res.status(400).json({ error: 'title es obligatorio' });
+  const { title, target_date, type, status, notes, objective_id, url, category_id, category_ids, notebook, show_independent, independent_color } = req.body;
+  if (objective_id && !db.prepare('SELECT id FROM objectives WHERE id = ? AND user_id = ?').get(objective_id, req.userId)) return res.status(400).json({ error: 'Objetivo no encontrado' });
+  if (independent_color != null && independent_color !== '' && (typeof independent_color !== 'string' || !/^#[0-9a-f]{6}$/i.test(independent_color))) return res.status(400).json({ error: 'Color del proyecto inválido' });
+  let independent;
+  try { independent = independentFlag(show_independent); } catch (error) { return res.status(400).json({ error: error.message }); }
+  let notebookJson = '{}';
+  try { if (notebook !== undefined) notebookJson = serializeNotebook(notebook); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'El título es obligatorio' });
+  if (type !== undefined && !['client', 'sangalan', 'personal', 'notes'].includes(type)) return res.status(400).json({ error: 'Tipo de proyecto inválido' });
   const id = 'repo-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
   const cats = Array.isArray(category_ids) ? category_ids : [];
   const primaryCat = cats[0] || category_id || null;
-  db.prepare('INSERT INTO repos (id,title,target_date,type,status,notes,objective_id,url,category_id,category_ids,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, title, target_date || null, type || 'personal', status || 'not_started', notes || null, objective_id || null, url || null, primaryCat, cats.length ? JSON.stringify(cats) : null, req.userId);
+  db.prepare('INSERT INTO repos (id,title,target_date,type,status,notes,objective_id,url,category_id,category_ids,user_id,notebook,show_independent,independent_color) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title.trim(), target_date || null, type || 'personal', status || 'not_started', notes || null, objective_id || null, url || null, primaryCat, cats.length ? JSON.stringify(cats) : null, req.userId, notebookJson, independent ?? 0, independent_color || null);
   const repo = db.prepare('SELECT * FROM repos WHERE id = ? AND user_id = ?').get(id, req.userId);
   repo.days_remaining = daysRemaining(repo.target_date);
   res.status(201).json(repo);
 });
 
 app.put('/api/repos/:id', (req, res) => {
-  const { title, target_date, type, status, notes, objective_id, category_id, category_ids, url } = req.body;
-  const cats = category_ids !== undefined
-    ? (Array.isArray(category_ids) ? category_ids : (typeof category_ids === 'string' ? JSON.parse(category_ids) : []))
-    : null;
+  const { title, target_date, type, status, notes, objective_id, category_id, category_ids, url, notebook, show_independent, independent_color } = req.body;
+  const storedRepo = db.prepare('SELECT id, notebook FROM repos WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  if (!storedRepo) {
+    return res.status(404).json({ error: 'Proyecto no encontrado' });
+  }
+  if (objective_id && !db.prepare('SELECT id FROM objectives WHERE id = ? AND user_id = ?').get(objective_id, req.userId)) return res.status(400).json({ error: 'Objetivo no encontrado' });
+  if (independent_color != null && independent_color !== '' && (typeof independent_color !== 'string' || !/^#[0-9a-f]{6}$/i.test(independent_color))) return res.status(400).json({ error: 'Color del proyecto inválido' });
+  let independent;
+  try { independent = independentFlag(show_independent); } catch (error) { return res.status(400).json({ error: error.message }); }
+  let notebookJson = null;
+  try { if (notebook !== undefined) notebookJson = serializeNotebook(notebook, storedRepo.notebook); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  if (title !== undefined && (typeof title !== 'string' || !title.trim())) return res.status(400).json({ error: 'El título es obligatorio' });
+  if (type != null && !['client', 'sangalan', 'personal', 'notes'].includes(type)) return res.status(400).json({ error: 'Tipo de proyecto inválido' });
+  let cats = null;
+  try {
+    if (category_ids !== undefined) {
+      cats = typeof category_ids === 'string' ? JSON.parse(category_ids) : category_ids;
+      if (!Array.isArray(cats)) throw new Error();
+    }
+  } catch (_) { return res.status(400).json({ error: 'Categorías inválidas' }); }
   const primaryCat = cats !== null ? (cats[0] || null) : (category_id ?? null);
   // Use direct assignment for category fields when explicitly provided (allows clearing to null)
   const catClause = cats !== null
@@ -1493,26 +1847,34 @@ app.put('/api/repos/:id', (req, res) => {
     : 'category_id = COALESCE(@cat, category_id), category_ids = COALESCE(@cids, category_ids),';
   db.prepare(`UPDATE repos SET
     title        = COALESCE(@title, title),
-    target_date  = COALESCE(@td, target_date),
+    target_date = CASE WHEN @hasTd THEN @td ELSE target_date END,
     type         = COALESCE(@type, type),
     status       = COALESCE(@s,   status),
-    notes        = COALESCE(@n,   notes),
-    objective_id = COALESCE(@oid, objective_id),
+    notes = CASE WHEN @hasNotes THEN @n ELSE notes END,
+    objective_id = CASE WHEN @hasOid THEN @oid ELSE objective_id END,
     ${catClause}
-    url          = COALESCE(@url, url)
-    WHERE id = @id`)
-    .run({ title: title ?? null, td: target_date ?? null, type: type ?? null,
-      s: status ?? null, n: notes ?? null, oid: objective_id ?? null,
+    url = CASE WHEN @hasUrl THEN @url ELSE url END,
+    show_independent = COALESCE(@independent, show_independent),
+    independent_color = CASE WHEN @hasColor THEN @color ELSE independent_color END,
+    notebook     = COALESCE(@notebook, notebook)
+    WHERE id = @id AND user_id = @uid`)
+    .run({ title: typeof title === 'string' ? title.trim() : null, td: target_date || null, type: type ?? null,
+      s: status ?? null, n: notes ?? null, oid: objective_id || null,
       cat: primaryCat, cids: cats !== null ? JSON.stringify(cats) : null,
-      url: url ?? null, id: req.params.id });
+      hasTd: Number(target_date !== undefined), hasOid: Number(objective_id !== undefined),
+      hasUrl: Number(url !== undefined), hasNotes: Number(notes !== undefined),
+      hasColor: Number(independent_color !== undefined), color: independent_color || null,
+      url: url || null, notebook: notebookJson, independent, uid: req.userId, id: req.params.id });
   const repo = db.prepare('SELECT * FROM repos WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
   repo.days_remaining = daysRemaining(repo.target_date);
   res.json(repo);
 });
 
 app.delete('/api/repos/:id', (req, res) => {
+  if (!db.prepare('SELECT id FROM repos WHERE id = ? AND user_id = ?').get(req.params.id, req.userId)) return res.status(404).json({ error: 'Proyecto no encontrado' });
   const tasks = db.prepare('SELECT COUNT(*) as n FROM tasks WHERE milestone_id = ?').get(req.params.id).n;
   if (tasks > 0) return res.status(409).json({ error: `Este proyecto tiene ${tasks} tareas asociadas` });
+  db.prepare('UPDATE documents SET repo_id = NULL WHERE repo_id = ? AND user_id = ?').run(req.params.id, req.userId);
   db.prepare('DELETE FROM repos WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
   res.json({ ok: true });
 });
@@ -1521,7 +1883,7 @@ app.delete('/api/repos/:id', (req, res) => {
 app.get('/api/prs', (req, res) => {
   if (!isSectionEnabled(req.userId, 'prs')) return res.json([]);
   const { objective_id } = req.query;
-  let sql = 'SELECT * FROM prs WHERE user_id = ?';
+  let sql = 'SELECT * FROM prs WHERE user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = prs.objective_id AND objectives.archived_at IS NOT NULL)';
   const params = [req.userId];
   if (objective_id) { sql += ' AND objective_id = ?'; params.push(objective_id); }
   sql += ' ORDER BY start_date';
@@ -1666,6 +2028,7 @@ app.get('/api/dashboard', (req, res) => {
   const hiddenMilestones = new Set(refs.hiddenMilestoneIds);
   const hiddenObjectives = new Set(refs.hiddenObjectiveIds);
   const isVisibleTask = (t) =>
+    !t.archived_at &&
     (!t.milestone_id || !hiddenMilestones.has(t.milestone_id)) &&
     (!t.objective_id || !hiddenObjectives.has(t.objective_id));
   const todayTasks  = db.prepare('SELECT * FROM tasks WHERE date = ? AND user_id = ? ORDER BY start_time').all(today, userId).filter(isVisibleTask);
@@ -1676,7 +2039,7 @@ app.get('/api/dashboard', (req, res) => {
 
   const nextMilestones = db.prepare(`SELECT m.*, o.title as obj_title FROM milestones m
     JOIN objectives o ON m.objective_id = o.id
-    WHERE m.status != 'completed' AND m.target_date >= ? AND m.user_id = ? AND o.user_id = ?
+    WHERE m.status != 'completed' AND m.archived_at IS NULL AND o.archived_at IS NULL AND m.target_date >= ? AND m.user_id = ? AND o.user_id = ?
     ORDER BY m.target_date LIMIT 5`).all(today, userId, userId);
   nextMilestones.forEach(m => { m.days_remaining = daysRemaining(m.target_date); });
 
@@ -1684,10 +2047,10 @@ app.get('/api/dashboard', (req, res) => {
   const nextDate = new Date();
   nextDate.setDate(nextDate.getDate() + 7);
   const nextWeek = nextDate.toISOString().slice(0, 10);
-  const nextEvents = db.prepare('SELECT * FROM events WHERE start_date BETWEEN ? AND ? AND user_id = ? ORDER BY start_date').all(today, nextWeek, userId);
+  const nextEvents = db.prepare('SELECT * FROM events WHERE archived_at IS NULL AND start_date BETWEEN ? AND ? AND user_id = ? AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = events.objective_id AND objectives.archived_at IS NOT NULL) ORDER BY start_date').all(today, nextWeek, userId);
 
   // Progress by objective (filled after objHoursMap is ready below)
-  const objectives = db.prepare(`SELECT * FROM objectives WHERE user_id = ? ${isSectionEnabled(userId, 'clients') ? '' : "AND type != 'client'"} ORDER BY priority`).all(userId);
+  const objectives = db.prepare(`SELECT * FROM objectives WHERE user_id = ? AND archived_at IS NULL ${isSectionEnabled(userId, 'clients') ? '' : "AND type != 'client'"} ORDER BY priority`).all(userId);
 
   // Tasks by category (last 30 days)
   const thirtyAgo = new Date();
@@ -1696,7 +2059,7 @@ app.get('/api/dashboard', (req, res) => {
     SELECT category_id,
       COUNT(*) as total,
       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as done
-    FROM tasks WHERE date >= ? AND user_id = ? GROUP BY category_id
+    FROM tasks WHERE date >= ? AND user_id = ? AND archived_at IS NULL GROUP BY category_id
   `).all(thirtyAgo.toISOString().slice(0, 10), userId);
 
   // Hours per objective (completed tasks, all time)
@@ -1712,7 +2075,7 @@ app.get('/api/dashboard', (req, res) => {
         END
       ) / 60.0 as hours
     FROM tasks
-    WHERE status = 'completed' AND objective_id IS NOT NULL AND user_id = ?
+    WHERE status = 'completed' AND objective_id IS NOT NULL AND user_id = ? AND archived_at IS NULL
     GROUP BY objective_id
   `).all(userId);
   const objHoursMap = {};
@@ -1728,29 +2091,29 @@ app.get('/api/dashboard', (req, res) => {
 
   // Publications progress
   const pubTotal = isSectionEnabled(userId, 'publications')
-    ? db.prepare('SELECT COUNT(*) as n FROM publications WHERE user_id = ?').get(userId).n
+    ? db.prepare('SELECT COUNT(*) as n FROM publications WHERE user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = publications.objective_id AND objectives.archived_at IS NOT NULL)').get(userId).n
     : 0;
   const pubDone  = isSectionEnabled(userId, 'publications')
-    ? db.prepare("SELECT COUNT(*) as n FROM publications WHERE status = 'published' AND user_id = ?").get(userId).n
+    ? db.prepare("SELECT COUNT(*) as n FROM publications WHERE status = 'published' AND user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = publications.objective_id AND objectives.archived_at IS NOT NULL)").get(userId).n
     : 0;
 
   // Certifications progress
   const certTotal = isSectionEnabled(userId, 'certifications')
-    ? db.prepare('SELECT COUNT(*) as n FROM certifications WHERE user_id = ?').get(userId).n
+    ? db.prepare('SELECT COUNT(*) as n FROM certifications WHERE user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = certifications.objective_id AND objectives.archived_at IS NOT NULL)').get(userId).n
     : 0;
   const certDone  = isSectionEnabled(userId, 'certifications')
-    ? db.prepare("SELECT COUNT(*) as n FROM certifications WHERE status = 'completed' AND user_id = ?").get(userId).n
+    ? db.prepare("SELECT COUNT(*) as n FROM certifications WHERE status = 'completed' AND user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = certifications.objective_id AND objectives.archived_at IS NOT NULL)").get(userId).n
     : 0;
 
   function getNearestPlannedItem(table, emptyLabel) {
-    const items = db.prepare(`SELECT id, title, status FROM ${table} WHERE user_id = ?`).all(userId);
+    const items = db.prepare(`SELECT id, title, status FROM ${table} WHERE user_id = ? AND archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = ${table}.objective_id AND objectives.archived_at IS NOT NULL)`).all(userId);
     const candidates = items
       .filter(item => !doneItemStatuses.has(item.status))
       .map(item => {
         const nextTask = db.prepare(`
           SELECT id, title, date, start_time, status
           FROM tasks
-          WHERE milestone_id = ?
+          WHERE milestone_id = ? AND archived_at IS NULL
             AND date IS NOT NULL
             AND status != 'completed'
             AND date >= ?
@@ -1774,7 +2137,8 @@ app.get('/api/dashboard', (req, res) => {
       AND t.status != 'completed'
       AND t.date >= ?
       AND lower(trim(t.title)) LIKE 'examen%'
-      AND c.status != 'completed'
+      AND c.status != 'completed' AND c.archived_at IS NULL AND t.archived_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM objectives WHERE objectives.id = c.objective_id AND objectives.archived_at IS NOT NULL)
       AND t.user_id = ?
       AND c.user_id = ?
     ORDER BY t.date, t.start_time
@@ -1825,6 +2189,7 @@ app.post(['/api/restore', '/api/import'], (req, res) => {
   const { strategy = 'skip', ...data } = req.body || {};
   try {
     const result = importBackup(db, uploadsDir, data, strategy, { targetUserId: req.userId });
+    maintainNotepad();
     res.json({ ok: true, strategy, ...result });
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message });
@@ -1835,10 +2200,11 @@ app.post(['/api/restore', '/api/import'], (req, res) => {
 
 app.get('/api/documents', (req, res) => {
   if (!isSectionEnabled(req.userId, 'documents')) return res.json([]);
-  const { q, sort = 'created_at' } = req.query;
+  const { q, sort = 'created_at', repo_id } = req.query;
   const col = sort === 'name' ? 'name' : 'created_at';
   let sql = `SELECT * FROM documents WHERE user_id = ?`;
   const params = [req.userId];
+  if (repo_id) { sql += ' AND repo_id = ?'; params.push(repo_id); }
   if (q) { sql += ` AND name LIKE ?`; params.push(`%${q}%`); }
   sql += ` ORDER BY ${col} DESC`;
   const rows = db.prepare(sql).all(...params).map(d => ({
@@ -1850,13 +2216,27 @@ app.get('/api/documents', (req, res) => {
 
 app.post('/api/documents', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const repoId = req.body.repo_id || null;
+  if (repoId && !db.prepare('SELECT id FROM repos WHERE id = ? AND user_id = ?').get(repoId, req.userId)) {
+    fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: 'Proyecto no encontrado' });
+  }
   const id = require('crypto').randomUUID();
   const name = req.body.name || req.file.originalname;
   const catIds = req.body.category_ids ? JSON.stringify(JSON.parse(req.body.category_ids)) : '[]';
-  db.prepare(`INSERT INTO documents (id, name, filename, mime_type, size, category_ids, user_id) VALUES (?,?,?,?,?,?,?)`)
-    .run(id, name, req.file.filename, req.file.mimetype, req.file.size, catIds, req.userId);
+  db.prepare(`INSERT INTO documents (id, name, filename, mime_type, size, category_ids, repo_id, user_id) VALUES (?,?,?,?,?,?,?,?)`)
+    .run(id, name, req.file.filename, req.file.mimetype, req.file.size, catIds, repoId, req.userId);
   const doc = db.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?').get(id, req.userId);
   res.json({ ...doc, category_ids: JSON.parse(doc.category_ids || '[]') });
+});
+
+app.get('/api/documents/:id/preview', (req, res) => {
+  const doc = db.prepare('SELECT filename, name FROM documents WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+  if (!doc) return res.status(404).json({ error: 'Documento no encontrado' });
+  const extension = path.extname(doc.name).toLowerCase();
+  if (!['.doc', '.docx'].includes(extension)) return res.status(415).json({ error: 'Formato no compatible' });
+  try { res.type('text/plain; charset=utf-8').send(extension === '.docx' ? readDocxText(path.join(uploadsDir, doc.filename)) : readLegacyDocText(path.join(uploadsDir, doc.filename))); }
+  catch (_) { res.status(422).json({ error: 'No se pudo visualizar este DOCX' }); }
 });
 
 app.put('/api/documents/:id', (req, res) => {

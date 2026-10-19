@@ -16,13 +16,18 @@ function parseValue(value) {
   try { return parseISO(value); } catch (_) { return null; }
 }
 
-export default function SpanishDateInput({ value, onChange, style, placeholder = 'Fecha' }) {
+export default function SpanishDateInput({ value, onChange, style, placeholder = 'Fecha', onOpenChange }) {
   const rootRef = useRef(null);
   const popupRef = useRef(null);
   const selectedDate = parseValue(value);
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(() => selectedDate || new Date());
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0, width: POPUP_W });
+
+  useEffect(() => {
+    onOpenChange?.(open);
+    return () => { if (open) onOpenChange?.(false); };
+  }, [open, onOpenChange]);
 
   function updatePopupPosition() {
     if (!rootRef.current) return;

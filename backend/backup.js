@@ -1,17 +1,18 @@
 const fs = require('fs');
 const path = require('path');
 
-const TABLES = [
+const LEGACY_TABLES = [
   'users', 'categories', 'objectives', 'milestones', 'tasks', 'deadlines',
   'events', 'publications', 'certifications', 'repos', 'prs', 'work_blocks',
   'reading_list', 'documents',
 ];
+const TABLES = [...LEGACY_TABLES, 'notepad_tabs', 'notepad_images'];
 
 const USER_TABLES = TABLES.filter(table => table !== 'users');
 const IMPORT_ORDER = [
   'users', 'categories', 'objectives', 'milestones', 'events', 'publications',
   'certifications', 'repos', 'prs', 'work_blocks', 'reading_list', 'documents',
-  'deadlines', 'tasks',
+  'deadlines', 'tasks', 'notepad_tabs', 'notepad_images',
 ];
 
 const RELATIONS = {
@@ -28,6 +29,8 @@ const RELATIONS = {
   work_blocks: { user_id: 'users', category_id: 'categories' },
   reading_list: { user_id: 'users', category_id: 'categories' },
   documents: { user_id: 'users' },
+  notepad_tabs: { user_id: 'users' },
+  notepad_images: { user_id: 'users', tab_id: 'notepad_tabs' },
 };
 
 function safeFilename(filename) {
@@ -67,7 +70,7 @@ function createBackup(db, uploadsDir, scope, requestedUserIds) {
   const where = userIds.length ? ` WHERE user_id IN (${userIds.map(() => '?').join(',')})` : ' WHERE 1=0';
   const backup = {
     exported_at: new Date().toISOString(),
-    version: 2,
+    version: 3,
     scope,
     users: selectedUsers,
   };
@@ -97,7 +100,9 @@ function importBackup(db, uploadsDir, data, strategy, options = {}) {
     throw error;
   }
   if (strategy === 'restore' && (
-    data.version < 2 || data.scope !== 'all' || TABLES.some(table => !Array.isArray(data[table]))
+    data.version < 2 || data.scope !== 'all'
+    || LEGACY_TABLES.some(table => !Array.isArray(data[table]))
+    || (data.version >= 3 && ['notepad_tabs', 'notepad_images'].some(table => !Array.isArray(data[table])))
   )) {
     const error = new Error('La restauración completa requiere una copia integral de versión 2.');
     error.status = 400;
@@ -198,6 +203,12 @@ function importBackup(db, uploadsDir, data, strategy, options = {}) {
           if (row[field] != null) row[field] = maps[target].get(row[field]) || row[field];
         }
         if ('category_ids' in row) row.category_ids = remapCategoryIds(row.category_ids);
+        if (table === 'notepad_tabs' && typeof row.content === 'string') {
+          row.content = row.content.replace(/!\[Imagen\]\(\/api\/notepad\/images\/([A-Za-z0-9-]+)\)/g, (token, imageId) => {
+            const mappedId = maps.notepad_images.get(imageId);
+            return mappedId ? `![Imagen](/api/notepad/images/${mappedId})` : token;
+          });
+        }
         if (table === 'tasks' && row.milestone_id) {
           for (const target of ['milestones', 'publications', 'certifications', 'repos', 'prs', 'events']) {
             if (maps[target].has(row.milestone_id)) {
@@ -216,6 +227,10 @@ function importBackup(db, uploadsDir, data, strategy, options = {}) {
             if (!row.filename) throw new Error(`Nombre de archivo inválido para el documento ${source.id}.`);
             filesToWrite.push({ filename: row.filename, data: Buffer.from(file.data_base64, 'base64') });
           }
+        }
+        if (table === 'notepad_images' && !db.prepare('SELECT id FROM notepad_tabs WHERE id = ? AND user_id = ?').get(row.tab_id, row.user_id)) {
+          track(table, 'skipped');
+          continue;
         }
         const exists = db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(id);
         if (strategy === 'overwrite' && exists) {

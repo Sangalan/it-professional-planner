@@ -4,7 +4,6 @@ import { formatDuration, toDateStr } from '../utils/dateUtils.js';
 import { isFixedTask, isMoneyMakerTask, isMoneyObjective, isTodoTask } from '../utils/taskUtils.js';
 import { availableTodoMinutes } from '../utils/todoCapacity.js';
 
-const REQUIRED_MINUTES = 4 * 60;
 const MONEY_OBJECTIVE_DISPLAY_TITLE = "Let's make some Money!";
 
 function estimatedMinutes(tasks) {
@@ -18,16 +17,18 @@ export default function DailyMoneyPlanning({ userId }) {
   const [todayAgenda, setTodayAgenda] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [requiredMinutes, setRequiredMinutes] = useState(240);
 
   async function load({ quiet = false } = {}) {
     if (!quiet) setLoading(true);
     try {
-      const [objectiveRows, taskRows, agendaRows] = await Promise.all([
-        api.objectives(), api.tasks(), api.tasks({ date: today }),
+      const [objectiveRows, taskRows, agendaRows, moneyStatus] = await Promise.all([
+        api.objectives(), api.tasks(), api.tasks({ date: today }), api.moneyPlanningToday(),
       ]);
       setObjectives(objectiveRows);
       setTasks(taskRows);
       setTodayAgenda(agendaRows);
+      setRequiredMinutes(moneyStatus.requiredMinutes);
       setError('');
     } catch (_) {
       setError('No se pudo comprobar la planificación de hoy.');
@@ -41,9 +42,11 @@ export default function DailyMoneyPlanning({ userId }) {
     const interval = window.setInterval(() => load({ quiet: true }), 30000);
     const refresh = () => load({ quiet: true });
     window.addEventListener('tasks-changed', refresh);
+    window.addEventListener('money-planning-config-changed', refresh);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener('tasks-changed', refresh);
+      window.removeEventListener('money-planning-config-changed', refresh);
     };
   }, [userId, today]);
 
@@ -59,17 +62,17 @@ export default function DailyMoneyPlanning({ userId }) {
   const plannedMinutes = estimatedMinutes(pendingTodayTodos);
   const availableMinutes = availableTodoMinutes(todayAgenda, today);
   const excessMinutes = Math.max(0, plannedMinutes - availableMinutes);
-  const missingMinutes = Math.max(0, REQUIRED_MINUTES - moneyMinutes);
+  const missingMinutes = Math.max(0, requiredMinutes - moneyMinutes);
 
-  const gateOpen = !loading && objective && moneyMinutes < REQUIRED_MINUTES;
+  const gateOpen = !loading && objective && moneyMinutes < requiredMinutes;
   const overloadVisible = !loading && !gateOpen && excessMinutes > 0;
 
   useEffect(() => {
     if (loading) return;
     window.dispatchEvent(new CustomEvent('money-planning-status-changed', {
-      detail: { ready: Boolean(objective) && moneyMinutes >= REQUIRED_MINUTES, moneyMinutes, requiredMinutes: REQUIRED_MINUTES },
+      detail: { ready: Boolean(objective) && moneyMinutes >= requiredMinutes, moneyMinutes, requiredMinutes },
     }));
-  }, [loading, objective?.id, moneyMinutes]);
+  }, [loading, objective?.id, moneyMinutes, requiredMinutes]);
 
   useEffect(() => {
     if (loading) return;
@@ -89,11 +92,11 @@ export default function DailyMoneyPlanning({ userId }) {
       <div>
         <div className="daily-money-kicker">Prioridad del día</div>
         <strong>{MONEY_OBJECTIVE_DISPLAY_TITLE}</strong>
-        <span>Planifica 4h de tareas Money maker para poder comenzar cualquier ToDo.</span>
+        <span>Planifica {formatDuration(requiredMinutes)} de tareas Money maker para poder comenzar cualquier ToDo.</span>
         {error && <span>No se pudo actualizar la planificación.</span>}
       </div>
       <div className="daily-money-banner-progress">
-        <strong>{formatDuration(moneyMinutes) || '0m'} / 4h</strong>
+        <strong>{formatDuration(moneyMinutes) || '0m'} / {formatDuration(requiredMinutes)}</strong>
         <span>Faltan {formatDuration(missingMinutes)}</span>
       </div>
     </section>}

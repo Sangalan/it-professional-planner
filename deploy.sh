@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ -f "$ROOT_DIR/.env.deploy" ]]; then
   # shellcheck disable=SC1091
@@ -28,7 +28,7 @@ SYNC_ENV="${SYNC_ENV:-false}"
 NODE_MAJOR="${NODE_MAJOR:-24}"
 
 if [[ -z "$TARGET_SERVER" ]]; then
-  echo "Falta TARGET_SERVER. Ejemplo: TARGET_SERVER=203.0.113.10 DOMAIN=tienda.example.com INSTALL_NGINX=true ./scripts/deploy.sh" >&2
+  echo "Falta TARGET_SERVER. Ejemplo: TARGET_SERVER=203.0.113.10 DOMAIN=tienda.example.com INSTALL_NGINX=true ./deploy.sh" >&2
   exit 1
 fi
 

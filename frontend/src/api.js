@@ -114,6 +114,27 @@ async function post(path, body = {}) {
 }
 
 export const api = {
+  archive: () => get('/archive'),
+  setArchived: (kind, id, archived) => put(`/archive/${kind}/${id}`, { archived }),
+  notepadTabs: () => get('/notepad/tabs'),
+  notepadTrash: () => get('/notepad/trash'),
+  notepadEventsUrl: () => withUser('/notepad/events'),
+  createNotepadTab: clientId => post('/notepad/tabs', { client_id: clientId }),
+  updateNotepadTab: (id, body) => request(withUser(`/notepad/tabs/${id}`), {
+    method: 'PUT',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  }).then(readJson),
+  deleteNotepadTab: (id, clientId) => request(withUser(`/notepad/tabs/${id}?client_id=${encodeURIComponent(clientId)}`), {
+    method: 'DELETE', headers: authHeaders(),
+  }).then(readJson),
+  restoreNotepadTab: (id, clientId) => post(`/notepad/tabs/${id}/restore`, { client_id: clientId }),
+  uploadNotepadImage: (tabId, mimeType, dataBase64) => request(withUser(`/notepad/tabs/${tabId}/images`), {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ mime_type: mimeType, data_base64: dataBase64 }),
+  }).then(readJson),
+  notepadImageUrl: id => withUser(`/notepad/images/${id}`),
   users:         () => get('/users').then(rows => (rows || []).map(normalizeUser)),
   createUser:    (body) => post('/users', body),
   updateUser:    (id, body) => put(`/users/${id}`, body),
@@ -134,7 +155,7 @@ export const api = {
     date: task.date, start_time: task.start_time, end_time: task.end_time,
   })),
   reorderTodoDay: (date, ids) => post('/tasks/todo-day-reorder', { date, ids }),
-  reorderTodos:  (objectiveId, ids) => post('/tasks/todo-reorder', { objective_id: objectiveId, ids }),
+  reorderTodos:  (objectiveId, ids, milestoneId = null) => post('/tasks/todo-reorder', { objective_id: objectiveId, milestone_id: milestoneId, ids }),
   deleteTask:    (id) => withTaskChange(request(withUser(`/tasks/${id}`), { method: 'DELETE', headers: authHeaders() }).then(readJson)),
 
   deadlines:      (params = {}) => get('/deadlines?' + new URLSearchParams(params)),
@@ -149,6 +170,7 @@ export const api = {
   objectives:      (params = {}) => get('/objectives?' + new URLSearchParams(params)),
   createObjective: (body) => post('/objectives', body),
   updateObjective: (id, body) => put(`/objectives/${id}`, body),
+  reorderTodoColumns: (items) => post('/objectives/todo-reorder', { items }),
   reorderTodoObjectives: (ids) => post('/objectives/todo-reorder', { ids }),
   deleteObjective: (id) => request(withUser(`/objectives/${id}`), { method: 'DELETE', headers: authHeaders() }).then(readJson),
 

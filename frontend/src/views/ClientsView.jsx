@@ -1,3 +1,6 @@
+import ProjectTypeSelector from '../components/ProjectTypeSelector.jsx';
+import ArchiveButton from '../components/ArchiveButton.jsx';
+import IndependentVisibility from '../components/IndependentVisibility.jsx';
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate, fmtShortDate } from '../utils/dateUtils.js';
@@ -34,6 +37,7 @@ const PROJECT_TYPE_OPTS = [
   { value: 'client', label: 'Cliente' },
   { value: 'sangalan', label: 'Sangalan' },
   { value: 'personal', label: 'Personal' },
+  { value: 'notes', label: 'Proyecto con notas' },
 ];
 
 const STATUS_ICONS = { not_started: '⚪', in_progress: '🔵', completed: '✅', blocked: '🔴', discarded: '⚫' };
@@ -147,12 +151,17 @@ function ClientDialog({ client, onClose, onSaved }) {
   }
 
   async function del() {
-    if (!window.confirm(`¿Eliminar cliente "${client.title}"?`)) return;
+    if (!window.confirm(`¿Eliminar cliente "${client.title}" y todas sus tareas, hitos, proyectos y elementos asociados?`)) return;
     setDeleting(true);
-    const r = await api.deleteObjective(client.id);
-    setDeleting(false);
-    if (r.error) { setError(r.error); return; }
-    onSaved(); onClose();
+    setError('');
+    try {
+      await api.deleteObjective(client.id);
+      onSaved(); onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo eliminar el cliente.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -220,6 +229,7 @@ function ClientDialog({ client, onClose, onSaved }) {
           </button>
         ) : <span />}
         <div style={{ display: 'flex', gap: 8 }}>
+          {!isNew && <ArchiveButton kind="objective" id={client.id} onArchived={() => { onSaved(); onClose(); }} disabled={saving || deleting} />}
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="btn btn-primary" onClick={save} disabled={saving}>
             {saving ? 'Guardando…' : isNew ? 'Crear' : 'Guardar'}
@@ -234,6 +244,7 @@ function ClientDialog({ client, onClose, onSaved }) {
 function MilestoneDialog({ milestone, clientId, onClose, onSaved }) {
   const isNew = !milestone;
   const [form, setForm] = useState({
+    show_independent: Number(milestone?.show_independent) === 1 ? 1 : 0,
     title:         milestone?.title        || '',
     description:   milestone?.description  || '',
     target_date:   milestone?.target_date  || '',
@@ -250,21 +261,27 @@ function MilestoneDialog({ milestone, clientId, onClose, onSaved }) {
     if (!form.title.trim()) { setError('El título es obligatorio'); return; }
     setSaving(true); setError('');
     const payload = { ...form, objective_id: clientId, billed_amount: Number(form.billed_amount) || 0 };
-    if (isNew) await api.createMilestone(payload);
-    else       await api.updateMilestone(milestone.id, payload);
-    setSaving(false);
-    onSaved();
-    onClose();
+    try {
+      if (isNew) await api.createMilestone(payload);
+      else await api.updateMilestone(milestone.id, payload);
+      onSaved(); onClose();
+    } catch (err) { setError(err.message || 'No se pudo guardar el hito.'); }
+    finally { setSaving(false); }
   }
 
   async function del() {
     if (!confirm(`¿Eliminar hito "${milestone.title}"?`)) return;
     setDeleting(true);
-    const r = await api.deleteMilestone(milestone.id);
-    setDeleting(false);
-    if (r.error) { setError(r.error); return; }
-    onSaved();
-    onClose();
+    setError('');
+    try {
+      await api.deleteMilestone(milestone.id);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo eliminar el hito.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -297,6 +314,7 @@ function MilestoneDialog({ milestone, clientId, onClose, onSaved }) {
         <input type="text" value={form.description} onChange={e => set('description', e.target.value)}
           style={{ width: '100%' }} />
       </div>
+      <IndependentVisibility value={form.show_independent} onChange={value => set('show_independent', value)} />
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         {!isNew ? (
@@ -306,6 +324,7 @@ function MilestoneDialog({ milestone, clientId, onClose, onSaved }) {
           </button>
         ) : <span />}
         <div style={{ display: 'flex', gap: 8 }}>
+          {!isNew && <ArchiveButton kind="milestone" id={milestone.id} onArchived={() => { onSaved(); onClose(); }} disabled={saving || deleting} />}
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="btn btn-primary" onClick={save} disabled={saving}>
             {saving ? 'Guardando…' : isNew ? 'Crear hito' : 'Guardar'}
@@ -320,6 +339,8 @@ function MilestoneDialog({ milestone, clientId, onClose, onSaved }) {
 function ProjectDialog({ clientId, project, onClose, onSaved }) {
   const isNew = !project;
   const [form, setForm] = useState({
+    show_independent: Number(project?.show_independent) === 1 ? 1 : 0,
+    independent_color: project?.independent_color || null,
     title: project?.title || '',
     target_date: project?.target_date || '',
     type: project?.type || 'client',
@@ -378,17 +399,13 @@ function ProjectDialog({ clientId, project, onClose, onSaved }) {
 
   return (
     <Dialog title={isNew ? 'Nuevo proyecto' : `Editar — ${project.title}`} onClose={onClose}>
+      <ProjectTypeSelector value={form.type} onChange={value => set('type', value)} defaultGitType="client" />
       <div style={fieldW}>
         <label style={labelSt}>Título *</label>
         <input type="text" value={form.title} onChange={e => set('title', e.target.value)} style={{ width: '100%', fontFamily: 'monospace' }} autoFocus />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-        <div>
-          <label style={labelSt}>Tipo</label>
-          <select value={form.type} onChange={e => set('type', e.target.value)} style={{ width: '100%' }}>
-            {PROJECT_TYPE_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginBottom: 14 }}>
+
         <div>
           <label style={labelSt}>Fecha objetivo</label>
           <SpanishDateInput value={form.target_date} onChange={v => set('target_date', v)} style={{ width: '100%' }} />
@@ -401,7 +418,7 @@ function ProjectDialog({ clientId, project, onClose, onSaved }) {
         </div>
       </div>
       <div style={fieldW}>
-        <label style={labelSt}>URL GitHub</label>
+        <label style={labelSt}>{form.type === 'notes' ? 'Enlace (opcional)' : 'URL GitHub'}</label>
         <input
           type="url"
           value={form.url}
@@ -423,6 +440,7 @@ function ProjectDialog({ clientId, project, onClose, onSaved }) {
           style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6 }}
         />
       </div>
+      <IndependentVisibility value={form.show_independent} onChange={value => set('show_independent', value)} color={form.independent_color} onColorChange={value => set('independent_color', value)} />
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
         {!isNew ? (

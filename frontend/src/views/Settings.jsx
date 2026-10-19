@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import ArchiveButton from '../components/ArchiveButton.jsx';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { CategorySelector, ColorPicker } from '../components/CatBadge.jsx';
@@ -256,12 +257,17 @@ function ObjectiveDialog({ obj, onClose, onSaved, onDeleted }) {
   }
 
   async function del() {
-    if (!window.confirm(`¿Eliminar objetivo "${obj.title}"?`)) return;
+    if (!window.confirm(`¿Eliminar objetivo "${obj.title}" y todas sus tareas, hitos, proyectos y elementos asociados?`)) return;
     setDeleting(true);
-    const r = await api.deleteObjective(obj.id);
-    setDeleting(false);
-    if (r.error) { alert(r.error); return; }
-    onDeleted(); onClose();
+    setError('');
+    try {
+      await api.deleteObjective(obj.id);
+      onDeleted(); onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo eliminar el objetivo.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -333,6 +339,7 @@ function ObjectiveDialog({ obj, onClose, onSaved, onDeleted }) {
           </button>
         ) : <span />}
         <div style={{ display: 'flex', gap: 8 }}>
+          {!isNew && <ArchiveButton kind="objective" id={obj.id} onArchived={() => { onDeleted(); onClose(); }} disabled={saving || deleting} />}
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : isNew ? 'Crear' : 'Guardar'}</button>
         </div>
@@ -400,10 +407,15 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
   async function del() {
     if (!window.confirm(`¿Eliminar hito "${m.title}"?`)) return;
     setDeleting(true);
-    const r = await api.deleteMilestone(m.id);
-    setDeleting(false);
-    if (r.error) { alert(r.error); return; }
-    onDeleted(); onClose();
+    setError('');
+    try {
+      await api.deleteMilestone(m.id);
+      onDeleted(); onClose();
+    } catch (e) {
+      setError(e.message || 'No se pudo eliminar el hito.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -452,6 +464,7 @@ function MilestoneDialog({ m, objectives, onClose, onSaved, onDeleted }) {
           </button>
         ) : <span />}
         <div style={{ display: 'flex', gap: 8 }}>
+          {!isNew && <ArchiveButton kind="milestone" id={m.id} onArchived={() => { onDeleted(); onClose(); }} disabled={saving || deleting} />}
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Guardando…' : isNew ? 'Crear' : 'Guardar'}</button>
         </div>
@@ -913,6 +926,8 @@ export default function Settings() {
   const [cats, setCats] = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [milestoneItems, setMilestoneItems] = useState([]);
+  const [archivedItems, setArchivedItems] = useState({});
+  const [archiveError, setArchiveError] = useState('');
   const [creatingCat, setCreatingCat] = useState(false);
   const [creatingObj, setCreatingObj] = useState(false);
   const [creatingMs, setCreatingMs] = useState(false);
@@ -921,10 +936,31 @@ export default function Settings() {
   const [milestoneGroupsExpanded, setMilestoneGroupsExpanded] = useState({});
   const [users, setUsers] = useState([]);
   const [editingUser, setEditingUser] = useState(null);
+  const [moneyHours, setMoneyHours] = useState('4');
+  const [moneySaving, setMoneySaving] = useState(false);
+  const [moneyMessage, setMoneyMessage] = useState('');
 
   function loadCats() { api.categories().then(setCats); }
   function loadObjectives() { api.objectives().then(setObjectives); }
-  function loadUsers() { api.users().then(setUsers); }
+  function loadUsers() { api.users().then(rows => { setUsers(rows); setMoneyHours(String((rows[0]?.money_required_minutes ?? 240) / 60)); }); }
+  async function saveMoneyHours(event) {
+    event.preventDefault();
+    const hours = Number(moneyHours);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 24 || !Number.isInteger(hours * 4)) {
+      setMoneyMessage('Introduce entre 0 y 24 horas, en intervalos de 15 minutos.');
+      return;
+    }
+    setMoneySaving(true);
+    setMoneyMessage('');
+    try {
+      await api.updateUser(users[0].id, { money_required_minutes: hours * 60 });
+      setMoneyMessage('Objetivo diario guardado.');
+      window.dispatchEvent(new Event('money-planning-config-changed'));
+      loadUsers();
+    } catch (_) {
+      setMoneyMessage('No se pudo guardar el objetivo diario.');
+    } finally { setMoneySaving(false); }
+  }
   async function loadMilestones() {
     const [classicMilestones, publications, certifications, repos, prs, events, tasks] = await Promise.all([
       api.milestones(),
@@ -1029,7 +1065,17 @@ export default function Settings() {
 
     setMilestoneItems(mergedItems);
   }
-  function loadAll() { loadCats(); loadObjectives(); loadMilestones(); loadUsers(); }
+  function loadAll() { loadCats(); loadObjectives(); loadMilestones(); loadUsers(); api.archive().then(setArchivedItems).catch(() => setArchiveError('No se pudieron cargar los elementos archivados.')); }
+
+  async function restore(kind, id) {
+    setArchiveError('');
+    try {
+      await api.setArchived(kind, id, false);
+      loadAll();
+    } catch (error) {
+      setArchiveError(error.message || 'No se pudo restaurar el elemento.');
+    }
+  }
 
   useEffect(() => { loadAll(); }, []);
   useEffect(() => {
@@ -1108,11 +1154,35 @@ export default function Settings() {
         </div>
       </div>
 
+      <div className="card" style={{ maxWidth: 760, marginBottom: 20 }}>
+        <div className="card-header"><span className="card-title">Money maker</span></div>
+        <form className="card-body" onSubmit={saveMoneyHours}>
+          <label htmlFor="money-required-hours" style={labelSt}>Horas necesarias al día</label>
+          <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>Horas de tareas Money maker que debes planificar antes de comenzar un ToDo.</p>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <input id="money-required-hours" type="number" min="0" max="24" step="0.25" required value={moneyHours} onChange={event => setMoneyHours(event.target.value)} style={{ width: 100 }} />
+            <button className="btn btn-primary btn-sm" type="submit" disabled={moneySaving || !users.length}>{moneySaving ? 'Guardando…' : 'Guardar'}</button>
+          </div>
+          {moneyMessage && <p role="status" style={{ marginTop: 10, fontSize: 12 }}>{moneyMessage}</p>}
+        </form>
+      </div>
+
       <SectionCard title="Categorías" count={cats.length} onNew={() => setCreatingCat(true)}>
         <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>
           El ID es permanente; el nombre y el color son editables.
         </p>
         {cats.map(cat => <CategoryRow key={cat.id} cat={cat} onSaved={loadCats} onDeleted={loadCats} />)}
+      </SectionCard>
+
+      <SectionCard title="Archivados" count={Object.values(archivedItems).reduce((total, items) => total + items.length, 0)}>
+        <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>Los elementos archivados se ocultan de las vistas habituales. Puedes restaurarlos aquí.</p>
+        {archiveError && <p role="alert" style={{ color: 'var(--danger)' }}>{archiveError}</p>}
+        {Object.entries({ objective: 'Objetivo', milestone: 'Hito', repo: 'Proyecto', publication: 'Publicación', certification: 'Certificación', pr: 'PR', event: 'Evento', task: 'Tarea' }).flatMap(([kind, label]) =>
+          (archivedItems[kind] || []).map(item => <div key={`${kind}:${item.id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, ...rowBorder }}>
+            <span style={{ flex: 1, fontSize: 13 }}><strong>{label}</strong> · {item.title}</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => restore(kind, item.id)}>Restaurar</button>
+          </div>)
+        )}
       </SectionCard>
 
       <SectionCard title="Perfil" count={users.length}>
@@ -1139,7 +1209,7 @@ export default function Settings() {
 
       <SectionCard title="Objetivos" count={objectives.length} onNew={() => setCreatingObj(true)}>
         <p style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 12 }}>
-          No se puede eliminar un objetivo si tiene tareas o hitos asociados.
+          Solo se puede eliminar un objetivo sin tareas pendientes. Al hacerlo, también se borran sus tareas completadas, hitos, proyectos y elementos asociados.
         </p>
         {objectives.map(obj => (
           <ObjectiveRow key={obj.id} obj={obj} cats={cats} onSaved={loadObjectives} onDeleted={loadAll} />
@@ -1186,7 +1256,7 @@ export default function Settings() {
                   item={item}
                   objectives={objectives}
                   onSaved={loadMilestones}
-                  onDeleted={loadMilestones}
+                  onDeleted={loadAll}
                 />
               ))}
             </div>
@@ -1229,7 +1299,7 @@ export default function Settings() {
                       item={item}
                       objectives={objectives}
                       onSaved={loadMilestones}
-                      onDeleted={loadMilestones}
+                      onDeleted={loadAll}
                     />
                   ))}
                 </>
