@@ -7,6 +7,7 @@ import ContentMetricsSummary from '../components/ContentMetricsSummary.jsx';
 import useEscapeClose from '../hooks/useEscapeClose.js';
 import QuickTypeSearch, { matchesQuickQuery, useQuickTypeSearch } from '../components/QuickTypeSearch.jsx';
 import DocumentPreview from '../components/DocumentPreview.jsx';
+import DocumentActionIcon from '../components/DocumentActionIcon.jsx';
 
 const labelSt = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 4 };
 const thStyle = { padding: '9px 18px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
@@ -305,11 +306,10 @@ export default function DocumentsView() {
                   </td>
                   <td data-label="Abrir" style={{ padding: '10px 18px', textAlign: 'right' }}>
                     <button
-                      className="btn btn-ghost btn-sm"
+                      className="btn btn-ghost btn-sm document-icon-button"
                       title="Visualizar documento" aria-label={`Visualizar ${doc.name}`}
                       onClick={e => { e.stopPropagation(); setPreview(doc); }}
-                      style={{ fontSize: 13, padding: '2px 10px' }}
-                    >◉</button>
+                    ><DocumentActionIcon name="view" /></button>
                   </td>
                 </tr>
               ))}

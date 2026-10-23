@@ -84,6 +84,36 @@ export function formatCountdown(totalSeconds) {
   return `${String(m).padStart(2,'0')}m`;
 }
 
+export function formatLiveCountdown(seconds) {
+  const remaining = Math.max(0, Math.ceil(seconds));
+  const hours = Math.floor(remaining / 3600);
+  const minutes = Math.floor((remaining % 3600) / 60);
+  const secs = remaining % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+export function getTaskTiming(task, now = new Date()) {
+  const currentTime = new Date(now).getTime();
+  const estimatedSeconds = Number(task.original_estimate_minutes ?? task.duration_estimated) * 60 || 0;
+  const startedAt = task.timer_started_at ? Date.parse(task.timer_started_at) : NaN;
+  const elapsedSeconds = (Number(task.actual_seconds) || 0)
+    + (Number.isFinite(startedAt) ? Math.max(0, (currentTime - startedAt) / 1000) : 0);
+  const scheduledEnd = task.date && task.end_time ? Date.parse(`${task.date}T${task.end_time}`) : NaN;
+  const scheduled = Number.isFinite(scheduledEnd);
+  const totalSeconds = scheduled && task.start_time
+    ? secondsBetweenTimes(task.start_time, task.end_time) : estimatedSeconds;
+  return {
+    remainingSeconds: scheduled ? (scheduledEnd - currentTime) / 1000 : estimatedSeconds - elapsedSeconds,
+    elapsedSeconds,
+    totalSeconds,
+    scheduled,
+  };
+}
+
+export function formatTaskTimeRemaining(seconds) {
+  return seconds < 0 ? `+${formatLiveCountdown(-seconds)}` : formatLiveCountdown(seconds);
+}
+
 export function secondsUntilTime(timeStr) {
   if (!timeStr) return 0;
   const now = new Date();

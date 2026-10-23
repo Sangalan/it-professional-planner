@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../api.js';
-import { formatCountdown, secondsUntilTime, secondsBetweenTimes, timeToMinutes } from '../utils/dateUtils.js';
+import { formatCountdown, formatLiveCountdown, secondsUntilTime, timeToMinutes, getTaskTiming, formatTaskTimeRemaining } from '../utils/dateUtils.js';
 import { getCatColor, getCatLabel } from '../utils/categoryUtils.js';
 import TaskModal from '../components/TaskModal.jsx';
 import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
@@ -44,7 +44,8 @@ function useNowData() {
   useEffect(() => {
     refresh();
     const iv = setInterval(refresh, 30000); // refresh every 30s
-    return () => clearInterval(iv);
+    window.addEventListener('tasks-changed', refresh);
+    return () => { clearInterval(iv); window.removeEventListener('tasks-changed', refresh); };
   }, [refresh]);
   return { data, refresh };
 }
@@ -67,19 +68,18 @@ export default function NowView() {
     const { current, upcoming } = data;
     let secs = 0;
     if (current) {
-      secs = secondsUntilTime(current.end_time);
-      if (secs < 0) secs = 0;
+      secs = getTaskTiming(current).remainingSeconds;
     } else if (upcoming) {
       secs = secondsUntilTime(upcoming.start_time);
       if (secs < 0) secs = 0;
     }
     let pct = 0;
-    if (current && current.start_time && current.end_time) {
-      const total = secondsBetweenTimes(current.start_time, current.end_time);
-      const elapsed = total - secs;
-      pct = total > 0 ? Math.min(100, Math.round((elapsed / total) * 100)) : 0;
+    if (current) {
+      const { totalSeconds } = getTaskTiming(current);
+      pct = totalSeconds > 0 ? Math.min(100, Math.max(0, Math.round((totalSeconds - secs) / totalSeconds * 100))) : 0;
     }
-    document.title = secs > 0 ? `${formatCountdown(secs)} · ${pct}%` : 'Sin tarea activa';
+    document.title = current ? `${formatTaskTimeRemaining(secs)} · ${pct}%`
+      : secs > 0 ? formatLiveCountdown(secs) : 'Sin tarea activa';
     return () => { document.title = DEFAULT_TITLE; };
   });
 
@@ -88,6 +88,7 @@ export default function NowView() {
   const now = new Date();
   const timeStr = now.toTimeString().slice(0, 5);
   const { current, upcoming } = data;
+  const activeTasks = data.activeTasks || (current ? [current] : []);
 
   // Compute countdown
   let timerSeconds = 0;
@@ -96,9 +97,8 @@ export default function NowView() {
 
   if (current) {
     // Time remaining in current task
-    timerSeconds = secondsUntilTime(current.end_time);
+    timerSeconds = getTaskTiming(current, now).remainingSeconds;
     if (timerSeconds <= 0) {
-      timerSeconds = 0;
       timerMode = 'free';
     } else {
       timerMode = 'active';
@@ -110,23 +110,15 @@ export default function NowView() {
     timerLabel = 'hasta la próxima tarea';
   }
 
-  const timerDisplay = formatCountdown(timerSeconds);
+  const timerDisplay = current ? formatTaskTimeRemaining(timerSeconds) : formatLiveCountdown(timerSeconds);
   const timerClass = timerMode === 'active'
     ? (timerSeconds < 300 ? 'now-timer warning' : 'now-timer')
     : timerMode === 'waiting' ? 'now-timer free'
     : 'now-timer free';
 
-  // Progress within current task
-  let taskProgress = 0;
-  if (current && current.start_time && current.end_time) {
-    const total = secondsBetweenTimes(current.start_time, current.end_time);
-    const elapsed = total - timerSeconds;
-    taskProgress = total > 0 ? Math.min(100, Math.round((elapsed / total) * 100)) : 0;
-  }
-
   const weekday = now.toLocaleDateString('es-ES', { weekday: 'long' });
   const dateLabel = now.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' });
-  const gapHours = current && upcoming
+  const gapHours = current?.end_time && upcoming
     ? (timeToMinutes(upcoming.start_time) - timeToMinutes(current.end_time)) / 60
     : 0;
   const hasGapBetweenTasks = gapHours > (5 / 60);
@@ -143,7 +135,7 @@ export default function NowView() {
 
       {/* Big timer */}
       <div className={timerClass}>
-        {timerMode === 'free' && !upcoming ? '–' : timerDisplay}
+        {timerMode === 'free' && !current && !upcoming ? '–' : timerDisplay}
       </div>
 
       <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-3)', marginBottom: 24, display: 'flex', justifyContent: 'center', gap: 12 }}>
@@ -158,66 +150,66 @@ export default function NowView() {
       </div>
 
       {/* Current task */}
-      {current ? (
-        <div
+      {activeTasks.length ? activeTasks.map(task => {
+        const { remainingSeconds, totalSeconds, scheduled } = getTaskTiming(task, now);
+        const progress = totalSeconds > 0
+          ? Math.min(100, Math.max(0, Math.round((totalSeconds - remainingSeconds) / totalSeconds * 100))) : 0;
+        return <div key={task.id}
           className="now-task-card"
-          style={{ borderColor: getCatColor(current.category_id) + '88', background: getCatColor(current.category_id) + '11', cursor: 'pointer' }}
-          onClick={() => setEditTask(current)}
+          style={{ borderColor: getCatColor(task.category_id) + '88', background: getCatColor(task.category_id) + '11', cursor: 'pointer' }}
+          onClick={() => setEditTask(task)}
           title="Editar tarea"
         >
-          <div className="now-task-label" style={{ color: getCatColor(current.category_id) }}>
-            TAREA ACTIVA · {getCatLabel(current.category_id)}
+          <div className="now-task-label" style={{ color: getCatColor(task.category_id) }}>
+            TAREA ACTIVA · {getCatLabel(task.category_id)}
           </div>
-          <div className="now-task-title"><MoneyMakerIcon task={current} />{current.title}</div>
+          <div className="now-task-title"><MoneyMakerIcon task={task} />{task.title}</div>
           <div className="now-task-time">
-            {current.start_time} → {current.end_time}
-            &nbsp;·&nbsp;
-            {timerSeconds > 0 ? `${formatCountdown(timerSeconds)} restantes` : 'Terminada'}
+            {scheduled ? <>{task.start_time} → {task.end_time} · {formatTaskTimeRemaining(remainingSeconds)} restantes</>
+              : `${formatTaskTimeRemaining(remainingSeconds)} de tiempo estimado restantes`}
           </div>
           {/* Progress bar of time elapsed */}
           <div className="progress-bar" style={{ marginTop: 12 }}>
             <div className="progress-fill"
-              style={{ width: `${taskProgress}%`, background: getCatColor(current.category_id) }} />
+              style={{ width: `${progress}%`, background: getCatColor(task.category_id) }} />
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>{taskProgress}% del tiempo transcurrido</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>{progress}% del tiempo transcurrido</div>
 
           {/* Complete checkbox */}
-          {(canCompleteTask(current) || !isTodoTask(current)) ? (
+          {(canCompleteTask(task) || !isTodoTask(task)) ? (
             <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
               <div
                 onClick={async (e) => {
                   e.stopPropagation();
-                  if (isTodoTask(current)) {
-                    const newStatus = current.status === 'completed' ? 'pending' : 'completed';
-                    await api.updateTask(current.id, { status: newStatus, percentage_completed: newStatus === 'completed' ? 100 : current.percentage_completed });
+                  if (isTodoTask(task)) {
+                    await api.taskTimer(task.id, 'complete');
                   } else {
-                    await api.completeScheduledTask(current);
+                    await api.completeScheduledTask(task);
                   }
                   refresh();
                 }}
-                title={current.status === 'completed' ? 'Desmarcar como completada' : 'Marcar como completada'}
+                title="Marcar como completada"
                 style={{
                   width: 22, height: 22, borderRadius: 5, cursor: 'pointer',
-                  border: `2px solid ${current.status === 'completed' ? getCatColor(current.category_id) : 'var(--border-2)'}`,
-                  background: current.status === 'completed' ? getCatColor(current.category_id) : 'white',
+                  border: '2px solid var(--border-2)',
+                  background: 'white',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   color: 'white', fontSize: 13, fontWeight: 700,
                   flexShrink: 0,
                 }}
               >
-                {current.status === 'completed' ? '✓' : ''}
               </div>
               <span style={{ fontSize: 13, color: 'var(--text-2)' }}>
-                {current.status === 'completed' ? 'Completada' : 'Marcar como completada'}
+                Marcar como completada
               </span>
             </div>
-          ) : isTodoTask(current) ? (
+          ) : isTodoTask(task) ? (
             <div style={{ marginTop: 14, fontSize: 13, color: 'var(--text-2)' }}>
               Tarea fija recurrente
             </div>
           ) : null}
-        </div>
-      ) : (
+        </div>;
+      }) : (
         <div className="now-free-card">
           <div style={{ fontSize: 32, marginBottom: 8 }}>☕</div>
           <div>No hay tarea activa ahora mismo</div>

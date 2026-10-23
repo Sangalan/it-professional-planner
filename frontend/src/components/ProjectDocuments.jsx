@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import DocumentPreview from './DocumentPreview.jsx';
+import DocumentActionIcon from './DocumentActionIcon.jsx';
 
 export default function ProjectDocuments({ projectId, disabled }) {
   const [documents, setDocuments] = useState([]);
@@ -75,8 +76,8 @@ export default function ProjectDocuments({ projectId, disabled }) {
       <ul className="project-documents-list">{documents.map(document => <li key={document.id}>
         <span>{document.name}</span>
         <div className="project-document-actions">
-          <button className="btn btn-ghost btn-sm" type="button" aria-label={`Visualizar ${document.name}`} title="Visualizar" onClick={() => setPreview(document)}>◉</button>
-          <button className="btn btn-ghost btn-sm" type="button" disabled={disabled || busy} aria-label={`Renombrar ${document.name}`} title="Renombrar" onClick={() => rename(document)}>✎</button>
+          <button className="btn btn-ghost btn-sm document-icon-button" type="button" aria-label={`Visualizar ${document.name}`} title="Visualizar" onClick={() => setPreview(document)}><DocumentActionIcon name="view" /></button>
+          <button className="btn btn-ghost btn-sm document-icon-button" type="button" disabled={disabled || busy} aria-label={`Renombrar ${document.name}`} title="Renombrar" onClick={() => rename(document)}><DocumentActionIcon name="edit" /></button>
           <button className="btn btn-ghost btn-sm" type="button" disabled={disabled || busy} aria-label={`Eliminar ${document.name}`} title="Eliminar" onClick={() => remove(document)}>🗑</button>
         </div>
       </li>)}</ul>}

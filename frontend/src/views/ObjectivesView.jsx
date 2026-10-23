@@ -841,7 +841,7 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
           onDeleted={() => { setEditingLinked(false); onUpdate(); }}
         />
       )}
-      <div className="milestone-row" style={{ paddingLeft: 12, cursor: 'pointer', flexWrap: 'wrap', gap: 6 }} onClick={toggleExpanded}>
+      <div className="milestone-row objective-milestone-row" style={{ paddingLeft: 12, cursor: 'pointer', flexWrap: 'wrap', gap: 6 }} onClick={toggleExpanded}>
         <span style={{ fontSize: 13 }}>{isSimple ? (STATUS_ICONS[item.status] || '⚪') : (LINKED_STATUS_ICONS[item.status] || '⚪')}</span>
         <div className="milestone-title" style={{ fontSize: 13 }}>
           <div className="milestone-heading" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -879,7 +879,7 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
           </div>
         </div>
         {hasDate && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, whiteSpace: 'nowrap' }}>
+          <div className="objective-milestone-date" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, whiteSpace: 'nowrap' }}>
             <span className={`milestone-days ${cls}`} style={{ whiteSpace: 'nowrap' }}>{dayLabel}</span>
             <span className="milestone-date" style={{ whiteSpace: 'nowrap' }}>{fmtShortDate(item.date)}</span>
           </div>
@@ -915,13 +915,11 @@ function AnyMilestoneRow({ item, objectives, onUpdate, onAddTask, onTaskMoved, v
                 <div style={{ width: 22, flexShrink: 0 }} />
               )}
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditingTask(task)}>
-                <div className="objective-task-heading">
+                <div className="objective-task-heading objective-milestone-task-heading">
                   <div className={`task-title ${task.status === 'completed' ? 'done' : ''}`} style={{ fontSize: 12 }}><MoneyMakerIcon task={task} />{task.title}</div>
-                  {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
-                </div>
-                <div className="task-meta">
-                  {task.start_time && <span className="task-time" style={{ fontSize: 10 }}>{task.start_time}</span>}
                   <CatBadge id={task.category_id} style={{ fontSize: 10 }} />
+                  {task.start_time && <span className="task-time" style={{ fontSize: 10 }}>{task.start_time}</span>}
+                  {task.date && <span className="task-time" style={{ fontSize: 10 }}>{fmtShortDate(task.date)}</span>}
                 </div>
               </div>
             </div>

@@ -22,11 +22,14 @@ import Search from './views/Search.jsx';
 import Settings from './views/Settings.jsx';
 import ImportExport from './views/ImportExport.jsx';
 import NotepadView from './views/NotepadView.jsx';
+import WorldClocksView from './views/WorldClocksView.jsx';
 import { CategoriesProvider } from './components/CatBadge.jsx';
 import TaskModal from './components/TaskModal.jsx';
 import GapPickerDialog from './components/GapPickerDialog.jsx';
 import DailyMoneyPlanning from './components/DailyMoneyPlanning.jsx';
+import PinnedWorldClocks from './components/PinnedWorldClocks.jsx';
 import AuthGate from './components/AuthGate.jsx';
+import useWorldClocks from './hooks/useWorldClocks.js';
 
 // Compute total free minutes within 9:00–20:00 by merging task intervals
 function computeFreeHours(tasks) {
@@ -305,6 +308,7 @@ const navContent = [
 
 const navTools = [
   { path: '/notepad',       icon: '📝', label: 'Bloc de notas' },
+  { path: '/world-clocks',  icon: '🌍', label: 'Horas del mundo' },
   { path: '/search',        icon: '🔍', label: 'Búsqueda' },
   { path: '/settings',      icon: '⚙️',  label: 'Configuración' },
   { path: '/import-export', icon: '💾', label: 'Importar/Exportar' },
@@ -340,6 +344,8 @@ function PlannerApp({ authUser, onLogout }) {
     () => localStorage.getItem('sidebar-collapsed') === 'true',
   );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const worldClocks = useWorldClocks(activeUserId);
+  const pinnedCities = worldClocks.cities.filter(city => city.pinned);
   const activeUser = users.find(u => u.id === activeUserId) || null;
   const sections = activeUser?.content_sections || {
     clients: true, publications: true, certifications: true, repos: true, prs: true, events: true, reading_list: true, documents: true,
@@ -476,8 +482,9 @@ function PlannerApp({ authUser, onLogout }) {
             ))}
           </nav>
         </aside>
-        <main className="main-content">
+        <main className={`main-content${pinnedCities.length ? ' with-pinned-world-clocks' : ''}`}>
           <DailyMoneyPlanning userId={activeUserId} />
+          {pinnedCities.length > 0 && <PinnedWorldClocks cities={pinnedCities} />}
           <div className="account-controls">
             <button type="button" className="signed-in-user" onClick={onLogout} title={`Sesión iniciada como ${authUser.email}. Clic para salir.`}>
               {authUser.picture
@@ -505,6 +512,7 @@ function PlannerApp({ authUser, onLogout }) {
             <Route path="/events" element={<SectionGuard enabled={sections.events} sectionLabel="Eventos"><EventsView /></SectionGuard>} />
             <Route path="/search"     element={<Search />} />
             <Route path="/notepad"    element={<NotepadView />} />
+            <Route path="/world-clocks" element={<WorldClocksView {...worldClocks} />} />
             <Route path="/import-export" element={<ImportExport />} />
             <Route path="/settings"      element={<Settings />} />
           </Routes>

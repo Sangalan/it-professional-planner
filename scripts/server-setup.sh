@@ -34,6 +34,11 @@ if [[ "$ENABLE_TLS" == "true" && -z "$TLS_EMAIL" ]]; then
   exit 1
 fi
 
+if [[ "$INSTALL_NGINX" == "true" && "$ENABLE_TLS" != "true" && -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]]; then
+  echo "Ya existe un certificado para ${DOMAIN}; activa ENABLE_TLS para conservar HTTPS." >&2
+  exit 1
+fi
+
 if [[ "$SERVICE_USER" == "root" ]]; then
   echo "SERVICE_USER no puede ser root. Usa un usuario de sistema dedicado, por ejemplo ${APP_NAME}." >&2
   exit 1
@@ -148,7 +153,9 @@ systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
 
 if [[ "$INSTALL_NGINX" == "true" ]]; then
-  cat >"/etc/nginx/sites-available/${SERVICE_NAME}" <<EOF
+  nginx_site="/etc/nginx/sites-available/${SERVICE_NAME}"
+  write_nginx_http_site() {
+    cat >"$nginx_site" <<EOF
 server {
     listen 80;
     server_name ${DOMAIN};
@@ -167,20 +174,56 @@ server {
     }
 }
 EOF
+  }
+
+  write_nginx_https_site() {
+    cat >"$nginx_site" <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    client_max_body_size 300m;
+
+    location / {
+        proxy_pass http://127.0.0.1:${PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300;
+        proxy_send_timeout 300;
+    }
+}
+EOF
+  }
+
+  if [[ "$ENABLE_TLS" == "true" && -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" && -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]]; then
+    write_nginx_https_site
+  else
+    write_nginx_http_site
+  fi
   ln -sfn "/etc/nginx/sites-available/${SERVICE_NAME}" "/etc/nginx/sites-enabled/${SERVICE_NAME}"
   nginx -t
   systemctl reload nginx
 
   if [[ "$ENABLE_TLS" == "true" ]]; then
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$TLS_EMAIL" --redirect
-
-    # SSE mantiene una conexión abierta por pestaña. Sin HTTP/2 los navegadores
-    # pueden agotar su pequeño límite de conexiones HTTP/1.1 por origen y dejar
-    # las llamadas REST en pending aunque Express siga sano.
-    nginx_site="/etc/nginx/sites-available/${SERVICE_NAME}"
-    sed -i 's/listen 443 ssl;/listen 443 ssl http2;/' "$nginx_site"
+    if [[ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" || ! -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]]; then
+      certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$TLS_EMAIL" --redirect
+    fi
+    # Always restore the complete HTTPS site after replacing its configuration.
+    write_nginx_https_site
     nginx -t
     systemctl reload nginx
+    curl --noproxy '*' -fsS --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/" >/dev/null
   fi
 fi
 

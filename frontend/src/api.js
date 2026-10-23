@@ -135,6 +135,12 @@ export const api = {
     body: JSON.stringify({ mime_type: mimeType, data_base64: dataBase64 }),
   }).then(readJson),
   notepadImageUrl: id => withUser(`/notepad/images/${id}`),
+  worldClocks: () => get('/world-clocks'),
+  saveWorldClocks: (cities, revision) => request(withUser('/world-clocks'), {
+    method: 'PUT',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ cities, revision }),
+  }).then(readJson),
   users:         () => get('/users').then(rows => (rows || []).map(normalizeUser)),
   createUser:    (body) => post('/users', body),
   updateUser:    (id, body) => put(`/users/${id}`, body),

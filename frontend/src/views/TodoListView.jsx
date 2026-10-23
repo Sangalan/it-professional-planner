@@ -9,7 +9,7 @@ import TodoCalendar from '../components/TodoCalendar.jsx';
 import DeadlineModal, { DeadlineChip } from '../components/DeadlineModal.jsx';
 import SpanishDateInput from '../components/SpanishDateInput.jsx';
 import MoneyMakerIcon from '../components/MoneyMakerIcon.jsx';
-import { fmtDate, toDateStr, startOfMonth, addMonths, addDays, getDaysInMonthGrid, isSameMonth, fmtMonthYear, formatDuration, formatActualDuration } from '../utils/dateUtils.js';
+import { fmtDate, toDateStr, startOfMonth, addMonths, addDays, getDaysInMonthGrid, isSameMonth, fmtMonthYear, formatDuration, formatActualDuration, getTaskTiming, formatTaskTimeRemaining } from '../utils/dateUtils.js';
 import { isMoneyMakerTask, isMoneyObjective, isTodoTask } from '../utils/taskUtils.js';
 
 const LAST_ORDER = Number.MAX_SAFE_INTEGER;
@@ -284,7 +284,7 @@ function TodoColumn({ onEditColumn, objective, tasks, draggedTaskId, flashedTask
               return <React.Fragment key={task.id}>
                 <article
                 data-todo-task-id={task.id}
-                className={`todo-card${group.overdue ? ' overdue' : ''}${group.today ? ' today' : ''}${task.status === 'completed' ? ' completed' : ''}${flashedTaskId === task.id ? ' moved' : ''}${sourceId === task.id ? ' dragging' : ''}`}
+                className={`todo-card${group.overdue ? ' overdue' : ''}${group.today ? ' today' : ''}${task.status === 'completed' ? ' completed' : ''}${task.status !== 'completed' && (task.status === 'in_progress' || task.timer_started_at) ? ' in-progress' : ''}${flashedTaskId === task.id ? ' moved' : ''}${sourceId === task.id ? ' dragging' : ''}`}
                 draggable={!saving && !isMoneyAlias}
                 onDragStart={e => {
                   e.stopPropagation();
@@ -393,7 +393,7 @@ function TodoChecklistColumn({ onEditColumn, objective, tasks, onReload, onEdit,
           <article
             key={task.id}
             data-todo-task-id={task.id}
-            className={`todo-checklist-card${task.status === 'completed' ? ' completed' : ''}${draggedTaskId === task.id ? ' dragging' : ''}${dropTarget?.id === task.id ? ` drop-${dropTarget.placement}` : ''}`}
+            className={`todo-checklist-card${task.status === 'completed' ? ' completed' : ''}${task.status !== 'completed' && (task.status === 'in_progress' || task.timer_started_at) ? ' in-progress' : ''}${draggedTaskId === task.id ? ' dragging' : ''}${dropTarget?.id === task.id ? ` drop-${dropTarget.placement}` : ''}`}
             draggable={!saving && !mobileViewport && !(isMoneyObjective(objective) && task.objective_id !== objective.id)}
             onDragStart={event => {
               setDraggedTaskId(task.id);
@@ -468,17 +468,10 @@ function countdownMinutes(task, now) {
 
 function ActiveTaskBanner({ task, compact = false, manageDocumentTitle = true, onAction, saving }) {
   const [now, setNow] = useState(() => new Date());
-  const started = task.timer_started_at || (task.date && task.start_time ? `${task.date}T${task.start_time}:00` : null);
-  const elapsed = (Number(task.actual_seconds) || 0) + (started ? Math.max(0, (now - new Date(started)) / 1000) : 0);
-  const estimatedMinutes = Number(task.original_estimate_minutes ?? task.duration_estimated) || 0;
-  const remaining = estimatedMinutes - elapsed / 60;
-  const overtimeMinutes = Math.ceil(Math.max(0, -remaining));
-  const countdown = overtimeMinutes > 0
-    ? `${formatDuration(estimatedMinutes) || '0m'} +${formatDuration(overtimeMinutes)}`
-    : (formatDuration(Math.ceil(remaining)) || '0m');
+  const countdown = formatTaskTimeRemaining(getTaskTiming(task, now).remainingSeconds);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 15000);
+    const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, [task?.id]);
 
@@ -755,7 +748,7 @@ export default function TodoListView() {
   const countdownBannerRef = useRef(null);
   const activeTaskBannerRef = useRef(null);
   const countdownScrolledPast = useScrolledPast(countdownBannerRef, Boolean(moneyPlanningReady && countdownEnd));
-  const activeTaskScrolledPast = useScrolledPast(activeTaskBannerRef, Boolean(moneyPlanningReady && activeTasks.length));
+  const activeTaskScrolledPast = useScrolledPast(activeTaskBannerRef, Boolean(activeTasks.length));
 
   useEffect(() => () => window.clearTimeout(flashTimerRef.current), []);
 
@@ -911,10 +904,6 @@ export default function TodoListView() {
   async function startTodo(task) {
     const duration = Number(task?.duration_estimated);
     if (!task || !(duration > 0) || starting) return;
-    if (!moneyPlanningReady) {
-      setError(`Planifica al menos ${moneyRequiredMinutes / 60}h de tareas Money maker antes de comenzar un ToDo.`);
-      return;
-    }
     setStarting(true);
     setError('');
     try {
@@ -1166,13 +1155,13 @@ export default function TodoListView() {
       {moneyPlanningReady && countdownEnd && <div ref={countdownBannerRef}>
         <CountdownBanner end={countdownEnd} onStop={stopCountdown} />
       </div>}
-      {moneyPlanningReady && activeTasks.length > 0 && <div ref={activeTaskBannerRef} className="todo-active-banner-stack">
+      {activeTasks.length > 0 && <div ref={activeTaskBannerRef} className="todo-active-banner-stack">
         {activeTasks.map((task, index) => <ActiveTaskBanner key={task.id} task={task} manageDocumentTitle={index === 0}
           onAction={action => finishActiveTask(task, action)} saving={starting} />)}
       </div>}
       {moneyPlanningReady && countdownEnd && countdownScrolledPast && <CountdownBanner end={countdownEnd}
         compact leftOfActive={activeTaskScrolledPast} onStop={stopCountdown} />}
-      {moneyPlanningReady && activeTasks.length > 0 && activeTaskScrolledPast && <div className="todo-active-mini-stack">
+      {activeTasks.length > 0 && activeTaskScrolledPast && <div className="todo-active-mini-stack">
         {activeTasks.map(task => <ActiveTaskBanner key={task.id} task={task} compact
           onAction={action => finishActiveTask(task, action)} saving={starting} />)}
       </div>}
@@ -1276,8 +1265,8 @@ export default function TodoListView() {
         <button type="button" onClick={() => { setAssigningDayTask(taskMenu.task); setTaskMenu(null); }}>Cambiar día</button>
         <button type="button" disabled={!taskMenu.task.date || saving} onClick={() => changeTodoDay(taskMenu.task, null)}>Sin fecha</button>
         <button type="button" onClick={() => { setDurationTask(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
-        <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
-          title={!moneyPlanningReady ? `Planifica primero ${moneyRequiredMinutes / 60}h de tareas Money maker` : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
+        <button type="button" disabled={starting || taskMenu.task.status === 'completed' || taskMenu.task.status === 'in_progress' || !(Number(taskMenu.task.duration_estimated) > 0)}
+          title={Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada'}
           onClick={() => { startTodo(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
       </div>}
 

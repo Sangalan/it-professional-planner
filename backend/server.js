@@ -696,6 +696,52 @@ app.get('/api/notepad/images/:id', (req, res) => {
 });
 
 // ── USERS ───────────────────────────────────────────────────────────────────
+const WORLD_CLOCK_COLORS = new Set([
+  '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0d9488',
+  '#2563eb', '#4f46e5', '#9333ea', '#db2777', '#64748b',
+]);
+
+function worldClocksForUser(userId) {
+  const row = db.prepare('SELECT world_clocks, world_clocks_revision FROM users WHERE id = ?').get(userId);
+  return { cities: JSON.parse(row?.world_clocks || '[]'), revision: row?.world_clocks_revision ?? 0 };
+}
+
+app.get('/api/world-clocks', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(worldClocksForUser(req.userId));
+});
+
+app.put('/api/world-clocks', (req, res) => {
+  const { cities, revision } = req.body || {};
+  if (!Array.isArray(cities) || cities.length > 200 || !Number.isInteger(revision) || revision < 0) {
+    return res.status(400).json({ error: 'Datos de horas del mundo no válidos.' });
+  }
+  const ids = new Set();
+  const slots = new Set();
+  for (const city of cities) {
+    if (!city || typeof city.id !== 'string' || !city.id || city.id.length > 100
+      || typeof city.city !== 'string' || !city.city.trim() || city.city.length > 100
+      || typeof city.timeZone !== 'string' || city.timeZone.length > 100
+      || !Number.isInteger(city.slot) || city.slot < 0 || city.slot > 9999
+      || !WORLD_CLOCK_COLORS.has(city.color) || typeof city.pinned !== 'boolean'
+      || ids.has(city.id) || slots.has(city.slot)) {
+      return res.status(400).json({ error: 'Una ciudad tiene datos no válidos.' });
+    }
+    try { new Intl.DateTimeFormat('en', { timeZone: city.timeZone }); }
+    catch (_) { return res.status(400).json({ error: 'Zona horaria no válida.' }); }
+    ids.add(city.id);
+    slots.add(city.slot);
+  }
+  const rows = cities.map(({ id, city, timeZone, slot, color, pinned }) => ({
+    id, city: city.trim(), timeZone, slot, color, pinned,
+  }));
+  const result = db.prepare('UPDATE users SET world_clocks = ?, world_clocks_revision = world_clocks_revision + 1 WHERE id = ? AND world_clocks_revision = ?')
+    .run(JSON.stringify(rows), req.userId, revision);
+  if (!result.changes) return res.status(409).json({ error: 'Las horas se modificaron en otra pestaña.', ...worldClocksForUser(req.userId) });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ cities: rows, revision: revision + 1 });
+});
+
 app.get('/api/users', (req, res) => {
   res.json(db.prepare('SELECT * FROM users WHERE id = ?').all(req.userId));
 });
@@ -919,8 +965,9 @@ app.get('/api/tasks/week', (req, res) => {
 });
 
 app.get('/api/tasks/now', (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const timeStr = new Date().toTimeString().slice(0, 5);
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const timeStr = now.toTimeString().slice(0, 5);
   const refs = getHiddenTaskRefs(req.userId, true);
   let sql = 'SELECT * FROM tasks WHERE is_fixed = 0 AND date = ? AND start_time IS NOT NULL AND user_id = ?';
   let params = [today, req.userId];
@@ -936,10 +983,12 @@ app.get('/api/tasks/now', (req, res) => {
 
   const tracked = db.prepare(`SELECT * FROM tasks
     WHERE user_id = ? AND is_fixed = 0 AND archived_at IS NULL AND status != 'completed'
-      AND (timer_started_at IS NOT NULL OR (status = 'in_progress' AND date = ?))
+      AND (timer_started_at IS NOT NULL OR status = 'in_progress')
     ORDER BY CASE WHEN timer_started_at IS NOT NULL THEN 0 ELSE 1 END,
-      COALESCE(timer_started_at, date || 'T' || start_time) DESC`).all(req.userId, today);
-  const scheduledActive = tasks.filter(t => t.status !== 'completed' && t.start_time <= timeStr && t.end_time > timeStr);
+      COALESCE(timer_started_at, date || 'T' || start_time) DESC`).all(req.userId);
+  const scheduledActive = tasks.filter(t => t.status !== 'completed' && (
+    t.status === 'in_progress' || (t.start_time <= timeStr && t.end_time > timeStr)
+  ));
   const activeTasks = filterVisibleTaskRows(tracked, refs);
   scheduledActive.forEach(task => {
     if (!activeTasks.some(activeTask => activeTask.id === task.id)) activeTasks.push(task);
@@ -963,10 +1012,6 @@ app.post('/api/tasks/:id/timer', (req, res) => {
   const now = new Date();
   if (action === 'start') {
     if (task.status === 'completed') return res.status(409).json({ error: 'La tarea ya está completada' });
-    const moneyStatus = isTodoTask(task) ? getDailyMoneyPlanningStatus(req.userId) : null;
-    if (moneyStatus && !moneyStatus.ready) {
-      return res.status(409).json({ error: `Planifica al menos ${moneyStatus.requiredMinutes / 60}h de tareas Money maker antes de comenzar un ToDo` });
-    }
     db.prepare(`UPDATE tasks SET timer_started_at = COALESCE(timer_started_at, ?),
       original_estimate_minutes = COALESCE(original_estimate_minutes, duration_estimated), status = 'in_progress'
       WHERE id = ? AND user_id = ?`).run(now.toISOString(), task.id, req.userId);
@@ -1211,6 +1256,18 @@ app.put('/api/tasks/:id', (req, res) => {
     db.prepare('UPDATE tasks SET end_time = ? WHERE id = ? AND user_id = ?').run(end_time || null, req.params.id, req.userId);
   }
   if ('status' in req.body) {
+    const updated = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId);
+    if (isTodoTask(updated)) {
+      if (nextStatus === 'in_progress' && !task.timer_started_at) {
+        db.prepare(`UPDATE tasks SET timer_started_at = COALESCE(timer_started_at, ?),
+          original_estimate_minutes = COALESCE(original_estimate_minutes, duration_estimated)
+          WHERE id = ? AND user_id = ?`).run(new Date().toISOString(), req.params.id, req.userId);
+      } else if (nextStatus !== 'in_progress' && task.timer_started_at) {
+        const elapsed = Math.max(0, (Date.now() - Date.parse(task.timer_started_at)) / 1000);
+        db.prepare('UPDATE tasks SET actual_seconds = actual_seconds + ?, timer_started_at = NULL WHERE id = ? AND user_id = ?')
+          .run(Number.isFinite(elapsed) ? elapsed : 0, req.params.id, req.userId);
+      }
+    }
     if (nextStatus === 'completed') {
       db.prepare('UPDATE tasks SET completed_at = COALESCE(completed_at, ?) WHERE id = ? AND user_id = ?')
         .run(new Date().toISOString(), req.params.id, req.userId);

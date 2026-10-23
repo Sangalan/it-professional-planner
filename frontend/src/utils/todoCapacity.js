@@ -35,7 +35,7 @@ export function sortDayTodos(tasks, objectives, categories, sortMode = 'time') {
   };
   const duration = task => {
     const value = Number(task.duration_estimated);
-    return value > 0 ? value : -1;
+    return value > 0 ? value : Number.MAX_SAFE_INTEGER;
   };
   const dayOrder = task => task.todo_order_date === task.date
     ? (task.todo_day_order ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;

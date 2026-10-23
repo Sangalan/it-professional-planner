@@ -1,5 +1,4 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { api } from '../api.js';
 import { useCats } from './CatBadge.jsx';
 import DeadlineModal, { DeadlineChip } from './DeadlineModal.jsx';
@@ -343,18 +342,19 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
   return <div className="todo-calendar-layout">
     <aside className="card todo-day-detail">
       <div className="todo-day-heading">
+        <div className="todo-day-actions">
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => onCreateTask(selected)}>+ Tarea</button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setDeadlineModal({ date: selected })}>+ Fecha límite</button>
+        </div>
         <div>
           <h2>{fmtDate(selected)}</h2>
           <div className="todo-day-completion">{completionPercent}% completado</div>
         </div>
         <div className="todo-day-controls">
-          <div className="todo-day-actions">
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCreateTask(selected)}>+ Tarea</button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDeadlineModal({ date: selected })}>+ Fecha límite</button>
-          </div>
-          <div className="todo-sort-switch" aria-label="Ordenar ToDo">
-            <button type="button" className={sortMode === 'time' ? 'selected' : ''} onClick={() => setSortMode('time')}>⏱ Tiempo</button>
-            <button type="button" className={sortMode === 'importance' ? 'selected' : ''} onClick={() => setSortMode('importance')}>★ Importancia</button>
+          <div className="todo-sort-switch" role="group" aria-label="Ordenar ToDo">
+            <span className="todo-sort-label">Ordenar por:</span>
+            <button type="button" aria-pressed={sortMode === 'time'} className={sortMode === 'time' ? 'selected' : ''} onClick={() => setSortMode('time')}>⏱ Tiempo</button>
+            <button type="button" aria-pressed={sortMode === 'importance'} className={sortMode === 'importance' ? 'selected' : ''} onClick={() => setSortMode('importance')}>★ Importancia</button>
           </div>
         </div>
       </div>
@@ -382,7 +382,7 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
           <span>Completadas ({completedCount})</span><span>{completedExpanded ? '▲' : '▼'}</span>
         </button>}
         {(task.status !== 'completed' || completedExpanded) && <>
-        <article className={`todo-detail-card${dropTarget?.id === task.id ? ` drop-${dropTarget.placement}` : ''}${uncompletableTaskIds.has(task.id) ? ' exceeds-capacity' : ''}`} style={objectiveColor(task) ? { '--todo-objective-color': objectiveColor(task) } : undefined}
+        <article className={`todo-detail-card${task.status !== 'completed' && (task.status === 'in_progress' || task.timer_started_at) ? ' in-progress' : ''}${dropTarget?.id === task.id ? ` drop-${dropTarget.placement}` : ''}${uncompletableTaskIds.has(task.id) ? ' exceeds-capacity' : ''}`} style={objectiveColor(task) ? { '--todo-objective-color': objectiveColor(task) } : undefined}
         onMouseEnter={event => showDurationTooltip(event, task)} onMouseLeave={() => hideDurationTooltip(task.id)}
         draggable={sortMode === 'importance' && !reordering}
         onDragStart={event => {
@@ -395,33 +395,37 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
         onDragEnd={() => { draggedTaskRef.current = null; dropTargetRef.current = null; setDropTarget(null); }}
         onDragOver={event => {
           const dragged = draggedTaskRef.current;
+          if (dragged && dragged.id !== task.id && sortMode === 'importance' && !reordering) event.preventDefault();
           const sameCompletionGroup = Boolean(dragged?.status === 'completed') === Boolean(task.status === 'completed');
           if (reordering || sortMode !== 'importance' || !dragged || dragged.id === task.id || dragged.date !== task.date || !sameCompletionGroup) {
             if (dropTargetRef.current) {
               dropTargetRef.current = null;
-              flushSync(() => setDropTarget(null));
+              setDropTarget(null);
             }
             return;
           }
-          event.preventDefault();
           event.dataTransfer.dropEffect = 'move';
           const rect = event.currentTarget.getBoundingClientRect();
           const nextTarget = { id: task.id, placement: event.clientY < rect.top + rect.height / 2 ? 'before' : 'after' };
           if (dropTargetRef.current?.id === nextTarget.id && dropTargetRef.current.placement === nextTarget.placement) return;
           dropTargetRef.current = nextTarget;
-          flushSync(() => setDropTarget(nextTarget));
+          setDropTarget(nextTarget);
         }}
         onDrop={event => {
           event.preventDefault();
           const dragged = draggedTaskRef.current;
-          const currentDropTarget = dropTargetRef.current;
-          const placement = currentDropTarget?.id === task.id ? currentDropTarget.placement : 'before';
+          const rect = event.currentTarget.getBoundingClientRect();
+          const placement = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
           const sameCompletionGroup = Boolean(dragged?.status === 'completed') === Boolean(task.status === 'completed');
           if (!reordering && sortMode === 'importance' && dragged && dragged.id !== task.id && dragged.date === task.date && sameCompletionGroup) {
             const next = detail.filter(row => row.id !== dragged.id);
             const targetIndex = next.findIndex(row => row.id === task.id);
             next.splice(targetIndex + (placement === 'after' ? 1 : 0), 0, dragged);
             onReorder(selected, next.map(row => row.id));
+          } else if (dragged && dragged.id !== task.id && !sameCompletionGroup) {
+            setError('Las tareas pendientes y completadas se ordenan por separado.');
+          } else if (dragged && dragged.id !== task.id && dragged.date !== task.date) {
+            setError('Solo puedes ordenar tareas asignadas al mismo día.');
           }
           draggedTaskRef.current = null;
           dropTargetRef.current = null;
@@ -526,8 +530,8 @@ export default function TodoCalendar({ tasks, objectives, countdownEnd, moneyPla
         changeTaskDay(task, null);
       }}>Sin fecha</button>
       <button type="button" onClick={() => { onSetDuration(taskMenu.task); setTaskMenu(null); }}>Establecer duración</button>
-      <button type="button" disabled={!moneyPlanningReady || taskMenu.task.status === 'completed' || !(Number(taskMenu.task.duration_estimated) > 0)}
-        title={!moneyPlanningReady ? `Planifica primero ${moneyRequiredMinutes / 60}h de tareas Money maker` : (Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada')}
+      <button type="button" disabled={taskMenu.task.status === 'completed' || taskMenu.task.status === 'in_progress' || !(Number(taskMenu.task.duration_estimated) > 0)}
+        title={Number(taskMenu.task.duration_estimated) > 0 ? 'Comenzar este ToDo' : 'Asigna primero una duración estimada'}
         onClick={() => { onStart(taskMenu.task); setTaskMenu(null); }}>Comenzar</button>
     </div>}
     {changingDayTask && changeDayAnchor && <TodoDayPicker task={changingDayTask} anchor={changeDayAnchor} onSelect={saveChangedDay}

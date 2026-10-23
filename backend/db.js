@@ -75,6 +75,8 @@ try { db.prepare('ALTER TABLE reading_list ADD COLUMN user_id TEXT').run(); } ca
 try { db.prepare('ALTER TABLE users ADD COLUMN content_sections TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE users ADD COLUMN auth_email TEXT').run(); } catch (_) {}
 try { db.prepare('ALTER TABLE users ADD COLUMN money_required_minutes INTEGER NOT NULL DEFAULT 240').run(); } catch (_) {}
+try { db.prepare("ALTER TABLE users ADD COLUMN world_clocks TEXT NOT NULL DEFAULT '[]'").run(); } catch (_) {}
+try { db.prepare('ALTER TABLE users ADD COLUMN world_clocks_revision INTEGER NOT NULL DEFAULT 0').run(); } catch (_) {}
 
 // Documents uploads directory
 const uploadsDir = path.join(dataDir, 'uploads');
@@ -91,7 +93,9 @@ function initSchema() {
       color TEXT NOT NULL,
       content_sections TEXT,
       auth_email TEXT,
-      money_required_minutes INTEGER NOT NULL DEFAULT 240
+      money_required_minutes INTEGER NOT NULL DEFAULT 240,
+      world_clocks TEXT NOT NULL DEFAULT '[]',
+      world_clocks_revision INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS categories (
